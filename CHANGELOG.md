@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026051800] - 2026-05-18
+
+### Added
+- Add Sudo Code as a first-class Hydra agent for copilots and workers, including configurable launch commands, resume, archive/restore, CLI visibility, and smoke/e2e coverage
+
 ## [0.3.2026051302] - 2026-05-13
 
 ### Fixed
