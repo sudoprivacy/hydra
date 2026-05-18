@@ -7,6 +7,7 @@ import { resolveRepoInput } from '../../core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMessage } from '../identity';
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
+import { agentSupportsCompletionNotification } from '../../core/agentConfig';
 
 export function registerWorkerCommands(program: Command): void {
   const worker = program
@@ -18,7 +19,7 @@ export function registerWorkerCommands(program: Command): void {
     .description('Create a new worker')
     .requiredOption('--repo <path>', 'Path to the repository')
     .requiredOption('--branch <name>', 'Branch name')
-    .option('--agent <type>', 'Agent type (claude, codex, gemini)', 'claude')
+    .option('--agent <type>', 'Agent type (claude, codex, gemini, sudocode)', 'claude')
     .option('--base <branch>', 'Base branch override')
     .option('--task <prompt>', 'Task prompt for the agent')
     .option('--task-file <path>', 'Path to a file containing the task description')
@@ -232,7 +233,7 @@ export function registerWorkerCommands(program: Command): void {
           sm.getWorker(sessionName),
         ]);
         const sessionFile = worker
-          ? resolveAgentSessionFile(worker.agent, worker.workdir, worker.sessionId)
+          ? resolveAgentSessionFile(worker.agent, worker.workdir, worker.sessionId, worker.agentSessionFile)
           : null;
 
         outputResult(
@@ -268,7 +269,11 @@ export function registerWorkerCommands(program: Command): void {
 
           const sent: string[] = [];
           for (const worker of running) {
-            if (identity?.role === 'copilot' && worker.copilotSessionName === identity.sessionName) {
+            if (
+              identity?.role === 'copilot' &&
+              worker.copilotSessionName === identity.sessionName &&
+              agentSupportsCompletionNotification(worker.agent)
+            ) {
               sm.armCompletionNotification(worker.sessionName);
             }
             await backend.sendMessage(worker.sessionName, message);
@@ -290,7 +295,11 @@ export function registerWorkerCommands(program: Command): void {
           const message = messageOrUndefined;
           const sm = new SessionManager(backend);
           const worker = await sm.getWorker(session);
-          if (identity?.role === 'copilot' && worker?.copilotSessionName === identity.sessionName) {
+          if (
+            identity?.role === 'copilot' &&
+            worker?.copilotSessionName === identity.sessionName &&
+            agentSupportsCompletionNotification(worker.agent)
+          ) {
             sm.armCompletionNotification(session);
           }
           await backend.sendMessage(session, message);

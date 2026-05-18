@@ -125,12 +125,12 @@ export function registerDoctorCommand(program: Command): void {
       }
 
       // 10. AI agent CLIs
-      const agents = ['claude', 'codex', 'gemini'];
+      const agents = ['claude', 'codex', 'gemini', 'scode'];
       const foundAgents = agents.filter(a => checkOnPath(a));
       if (foundAgents.length > 0) {
         checks.push({ name: 'ai-agent', status: 'pass', message: `Found: ${foundAgents.join(', ')}` });
       } else {
-        checks.push({ name: 'ai-agent', status: 'fail', message: 'No AI agent CLI found — install at least one of: claude, codex, gemini' });
+        checks.push({ name: 'ai-agent', status: 'fail', message: 'No AI agent CLI found — install at least one of: claude, codex, gemini, scode' });
       }
 
       // Compute summary

@@ -3,10 +3,10 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
-import { ensureHydraGlobalConfig } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumeCommand, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN } from './agentConfig';
+import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand } from './hydraGlobalConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification } from './agentConfig';
 import { exec, resolveCommandPath } from './exec';
-import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, toCanonicalPath } from './path';
+import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
@@ -56,6 +56,36 @@ function fixWindowsSymlinks(worktreeDir: string): void {
   }
 }
 
+function countOccurrences(text: string, needle: string): number {
+  if (!needle) {
+    return 0;
+  }
+  let count = 0;
+  let index = 0;
+  while (true) {
+    const next = text.indexOf(needle, index);
+    if (next < 0) {
+      return count;
+    }
+    count += 1;
+    index = next + needle.length;
+  }
+}
+
+function rebasePathUnderDirectory(filePath: string | null | undefined, oldDir: string, newDir: string): string | null {
+  if (!filePath || !oldDir || !newDir) {
+    return null;
+  }
+
+  const normalizedFile = path.normalize(path.resolve(filePath));
+  const normalizedOldDir = path.normalize(path.resolve(oldDir));
+  if (normalizedFile !== normalizedOldDir && !normalizedFile.startsWith(`${normalizedOldDir}${path.sep}`)) {
+    return null;
+  }
+
+  return path.join(newDir, path.relative(normalizedOldDir, normalizedFile));
+}
+
 /**
  * Look up a worker's numeric ID from sessions.json.
  * Lightweight standalone function — no SessionManager instance needed.
@@ -92,6 +122,8 @@ export interface WorkerInfo {
   createdAt: string;
   lastSeenAt: string;
   sessionId: string | null;
+  /** Absolute path to the agent's native session/transcript file, when captured. */
+  agentSessionFile?: string | null;
   /** Session name of the copilot that spawned this worker, if any. */
   copilotSessionName: string | null;
 }
@@ -108,6 +140,8 @@ export interface CopilotInfo {
   createdAt: string;
   lastSeenAt: string;
   sessionId: string | null;
+  /** Absolute path to the agent's native session/transcript file, when captured. */
+  agentSessionFile?: string | null;
 }
 
 export interface SessionState {
@@ -121,6 +155,7 @@ export interface ArchivedSessionInfo {
   type: 'worker' | 'copilot';
   sessionName: string;
   agentSessionId: string | null;
+  agentSessionFile?: string | null;
   archivedAt: string;
   data: WorkerInfo | CopilotInfo;
 }
@@ -144,6 +179,8 @@ export interface CreateWorkerOpts {
   agentCommand?: string;
   /** When set, launch the agent with --resume instead of a fresh session. */
   resumeSessionId?: string;
+  /** Native session file to use for agents whose resume command accepts paths. */
+  resumeSessionFile?: string | null;
   /** Session name of the copilot that spawned this worker. */
   copilotSessionName?: string;
   /** Whether to notify the parent copilot when the worker completes (default: true). */
@@ -167,6 +204,8 @@ export interface CreateCopilotOpts {
   agentCommand?: string;
   /** When set, launch the agent with --resume instead of a fresh session. */
   resumeSessionId?: string;
+  /** Native session file to use for agents whose resume command accepts paths. */
+  resumeSessionFile?: string | null;
 }
 
 export interface CreateWorkerResult {
@@ -283,6 +322,7 @@ export class SessionManager {
             createdAt: now,
             lastSeenAt: now,
             sessionId: null,
+            agentSessionFile: null,
             copilotSessionName: null,
           };
         } else {
@@ -297,6 +337,7 @@ export class SessionManager {
             createdAt: now,
             lastSeenAt: now,
             sessionId: null,
+            agentSessionFile: null,
           };
         }
       }
@@ -346,7 +387,7 @@ export class SessionManager {
     const { repoRoot, branchName } = opts;
     let { task, taskFile } = opts;
     const agentType = opts.agentType || 'claude';
-    let agentCommand = await this.resolveAgentCommand(opts.agentCommand || DEFAULT_AGENT_COMMANDS[agentType] || agentType);
+    let agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
 
     const validationError = coreGit.validateBranchName(branchName);
     if (validationError) {
@@ -374,6 +415,7 @@ export class SessionManager {
         savedWorker,
         opts.copilotSessionName,
         opts.notifyCopilot !== false,
+        opts.resumeSessionFile,
       );
     }
 
@@ -442,7 +484,10 @@ export class SessionManager {
       ? preservedWorker.worker.sessionName
       : this.backend.buildSessionName(repoSessionNamespace, finalSlug);
     const copilotSessionName = opts.copilotSessionName;
-    const shouldNotifyCopilot = opts.notifyCopilot !== false && !!copilotSessionName && !!(task || taskFile);
+    const shouldNotifyCopilot = agentSupportsCompletionNotification(agentType) &&
+      opts.notifyCopilot !== false &&
+      !!copilotSessionName &&
+      !!(task || taskFile);
     if (shouldNotifyCopilot) {
       const peekState = this.readSessionState();
       const workerId = peekState.workers[sessionName]?.workerId ??
@@ -471,23 +516,22 @@ export class SessionManager {
     // Two distinct paths — resume (from archive) vs fresh create:
     //
     // Resume: session ID already known, launch with --resume, skip Phase 1.
-    // Fresh:  all 3 agents converge to sessionId stored in sessions.json:
+    // Fresh: supported agents converge to sessionId stored in sessions.json:
     //   - Claude: pre-assigned via --session-id flag (known immediately)
     //   - Codex:  launch → wait for ready → send /status → parse session ID
     //   - Gemini: launch → wait for ready → send /stats → parse session ID
+    //   - Sudo Code: launch → wait for ready → parse startup banner or /status
     const isResume = !!opts.resumeSessionId;
     let sessionId: string | null;
+    let launchStartedAt: number | undefined;
 
     if (isResume) {
       sessionId = opts.resumeSessionId!;
-      const resumeCmd = buildAgentResumeCommand(agentType, agentCommand, sessionId, worktreePath);
-      if (!resumeCmd) {
-        throw new Error(`Agent "${agentType}" does not support session resume`);
-      }
-      await this.backend.sendKeys(sessionName, resumeCmd);
+      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, worktreePath, opts.resumeSessionFile);
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
       const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined);
+      launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
     }
 
@@ -518,6 +562,7 @@ export class SessionManager {
         createdAt: existingWorker?.createdAt ?? now,
         lastSeenAt: now,
         sessionId: sessionId ?? existingWorker?.sessionId ?? null,
+        agentSessionFile: opts.resumeSessionFile ?? existingWorker?.agentSessionFile ?? null,
         copilotSessionName: opts.copilotSessionName ?? existingWorker?.copilotSessionName ?? null,
       };
 
@@ -533,7 +578,7 @@ export class SessionManager {
         await this.waitForAgentReady(sessionName, agentType);
       } else {
         // Phase 1: Wait for readiness & capture session ID into sessions.json
-        await this.waitForReadyAndCaptureSessionId(sessionName, agentType, sessionId);
+        await this.waitForReadyAndCaptureSessionId(sessionName, agentType, sessionId, worktreePath, launchStartedAt);
       }
       // Phase 2: Send task prompt (only after sessions.json is up to date)
       await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
@@ -546,6 +591,7 @@ export class SessionManager {
     await this.killSessionOrConfirmAbsent(sessionName);
 
     const worker = this.readSessionState().workers[sessionName];
+    const archivedWorker = worker ? this.prepareArchivedSessionData(worker) as WorkerInfo : undefined;
 
     if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
       try {
@@ -569,8 +615,8 @@ export class SessionManager {
     }
 
     // Archive only after destructive cleanup has succeeded, so failed deletes remain retryable.
-    if (worker) {
-      this.archiveEntry('worker', worker.sessionName, worker.sessionId, worker);
+    if (archivedWorker) {
+      this.archiveEntry('worker', archivedWorker.sessionName, archivedWorker.sessionId, archivedWorker);
     }
 
     await this.updateSessionState((state) => {
@@ -606,7 +652,7 @@ export class SessionManager {
     }
 
     const agent = agentType || existingWorker.agent || 'claude';
-    const command = await this.resolveAgentCommand(agentCommand || DEFAULT_AGENT_COMMANDS[agent] || agent);
+    const command = await this.resolveAgentCommand(agentCommand || this.getDefaultAgentCommand(agent));
 
     await this.backend.createSession(sessionName, existingWorker.workdir);
     await this.backend.setSessionWorkdir(sessionName, existingWorker.workdir);
@@ -615,17 +661,33 @@ export class SessionManager {
 
     // Resume from stored session ID if available; otherwise fresh start
     const storedSessionId = existingWorker.sessionId;
-    const resumeCmd = storedSessionId
-      ? buildAgentResumeCommand(agent, command, storedSessionId, existingWorker.workdir)
+    const resolvedResumeSessionFile = storedSessionId
+      ? resolveAgentSessionFile(agent, existingWorker.workdir, storedSessionId, existingWorker.agentSessionFile)
       : null;
+    const canResume = !!storedSessionId &&
+      (agent !== 'sudocode' || !!resolvedResumeSessionFile) &&
+      !!buildAgentResumePlan(
+        agent,
+        command,
+        storedSessionId,
+        existingWorker.workdir,
+        resolvedResumeSessionFile,
+      );
 
     let workerInfo: WorkerInfo;
     let postCreatePromise: Promise<void>;
 
-    if (resumeCmd) {
-      // ── Resume flow: launch with --resume, no session ID capture needed ──
+    if (canResume && storedSessionId) {
+      // ── Resume flow: launch agent resume, no session ID capture needed ──
       // The agent already has its conversation context; just restart it.
-      await this.backend.sendKeys(sessionName, resumeCmd);
+      await this.launchAgentResume(
+        sessionName,
+        agent,
+        command,
+        storedSessionId,
+        existingWorker.workdir,
+        resolvedResumeSessionFile,
+      );
       workerInfo = await this.updateSessionState((currentState) => {
         const currentWorker = currentState.workers[sessionName];
         if (!currentWorker) {
@@ -635,6 +697,7 @@ export class SessionManager {
         currentWorker.status = 'running';
         currentWorker.attached = false;
         currentWorker.agent = agent;
+        currentWorker.agentSessionFile = resolvedResumeSessionFile ?? existingWorker.agentSessionFile ?? currentWorker.agentSessionFile ?? null;
         currentWorker.lastSeenAt = new Date().toISOString();
         currentState.updatedAt = currentWorker.lastSeenAt;
         return { ...currentWorker };
@@ -647,6 +710,7 @@ export class SessionManager {
       // No stored session ID — launch fresh agent and capture new session ID.
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
       const launchCmd = buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined);
+      const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
 
       workerInfo = await this.updateSessionState((currentState) => {
@@ -659,13 +723,20 @@ export class SessionManager {
         currentWorker.attached = false;
         currentWorker.agent = agent;
         currentWorker.sessionId = preAssignedSessionId;
+        currentWorker.agentSessionFile = null;
         currentWorker.lastSeenAt = new Date().toISOString();
         currentState.updatedAt = currentWorker.lastSeenAt;
         return { ...currentWorker };
       });
 
       // Phase 1 only — startWorker is a restart, no task to send (Phase 2 skipped)
-      postCreatePromise = this.waitForReadyAndCaptureSessionId(sessionName, agent, preAssignedSessionId);
+      postCreatePromise = this.waitForReadyAndCaptureSessionId(
+        sessionName,
+        agent,
+        preAssignedSessionId,
+        existingWorker.workdir,
+        launchStartedAt,
+      );
     }
 
     return {
@@ -680,7 +751,7 @@ export class SessionManager {
     ensureHydraGlobalConfig();
 
     const agentType = opts.agentType || 'claude';
-    const agentCommand = await this.resolveAgentCommand(opts.agentCommand || DEFAULT_AGENT_COMMANDS[agentType] || agentType);
+    const agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
     const displayName = opts.name || opts.sessionName || `hydra-copilot-${agentType}`;
     const sessionName = opts.sessionName || this.backend.sanitizeSessionName(`hydra-copilot-${agentType}`);
 
@@ -698,19 +769,17 @@ export class SessionManager {
     // Same two paths as createWorker: resume vs fresh.
     const isResume = !!opts.resumeSessionId;
     let sessionId: string | null;
+    let launchStartedAt: number | undefined;
 
     let postCreatePromise = Promise.resolve();
 
     if (isResume) {
       sessionId = opts.resumeSessionId!;
-      const resumeCmd = buildAgentResumeCommand(agentType, agentCommand, sessionId, opts.workdir);
-      if (!resumeCmd) {
-        throw new Error(`Agent "${agentType}" does not support session resume`);
-      }
-      await this.backend.sendKeys(sessionName, resumeCmd);
+      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, opts.workdir, opts.resumeSessionFile);
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
       const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined);
+      launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
     }
 
@@ -727,6 +796,7 @@ export class SessionManager {
       createdAt: now,
       lastSeenAt: now,
       sessionId,
+      agentSessionFile: opts.resumeSessionFile ?? null,
     };
 
     const persistedCopilotInfo = await this.updateSessionState((state) => {
@@ -735,6 +805,7 @@ export class SessionManager {
         ...copilotInfo,
         createdAt: existingCopilot?.createdAt ?? now,
         sessionId: sessionId ?? existingCopilot?.sessionId ?? null,
+        agentSessionFile: opts.resumeSessionFile ?? existingCopilot?.agentSessionFile ?? null,
       };
 
       state.copilots[sessionName] = nextCopilot;
@@ -745,7 +816,7 @@ export class SessionManager {
     // Match worker lifecycle semantics: wait for readiness and persist any deferred
     // session ID capture before the CLI treats creation as complete.
     postCreatePromise = this.withPostCreateTimeout(
-      this.waitForReadyAndCaptureSessionId(sessionName, agentType, sessionId),
+      this.waitForReadyAndCaptureSessionId(sessionName, agentType, sessionId, opts.workdir, launchStartedAt),
       sessionName,
       'copilot startup',
     );
@@ -852,6 +923,8 @@ export class SessionManager {
         throw new Error(`Worker "${oldSessionName}" not found`);
       }
 
+      const oldWorkdir = currentWorker.workdir;
+      const oldAgentSessionFile = currentWorker.agentSessionFile ?? null;
       const worktreeMoved = newSlug !== currentWorker.slug && fs.existsSync(newWorktreePath);
       delete currentState.workers[oldSessionName];
       currentWorker.sessionName = newSessionName;
@@ -861,6 +934,15 @@ export class SessionManager {
       currentWorker.slug = newSlug;
       if (worktreeMoved) {
         currentWorker.workdir = newWorktreePath;
+        if (currentWorker.agent === 'sudocode') {
+          currentWorker.sessionId = null;
+          currentWorker.agentSessionFile = null;
+        } else {
+          const rebasedSessionFile = rebasePathUnderDirectory(oldAgentSessionFile, oldWorkdir, newWorktreePath);
+          currentWorker.agentSessionFile = (rebasedSessionFile && fs.existsSync(rebasedSessionFile))
+            ? rebasedSessionFile
+            : resolveAgentSessionFile(currentWorker.agent, newWorktreePath, currentWorker.sessionId, null) ?? oldAgentSessionFile;
+        }
       }
       currentState.workers[newSessionName] = currentWorker;
       currentState.updatedAt = new Date().toISOString();
@@ -903,6 +985,11 @@ export class SessionManager {
       currentCopilot.displayName = newSessionName;
       currentCopilot.tmuxSession = newSessionName;
       currentState.copilots[newSessionName] = currentCopilot;
+      for (const worker of Object.values(currentState.workers)) {
+        if (worker.copilotSessionName === oldSessionName) {
+          worker.copilotSessionName = newSessionName;
+        }
+      }
       currentState.updatedAt = new Date().toISOString();
       return { ...currentCopilot };
     });
@@ -914,10 +1001,11 @@ export class SessionManager {
     } catch { /* Already dead */ }
 
     const copilot = this.readSessionState().copilots[sessionName];
+    const archivedCopilot = copilot ? this.prepareArchivedSessionData(copilot) as CopilotInfo : undefined;
 
     // Archive before removing
-    if (copilot) {
-      this.archiveEntry('copilot', copilot.sessionName, copilot.sessionId, copilot);
+    if (archivedCopilot) {
+      this.archiveEntry('copilot', archivedCopilot.sessionName, archivedCopilot.sessionId, archivedCopilot);
     }
 
     await this.updateSessionState((state) => {
@@ -955,6 +1043,7 @@ export class SessionManager {
         createdAt: existingCopilot?.createdAt ?? now,
         lastSeenAt: now,
         sessionId: sessionId ?? existingCopilot?.sessionId ?? null,
+        agentSessionFile: existingCopilot?.agentSessionFile ?? null,
       };
       state.updatedAt = now;
     });
@@ -965,8 +1054,11 @@ export class SessionManager {
    * Used by VS Code extension for Codex/Gemini copilots.
    */
   async captureAndPersistSessionId(sessionName: string, agentType: string): Promise<void> {
-    const sessionId = await this.captureAgentSessionId(sessionName, agentType);
-    await this.updateSessionId(sessionName, sessionId);
+    const state = this.readSessionState();
+    const saved = state.workers[sessionName] || state.copilots[sessionName];
+    const workdir = saved?.workdir || await this.backend.getSessionWorkdir(sessionName) || '';
+    const session = await this.captureAgentSessionInfo(sessionName, agentType, workdir);
+    await this.updateAgentSessionInfo(sessionName, session.sessionId, session.agentSessionFile);
   }
 
   // ── Archive ──
@@ -1008,6 +1100,7 @@ export class SessionManager {
       branchName: worker.branch,
       agentType: worker.agent,
       resumeSessionId: entry.agentSessionId || undefined,
+      resumeSessionFile: entry.agentSessionFile || worker.agentSessionFile || undefined,
       preservedWorkerInfo: worker,
     });
   }
@@ -1028,6 +1121,7 @@ export class SessionManager {
       name: copilot.displayName,
       sessionName: copilot.sessionName,
       resumeSessionId: entry.agentSessionId || undefined,
+      resumeSessionFile: entry.agentSessionFile || copilot.agentSessionFile || undefined,
     });
   }
 
@@ -1093,10 +1187,37 @@ export class SessionManager {
       type,
       sessionName,
       agentSessionId,
+      agentSessionFile: data.agentSessionFile ?? null,
       archivedAt: new Date().toISOString(),
       data: { ...data },
     });
     this.writeArchiveState(archive);
+  }
+
+  private prepareArchivedSessionData(data: WorkerInfo | CopilotInfo): WorkerInfo | CopilotInfo {
+    if (data.agent !== 'sudocode') {
+      return { ...data };
+    }
+
+    const sessionFile = resolveAgentSessionFile(
+      data.agent,
+      data.workdir,
+      data.sessionId,
+      data.agentSessionFile ?? null,
+    );
+    if (!sessionFile) {
+      return { ...data, agentSessionFile: data.agentSessionFile ?? null };
+    }
+
+    try {
+      const archiveDir = path.join(getHydraHome(), 'agent-sessions', 'sudocode', data.sessionName);
+      fs.mkdirSync(archiveDir, { recursive: true });
+      const archivedFile = path.join(archiveDir, path.basename(sessionFile));
+      fs.copyFileSync(sessionFile, archivedFile);
+      return { ...data, agentSessionFile: archivedFile };
+    } catch {
+      return { ...data, agentSessionFile: sessionFile };
+    }
   }
 
   private readArchiveState(): ArchiveState {
@@ -1133,10 +1254,12 @@ export class SessionManager {
         // Backward compat: ensure sessionId and displayName fields exist for legacy entries
         for (const w of Object.values(state.workers)) {
           w.sessionId ??= null;
+          w.agentSessionFile ??= null;
           w.displayName ??= w.slug || this.extractSlugFromSessionName(w.sessionName);
         }
         for (const c of Object.values(state.copilots)) {
           c.sessionId ??= null;
+          c.agentSessionFile ??= null;
           c.displayName ??= c.sessionName;
         }
         return state;
@@ -1313,14 +1436,16 @@ export class SessionManager {
     sessionName: string,
     agentType: string,
     preAssignedSessionId: string | null,
+    workdir: string,
+    launchStartedAt?: number,
   ): Promise<void> {
     if (preAssignedSessionId) {
       // Claude (or resume): sessionId already known — just wait for TUI readiness
       await this.waitForAgentReady(sessionName, agentType);
     } else {
-      // Codex/Gemini: capture sessionId via slash command (includes readiness wait)
-      const sessionId = await this.captureAgentSessionId(sessionName, agentType);
-      await this.updateSessionId(sessionName, sessionId);
+      // Codex/Gemini/Sudo Code: capture sessionId via slash command or startup banner
+      const session = await this.captureAgentSessionInfo(sessionName, agentType, workdir, launchStartedAt);
+      await this.updateAgentSessionInfo(sessionName, session.sessionId, session.agentSessionFile);
     }
   }
 
@@ -1362,6 +1487,10 @@ export class SessionManager {
       branch: string;
     },
   ): void {
+    if (!agentSupportsCompletionNotification(agentType)) {
+      return;
+    }
+
     try {
       // 1. Write the notification shell script
       const hooksDir = path.join(getHydraHome(), 'hooks');
@@ -1588,6 +1717,83 @@ export class SessionManager {
     return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
   }
 
+  private async launchAgentResume(
+    sessionName: string,
+    agentType: string,
+    agentCommand: string,
+    sessionId: string,
+    workdir: string,
+    agentSessionFile?: string | null,
+  ): Promise<void> {
+    const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile);
+    if (!resumePlan) {
+      throw new Error(`Agent "${agentType}" does not support session resume`);
+    }
+
+    await this.backend.sendKeys(sessionName, resumePlan.command);
+    if (resumePlan.strategy === 'replSlashCommand') {
+      await this.waitForAgentReady(sessionName, agentType);
+      const beforeResume = await this.captureCleanPane(sessionName, 400);
+      await this.backend.sendMessage(sessionName, resumePlan.slashCommand);
+      await this.waitForReplSlashCommandReady(
+        sessionName,
+        agentType,
+        resumePlan.slashCommand,
+        beforeResume,
+      );
+    }
+  }
+
+  private async waitForReplSlashCommandReady(
+    sessionName: string,
+    agentType: string,
+    slashCommand: string,
+    beforeCommandOutput: string,
+  ): Promise<void> {
+    if (agentType === 'sudocode' && slashCommand.trim().startsWith('/resume')) {
+      await this.waitForSudoCodeResumeReady(sessionName, beforeCommandOutput);
+      return;
+    }
+
+    await this.waitForAgentReady(sessionName, agentType);
+  }
+
+  private async waitForSudoCodeResumeReady(
+    sessionName: string,
+    beforeResumeOutput: string,
+  ): Promise<void> {
+    const pattern = AGENT_READY_PATTERNS.sudocode;
+    const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
+    const marker = 'Session resumed';
+    const beforeMarkerCount = countOccurrences(beforeResumeOutput, marker);
+
+    await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+
+    while (Date.now() < deadline) {
+      try {
+        const output = await this.captureCleanPane(sessionName, 400);
+        let newOutput = '';
+        if (output.startsWith(beforeResumeOutput)) {
+          newOutput = output.slice(beforeResumeOutput.length);
+        } else if (countOccurrences(output, marker) > beforeMarkerCount) {
+          newOutput = output.slice(output.lastIndexOf(marker));
+        }
+
+        const markerIndex = newOutput.lastIndexOf(marker);
+        if (markerIndex >= 0) {
+          const afterMarker = newOutput.slice(markerIndex + marker.length);
+          if (pattern.test(afterMarker)) {
+            await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+            return;
+          }
+        }
+      } catch {
+        // Session may still be repainting after the slash command.
+      }
+      await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+    }
+  }
+
   /**
    * Poll the tmux pane output until the agent's ready indicator appears,
    * or fall back to the fixed delay on timeout.
@@ -1606,6 +1812,7 @@ export class SessionManager {
     const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
     let trustPromptHandled = false;
     let codexResumeCwdPromptHandled = false;
+    let sudoCodeBroadDirectoryPromptHandled = false;
 
     // Initial delay before first poll (agent needs time to start the process)
     await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
@@ -1635,6 +1842,17 @@ export class SessionManager {
           continue;
         }
 
+        if (
+          agentType === 'sudocode' &&
+          !sudoCodeBroadDirectoryPromptHandled &&
+          SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN.test(output)
+        ) {
+          await this.backend.sendKeys(sessionName, 'y');
+          sudoCodeBroadDirectoryPromptHandled = true;
+          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+
         if (pattern.test(output)) {
           // Brief settle delay — TUI input handler may not be fully interactive yet
           await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
@@ -1650,33 +1868,42 @@ export class SessionManager {
   }
 
   /**
-   * Capture session ID by sending a slash command (/status or /stats) to the agent,
-   * waiting for output, and parsing the result from the terminal pane.
+   * Capture native agent session metadata by sending a slash command
+   * (/status or /stats) to the agent, waiting for output, and parsing the
+   * terminal pane.
    *
-   * Used for Codex and Gemini. Claude uses --session-id flag instead.
-   * Returns null on failure (graceful fallback).
+   * Used for Codex, Gemini, and Sudo Code. Claude uses --session-id instead.
+   * Returns null fields on failure (graceful fallback).
    */
-  private async captureAgentSessionId(
+  private async captureAgentSessionInfo(
     sessionName: string,
     agentType: string,
-  ): Promise<string | null> {
+    workdir: string,
+    launchStartedAt?: number,
+  ): Promise<{ sessionId: string | null; agentSessionFile: string | null }> {
     const config = AGENT_SESSION_CAPTURE[agentType];
-    if (!config) return null;
+    if (!config) return { sessionId: null, agentSessionFile: null };
 
     try {
-      // For Codex, wait for the TUI prompt before sending /status. Starting
+      // For REPL TUIs, wait for the prompt before sending status. Starting
       // with Codex 0.129, the trust prompt and first paint can take long enough
       // that fixed sleeps race the input handler and lose the status command.
-      if (agentType === 'codex') {
+      if (agentType === 'codex' || agentType === 'sudocode') {
         await this.waitForAgentReady(sessionName, agentType);
       } else {
         await this.sleep(config.readyDelayMs);
       }
 
       const existingOutput = await this.backend.capturePane(sessionName, 400);
-      const existingMatch = existingOutput.match(config.sessionIdPattern);
-      if (existingMatch?.[1]) {
-        return existingMatch[1];
+      const existing = this.parseAgentSessionInfo(agentType, workdir, existingOutput);
+      if (existing.sessionId) {
+        return existing;
+      }
+      if (agentType === 'sudocode') {
+        const latest = this.findLatestSudoCodeSessionInfo(workdir, launchStartedAt);
+        if (latest.sessionId) {
+          return latest;
+        }
       }
 
       // Send status slash command (use sendMessage for reliable Enter delivery to TUIs)
@@ -1688,29 +1915,143 @@ export class SessionManager {
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await this.sleep(pollInterval);
         const output = await this.backend.capturePane(sessionName, 400);
-        const match = output.match(config.sessionIdPattern);
-        if (match?.[1]) {
-          return match[1];
+        const parsed = this.parseAgentSessionInfo(agentType, workdir, output);
+        if (parsed.sessionId) {
+          return parsed;
+        }
+        if (agentType === 'sudocode') {
+          const latest = this.findLatestSudoCodeSessionInfo(workdir, launchStartedAt);
+          if (latest.sessionId) {
+            return latest;
+          }
         }
       }
 
       console.warn(
         `[hydra] Could not parse session ID for ${agentType} in ${sessionName}`,
       );
-      return null;
+      return { sessionId: null, agentSessionFile: null };
     } catch (error) {
       console.warn(`[hydra] Session ID capture failed for ${sessionName}:`, error);
-      return null;
+      return { sessionId: null, agentSessionFile: null };
     }
   }
 
-  private async updateSessionId(sessionName: string, sessionId: string | null): Promise<void> {
+  private parseAgentSessionInfo(
+    agentType: string,
+    workdir: string,
+    output: string,
+  ): { sessionId: string | null; agentSessionFile: string | null } {
+    const config = AGENT_SESSION_CAPTURE[agentType];
+    if (!config) return { sessionId: null, agentSessionFile: null };
+
+    const cleanOutput = this.stripAnsi(output);
+    const sessionId = cleanOutput.match(config.sessionIdPattern)?.[1] ?? null;
+    const capturedFile = config.sessionFilePattern
+      ? cleanOutput.match(config.sessionFilePattern)?.[1]?.trim() ?? null
+      : null;
+    const resolvedFile = capturedFile ? this.resolveCapturedSessionFile(workdir, capturedFile) : null;
+    const agentSessionFile = resolvedFile || resolveAgentSessionFile(agentType, workdir, sessionId);
+
+    return { sessionId, agentSessionFile };
+  }
+
+  private findLatestSudoCodeSessionInfo(
+    workdir: string,
+    minMtimeMs?: number,
+  ): { sessionId: string | null; agentSessionFile: string | null } {
+    if (!workdir) return { sessionId: null, agentSessionFile: null };
+    const root = path.join(workdir, '.scode', 'sessions');
+    if (!fs.existsSync(root)) return { sessionId: null, agentSessionFile: null };
+
+    let latestFile: string | null = null;
+    let latestMtime = -1;
+    const stack = [root];
+    while (stack.length > 0) {
+      const dir = stack.pop()!;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(entryPath);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
+          continue;
+        }
+
+        try {
+          const mtime = fs.statSync(entryPath).mtimeMs;
+          if (minMtimeMs !== undefined && mtime < minMtimeMs - 1000) {
+            continue;
+          }
+          if (mtime > latestMtime) {
+            latestMtime = mtime;
+            latestFile = entryPath;
+          }
+        } catch {
+          // Best-effort scan; ignore files that disappear mid-walk.
+        }
+      }
+    }
+
+    if (!latestFile) return { sessionId: null, agentSessionFile: null };
+    const basenameMatch = path.basename(latestFile).match(/^(session-\d+-\d+)\.jsonl$/);
+    const sessionId = this.readSudoCodeSessionId(latestFile) || basenameMatch?.[1] || null;
+    return { sessionId, agentSessionFile: latestFile };
+  }
+
+  private readSudoCodeSessionId(sessionFile: string): string | null {
+    try {
+      const raw = fs.readFileSync(sessionFile, 'utf-8');
+      for (const line of raw.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const parsed = JSON.parse(line);
+        if (parsed?.type === 'session_meta' && typeof parsed.session_id === 'string') {
+          return parsed.session_id;
+        }
+      }
+    } catch {
+      // Fall back to the filename.
+    }
+    return null;
+  }
+
+  private resolveCapturedSessionFile(workdir: string, sessionFile: string): string | null {
+    const cleaned = sessionFile.trim();
+    if (!cleaned) return null;
+    const unquoted = cleaned.replace(/^['"]|['"]$/g, '');
+    return path.normalize(path.isAbsolute(unquoted) ? unquoted : path.resolve(workdir, unquoted));
+  }
+
+  private stripAnsi(text: string): string {
+    const escape = String.fromCharCode(27);
+    return text.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
+  }
+
+  private async captureCleanPane(sessionName: string, lines: number): Promise<string> {
+    return this.stripAnsi(await this.backend.capturePane(sessionName, lines));
+  }
+
+  private async updateAgentSessionInfo(
+    sessionName: string,
+    sessionId: string | null,
+    agentSessionFile: string | null,
+  ): Promise<void> {
     await this.updateSessionState((state) => {
       if (state.workers[sessionName]) {
         state.workers[sessionName].sessionId = sessionId;
+        state.workers[sessionName].agentSessionFile = agentSessionFile;
         state.updatedAt = new Date().toISOString();
       } else if (state.copilots[sessionName]) {
         state.copilots[sessionName].sessionId = sessionId;
+        state.copilots[sessionName].agentSessionFile = agentSessionFile;
         state.updatedAt = new Date().toISOString();
       }
     });
@@ -1726,6 +2067,10 @@ export class SessionManager {
       return sessionName.substring(underscoreIdx + 1);
     }
     return sessionName;
+  }
+
+  private getDefaultAgentCommand(agentType: string): string {
+    return getHydraGlobalAgentCommand(agentType) || DEFAULT_AGENT_COMMANDS[agentType] || agentType;
   }
 
   private async resolveAgentCommand(agentCommand: string): Promise<string> {
@@ -1866,12 +2211,14 @@ export class SessionManager {
     savedWorkerMatch?: SavedWorkerMatch,
     copilotSessionName?: string,
     notifyCopilot = false,
+    resumeSessionFile?: string | null,
   ): Promise<CreateWorkerResult> {
     const savedWorker = savedWorkerMatch?.worker;
     const slug = savedWorker?.slug || coreGit.branchNameToSlug(branchName, this.backend);
     const sessionName = savedWorker?.sessionName || this.backend.buildSessionName(repoSessionNamespace, slug);
     const existingWorkerState = this.readSessionState().workers[sessionName] || savedWorker;
-    const shouldNotifyCopilot = notifyCopilot &&
+    const shouldNotifyCopilot = agentSupportsCompletionNotification(agentType) &&
+      notifyCopilot &&
       !!copilotSessionName &&
       !!task &&
       existingWorkerState?.copilotSessionName === copilotSessionName;
@@ -1923,6 +2270,7 @@ export class SessionManager {
           createdAt: existingWorker?.createdAt ?? now,
           lastSeenAt: now,
           sessionId: existingWorker?.sessionId ?? null,
+          agentSessionFile: resumeSessionFile ?? existingWorker?.agentSessionFile ?? null,
           copilotSessionName: existingWorker?.copilotSessionName ?? null,
         };
 
@@ -1955,19 +2303,36 @@ export class SessionManager {
       const now = new Date().toISOString();
       const existingWorker = this.readSessionState().workers[sessionName] || savedWorker;
       const storedSessionId = existingWorker?.sessionId;
+      const requestedResumeSessionFile = resumeSessionFile ?? existingWorker?.agentSessionFile ?? null;
+      const resolvedResumeSessionFile = storedSessionId
+        ? resolveAgentSessionFile(agentType, worktreePath, storedSessionId, requestedResumeSessionFile)
+        : null;
 
       // Resume or fresh start
-      const resumeCmd = storedSessionId
-        ? buildAgentResumeCommand(agentType, agentCommand, storedSessionId, worktreePath)
-        : null;
+      const canResume = !!storedSessionId &&
+        (agentType !== 'sudocode' || !!resolvedResumeSessionFile) &&
+        !!buildAgentResumePlan(
+          agentType,
+          agentCommand,
+          storedSessionId,
+          worktreePath,
+          resolvedResumeSessionFile,
+        );
 
       let postCreatePromise: Promise<void>;
       let sessionId: string | null;
 
-      if (resumeCmd) {
-        // ── Resume flow: launch with --resume, no session ID capture needed ──
+      if (canResume && storedSessionId) {
+        // ── Resume flow: launch agent resume, no session ID capture needed ──
         // The agent already has its conversation context from the previous session.
-        await this.backend.sendKeys(sessionName, resumeCmd);
+        await this.launchAgentResume(
+          sessionName,
+          agentType,
+          agentCommand,
+          storedSessionId,
+          worktreePath,
+          resolvedResumeSessionFile,
+        );
         sessionId = storedSessionId;
         // Skip Phase 1 (sessionId already known). Phase 2 only: send task if provided.
         postCreatePromise = (async () => {
@@ -1978,10 +2343,17 @@ export class SessionManager {
         // ── Fresh start: Phase 1 (capture sessionId) → Phase 2 (send task) ──
         const preAssignedSessionId = agentType === 'claude' ? randomUUID() : null;
         const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, preAssignedSessionId ?? undefined);
+        const launchStartedAt = Date.now();
         await this.backend.sendKeys(sessionName, launchCmd);
         sessionId = preAssignedSessionId;
         postCreatePromise = (async () => {
-          await this.waitForReadyAndCaptureSessionId(sessionName, agentType, preAssignedSessionId);
+          await this.waitForReadyAndCaptureSessionId(
+            sessionName,
+            agentType,
+            preAssignedSessionId,
+            worktreePath,
+            launchStartedAt,
+          );
           await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
         })();
       }
@@ -2009,6 +2381,7 @@ export class SessionManager {
           createdAt: currentWorker?.createdAt ?? now,
           lastSeenAt: now,
           sessionId,
+          agentSessionFile: canResume ? resolvedResumeSessionFile ?? requestedResumeSessionFile : null,
           copilotSessionName: currentWorker?.copilotSessionName ?? null,
         };
 

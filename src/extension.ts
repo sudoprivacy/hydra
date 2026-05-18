@@ -20,7 +20,7 @@ import { createWorktreeFromBranch } from './commands/createWorktreeFromBranch';
 import { createCopilot, createCopilotWithAgent } from './commands/createCopilot';
 import { ensureHydraGlobalConfig } from './utils/hydraGlobalConfig';
 import { installCli, ensurePathInShellProfile } from './core/cliInstaller';
-import { detectAvailableAgents } from './utils/agentConfig';
+import { detectAvailableAgents, syncAgentCommandsToHydraConfig } from './utils/agentConfig';
 import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } from './utils/hydraEditorGroup';
 import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
@@ -57,10 +57,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hydra.startCopilotClaude', () => createCopilotWithAgent('claude')),
     vscode.commands.registerCommand('hydra.startCopilotCodex', () => createCopilotWithAgent('codex')),
     vscode.commands.registerCommand('hydra.startCopilotGemini', () => createCopilotWithAgent('gemini')),
+    vscode.commands.registerCommand('hydra.startCopilotSudoCode', () => createCopilotWithAgent('sudocode')),
   );
 
   ensureHydraGlobalConfig();
   silentInstallCli(context);
+  syncAgentCommandsToHydraConfig();
   autoAttachOnStartup();
   detectAndSetAgentContext();
 
@@ -70,6 +72,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('hydra.agentCommands')) {
+        syncAgentCommandsToHydraConfig();
         detectAndSetAgentContext();
       }
     })
@@ -179,6 +182,7 @@ async function detectAndSetAgentContext(): Promise<void> {
     vscode.commands.executeCommand('setContext', 'hydra.claudeAvailable', available.includes('claude'));
     vscode.commands.executeCommand('setContext', 'hydra.codexAvailable', available.includes('codex'));
     vscode.commands.executeCommand('setContext', 'hydra.geminiAvailable', available.includes('gemini'));
+    vscode.commands.executeCommand('setContext', 'hydra.sudocodeAvailable', available.includes('sudocode'));
     vscode.commands.executeCommand('setContext', 'hydra.noAgentsAvailable', available.length === 0);
   } catch {
     // Best-effort — don't block activation

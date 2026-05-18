@@ -35,7 +35,7 @@ const FIRST_RUN_NOTICE =
 // UUIDv4 only: position 14 must be `4`, position 19 must be 8/9/a/b.
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const KNOWN_AGENTS = new Set(['claude', 'codex', 'gemini']);
+const KNOWN_AGENTS = new Set(['claude', 'codex', 'gemini', 'sudocode']);
 
 export function normalizeAgentForTelemetry(agent: string | undefined | null): string {
   if (typeof agent !== 'string' || !agent.trim()) {

@@ -30,10 +30,23 @@ export function toCanonicalPath(targetPath?: string): string | undefined {
  *   - gemini:  ~/.gemini/tmp/<projectName>/logs.json
  *              (projectName looked up by workdir in ~/.gemini/projects.json;
  *              the file is per-project and may contain multiple sessions)
+ *   - sudocode:
+ *              <workdir>/.scode/sessions/<workspace-hash>/<sessionId>.jsonl
  * Returns null when the agent is unknown, required inputs are missing, or the
  * file does not exist.
  */
-export function resolveAgentSessionFile(agent: string, workdir: string, sessionId: string | null): string | null {
+export function resolveAgentSessionFile(
+  agent: string,
+  workdir: string,
+  sessionId: string | null,
+  persistedSessionFile?: string | null,
+): string | null {
+  if (persistedSessionFile && fs.existsSync(persistedSessionFile)) {
+    if (agent !== 'sudocode' || sudoCodeSessionMatchesWorkdir(persistedSessionFile, workdir)) {
+      return persistedSessionFile;
+    }
+  }
+
   switch (agent) {
     case 'claude':
       return resolveClaudeSessionFile(workdir, sessionId);
@@ -41,6 +54,8 @@ export function resolveAgentSessionFile(agent: string, workdir: string, sessionI
       return resolveCodexSessionFile(sessionId);
     case 'gemini':
       return resolveGeminiSessionFile(workdir);
+    case 'sudocode':
+      return resolveSudoCodeSessionFile(workdir, sessionId);
     default:
       return null;
   }
@@ -174,6 +189,77 @@ function resolveGeminiSessionFile(workdir: string): string | null {
 
   const logsFile = path.join(os.homedir(), '.gemini', 'tmp', projectName, 'logs.json');
   return fs.existsSync(logsFile) ? logsFile : null;
+}
+
+function resolveSudoCodeSessionFile(workdir: string, sessionId: string | null): string | null {
+  if (!workdir || !sessionId) return null;
+  const root = path.join(workdir, '.scode', 'sessions');
+  if (!fs.existsSync(root)) return null;
+
+  const filename = `${sessionId}.jsonl`;
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+      } else if (
+        entry.isFile() &&
+        entry.name === filename &&
+        sudoCodeSessionMatchesWorkdir(entryPath, workdir)
+      ) {
+        return entryPath;
+      }
+    }
+  }
+
+  return null;
+}
+
+function sudoCodeSessionMatchesWorkdir(sessionFile: string, workdir: string): boolean {
+  const workspaceRoot = readSudoCodeWorkspaceRoot(sessionFile);
+  if (!workspaceRoot || !workdir) {
+    return true;
+  }
+
+  const sessionRoot = toCanonicalPath(workspaceRoot);
+  const targetRoot = toCanonicalPath(workdir);
+  if (!sessionRoot || !targetRoot) {
+    return true;
+  }
+  if (sessionRoot === targetRoot) {
+    return true;
+  }
+
+  try {
+    return fs.realpathSync.native(sessionRoot) === fs.realpathSync.native(targetRoot);
+  } catch {
+    return false;
+  }
+}
+
+function readSudoCodeWorkspaceRoot(sessionFile: string): string | null {
+  try {
+    const raw = fs.readFileSync(sessionFile, 'utf-8');
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const parsed = JSON.parse(line);
+      if (parsed?.type === 'session_meta') {
+        return typeof parsed.workspace_root === 'string' ? parsed.workspace_root : null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export interface HydraCliConfig {

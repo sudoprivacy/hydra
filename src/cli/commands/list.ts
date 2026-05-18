@@ -29,7 +29,7 @@ export function registerListCommand(program: Command): void {
             attached: c.attached,
             workdir: c.workdir || null,
             sessionId: c.sessionId,
-            sessionFile: resolveAgentSessionFile(c.agent, c.workdir, c.sessionId),
+            sessionFile: resolveAgentSessionFile(c.agent, c.workdir, c.sessionId, c.agentSessionFile),
             agentSessionId: c.sessionId,
           })),
           workers: workers.map(w => ({
@@ -44,7 +44,7 @@ export function registerListCommand(program: Command): void {
             workdir: w.workdir || null,
             copilotSessionName: w.copilotSessionName || null,
             sessionId: w.sessionId,
-            sessionFile: resolveAgentSessionFile(w.agent, w.workdir, w.sessionId),
+            sessionFile: resolveAgentSessionFile(w.agent, w.workdir, w.sessionId, w.agentSessionFile),
             agentSessionId: w.sessionId,
           })),
           count: copilots.length + workers.length,

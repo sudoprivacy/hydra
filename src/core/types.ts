@@ -1,6 +1,6 @@
 export type MultiplexerType = 'tmux';
 export type HydraRole = 'copilot' | 'worker';
-export type AgentType = 'claude' | 'codex' | 'gemini' | 'custom';
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'sudocode' | 'custom';
 
 export interface MultiplexerSession {
   name: string;

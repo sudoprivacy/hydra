@@ -1,6 +1,7 @@
 /**
  * Smoke test: resolveAgentSessionFile resolves transcript paths for claude,
- * codex, and gemini against fixture homes laid out under a temp directory.
+ * codex, gemini, and sudocode against fixture homes laid out under a temp
+ * directory.
  *
  * Run:  node out/smoke/sessionFileResolveSmoke.js
  */
@@ -130,6 +131,53 @@ function testGeminiMissingLogs(): void {
   });
 }
 
+function testSudoCode(): void {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-sudocode-resolve-'));
+  try {
+    const workdir = path.join(tmp, 'worktree');
+    const sessionId = 'session-1778831515919-0';
+    const expected = path.join(workdir, '.scode', 'sessions', 'ea44ee3d072f6b6a', `${sessionId}.jsonl`);
+    writeFile(expected, '{}\n');
+
+    assert.equal(resolveAgentSessionFile('sudocode', workdir, sessionId), expected);
+    assert.equal(resolveAgentSessionFile('sudocode', workdir, 'session-000-0'), null);
+    assert.equal(resolveAgentSessionFile('sudocode', workdir, null), null);
+    assert.equal(resolveAgentSessionFile('sudocode', '', sessionId), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function testSudoCodeWorkspaceMismatch(): void {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-sudocode-mismatch-'));
+  try {
+    const oldWorkdir = path.join(tmp, 'old-worktree');
+    const newWorkdir = path.join(tmp, 'new-worktree');
+    const sessionId = 'session-1778843662908-0';
+    const movedSessionFile = path.join(newWorkdir, '.scode', 'sessions', 'hash', `${sessionId}.jsonl`);
+    writeFile(
+      movedSessionFile,
+      `${JSON.stringify({ type: 'session_meta', session_id: sessionId, workspace_root: oldWorkdir })}\n`,
+    );
+
+    assert.equal(resolveAgentSessionFile('sudocode', newWorkdir, sessionId), null);
+    assert.equal(resolveAgentSessionFile('sudocode', newWorkdir, sessionId, movedSessionFile), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function testPersistedSessionFileFallback(): void {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-persisted-session-'));
+  try {
+    const persisted = path.join(tmp, 'archived.jsonl');
+    writeFile(persisted, '{}\n');
+    assert.equal(resolveAgentSessionFile('sudocode', '/missing/workdir', 'session-1-0', persisted), persisted);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 function testUnknownAgent(): void {
   withFakeHome(() => {
     assert.equal(resolveAgentSessionFile('unknown', '/x', 'y'), null);
@@ -178,6 +226,9 @@ function main(): void {
   testGemini();
   testGeminiPathNormalization();
   testGeminiMissingLogs();
+  testSudoCode();
+  testSudoCodeWorkspaceMismatch();
+  testPersistedSessionFileFallback();
   testUnknownAgent();
   console.log('sessionFileResolveSmoke: ok');
 }

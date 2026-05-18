@@ -40,7 +40,7 @@ export function registerCopilotCommands(program: Command): void {
     .description('Create a new copilot')
     .option('--workdir <path>', 'Working directory for the copilot', process.cwd())
     .option('--repo <identifier>', 'Run inside a registered repo: <owner/name> or absolute path (overrides --workdir)')
-    .option('--agent <type>', 'Agent type (claude, codex, gemini)', 'claude')
+    .option('--agent <type>', 'Agent type (claude, codex, gemini, sudocode)', 'claude')
     .option('--name <name>', 'Display name for the copilot session')
     .option('--session <name>', 'Explicit tmux session name')
     .action(async (opts: { workdir: string; repo?: string; agent: string; name?: string; session?: string }) => {
@@ -189,7 +189,7 @@ export function registerCopilotCommands(program: Command): void {
           sm.getCopilot(sessionName),
         ]);
         const sessionFile = copilot
-          ? resolveAgentSessionFile(copilot.agent, copilot.workdir, copilot.sessionId)
+          ? resolveAgentSessionFile(copilot.agent, copilot.workdir, copilot.sessionId, copilot.agentSessionFile)
           : null;
 
         outputResult(

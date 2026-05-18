@@ -96,7 +96,12 @@
       },
       {
         "view": "hydraCopilots",
-        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli).",
+        "contents": "[Start Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
+        "when": "hydra.sudocodeAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or Sudo Code.",
         "when": "hydra.noAgentsAvailable"
       }
     ],
@@ -179,6 +184,10 @@
       {
         "command": "hydra.startCopilotGemini",
         "title": "Hydra: Start Copilot (Gemini)"
+      },
+      {
+        "command": "hydra.startCopilotSudoCode",
+        "title": "Hydra: Start Copilot (Sudo Code)"
       }
     ],
     "keybindings": [
@@ -217,6 +226,7 @@
             "claude",
             "codex",
             "gemini",
+            "sudocode",
             "custom"
           ],
           "default": "claude",
@@ -227,7 +237,8 @@
           "default": {
             "claude": "claude",
             "codex": "codex",
-            "gemini": "gemini"
+            "gemini": "gemini",
+            "sudocode": "scode"
           },
           "markdownDescription": "Map of agent type to shell command used to launch the agent."
         },
@@ -281,7 +292,27 @@
     }
   },
   "activationEvents": [
-    "onView:hydraCopilots"
+    "onView:hydraCopilots",
+    "onCommand:tmux.attachCreate",
+    "onCommand:hydra.createWorker",
+    "onCommand:tmux.removeTask",
+    "onCommand:tmux.refresh",
+    "onCommand:tmux.attach",
+    "onCommand:tmux.attachInEditor",
+    "onCommand:tmux.openWorktree",
+    "onCommand:tmux.reviewChanges",
+    "onCommand:tmux.copyPath",
+    "onCommand:tmux.newPane",
+    "onCommand:tmux.newWindow",
+    "onCommand:tmux.terminalPaste",
+    "onCommand:tmux.pasteImage",
+    "onCommand:tmux.createWorktreeFromBranch",
+    "onCommand:hydra.openPR",
+    "onCommand:hydra.createCopilot",
+    "onCommand:hydra.startCopilotClaude",
+    "onCommand:hydra.startCopilotCodex",
+    "onCommand:hydra.startCopilotGemini",
+    "onCommand:hydra.startCopilotSudoCode"
   ],
   "scripts": {
     "compile": "tsc -p ./ && node scripts/postcompile.js",
@@ -299,10 +330,11 @@
     "smoke:telemetry-e2e": "node out/smoke/telemetryE2eSmoke.js",
     "smoke:telemetry-posthog-real": "node out/smoke/telemetryPostHogRealSmoke.js",
     "smoke:session-file-resolve": "node out/smoke/sessionFileResolveSmoke.js",
+    "smoke:sudocode-agent": "node out/smoke/sudocodeAgentSmoke.js",
     "smoke:cli-session-fields": "node out/smoke/cliSessionFieldsSmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:cli-session-fields && npm run smoke:share && npm run smoke:repo-registry"
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:share && npm run smoke:repo-registry"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

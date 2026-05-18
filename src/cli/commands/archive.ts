@@ -8,6 +8,7 @@ function formatEntry(entry: ArchivedSessionInfo): Record<string, unknown> {
     sessionName: entry.sessionName,
     type: entry.type,
     agentSessionId: entry.agentSessionId,
+    agentSessionFile: entry.agentSessionFile || null,
     archivedAt: entry.archivedAt,
     agent: entry.data.agent,
     branch: entry.type === 'worker' ? (entry.data as { branch?: string }).branch || null : null,
@@ -21,6 +22,7 @@ function printEntry(entry: ArchivedSessionInfo): void {
   console.log(`  [${entry.type}] ${entry.sessionName}${branch}`);
   console.log(`    Agent:      ${entry.data.agent}`);
   console.log(`    Session ID: ${entry.agentSessionId || 'none'}`);
+  if (entry.agentSessionFile) console.log(`    Session file: ${entry.agentSessionFile}`);
   console.log(`    Archived:   ${entry.archivedAt}`);
 }
 

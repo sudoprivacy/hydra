@@ -135,24 +135,30 @@ async function sleep(ms: number): Promise<void> {
 
 async function detectAgent(preferredAgent?: string): Promise<string> {
   if (preferredAgent) {
+    const command = preferredAgent === 'sudocode' ? 'scode' : preferredAgent;
     try {
-      await exec(`which ${preferredAgent}`);
+      await exec(`which ${command}`);
       return preferredAgent;
     } catch {
       throw new Error(`Requested agent "${preferredAgent}" is not installed or not on PATH`);
     }
   }
 
-  for (const agent of ['claude', 'codex', 'gemini']) {
+  for (const candidate of [
+    { type: 'claude', command: 'claude' },
+    { type: 'codex', command: 'codex' },
+    { type: 'gemini', command: 'gemini' },
+    { type: 'sudocode', command: 'scode' },
+  ]) {
     try {
-      await exec(`which ${agent}`);
-      return agent;
+      await exec(`which ${candidate.command}`);
+      return candidate.type;
     } catch {
       // Try the next agent.
     }
   }
 
-  throw new Error('No agent CLI found. Install one of: claude, codex, gemini');
+  throw new Error('No agent CLI found. Install one of: claude, codex, gemini, scode');
 }
 
 async function checkPrerequisites(): Promise<void> {
