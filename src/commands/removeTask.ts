@@ -11,6 +11,7 @@ import {
 } from "../providers/tmuxSessionProvider";
 import { SessionManager } from "../core/sessionManager";
 import { TmuxBackendCore } from "../core/tmux";
+import { resolveSessionKind, resolveSessionName } from "./treeItemResolver";
 
 function isMainWorktreeItem(item: TmuxItem): boolean {
   if (item instanceof WorktreeItem) return item.isMainWorktree;
@@ -28,16 +29,17 @@ function isOrphanItem(item: TmuxItem): boolean {
 }
 
 export async function removeTask(item?: TmuxItem): Promise<void> {
-  if (!item || !item.sessionName) {
+  const sessionName = resolveSessionName(item);
+  if (!sessionName) {
     vscode.window.showErrorMessage("No session selected. Select a Hydra session and try again.");
     return;
   }
 
   const sm = new SessionManager(new TmuxBackendCore());
-  const sessionName = item.sessionName;
+  const kind = resolveSessionKind(item);
 
   // ── Copilot: archive + kill via SessionManager ──
-  if (item instanceof CopilotItem) {
+  if (kind === 'copilot' || item instanceof CopilotItem) {
     const confirm = await vscode.window.showWarningMessage(
       `Kill copilot session "${sessionName}"?`,
       { modal: true },
@@ -52,7 +54,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
   }
 
   // ── Main worktree: stop only (cannot delete primary worktree) ──
-  if (isMainWorktreeItem(item)) {
+  if (item && isMainWorktreeItem(item)) {
     const backend = getActiveBackend();
     if (!await backend.hasSession(sessionName)) {
       vscode.window.showInformationMessage(
@@ -75,7 +77,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
   }
 
   // ── Orphan: worktree already gone, delete via SessionManager ──
-  if (isOrphanItem(item)) {
+  if (item && isOrphanItem(item)) {
     const confirm = await vscode.window.showWarningMessage(
       `Kill orphan session "${sessionName}"? (Worktree no longer exists)`,
       { modal: true },

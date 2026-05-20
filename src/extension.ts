@@ -24,8 +24,15 @@ import { detectAvailableAgents, syncAgentCommandsToHydraConfig } from './utils/a
 import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } from './utils/hydraEditorGroup';
 import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
+import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
+const RECENT_TREE_SELECTION_MS = 1000;
+const TREE_SELECTION_SETTLE_MS = 75;
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export function activate(context: vscode.ExtensionContext) {
   const copilotProvider = new CopilotProvider();
@@ -36,15 +43,77 @@ export function activate(context: vscode.ExtensionContext) {
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
   const workerView = vscode.window.createTreeView('hydraWorkers', { treeDataProvider: workerProvider });
   let selectedHydraItem: TmuxItem | undefined;
+  let selectedHydraItemAt = 0;
   const rememberHydraSelection = (event: vscode.TreeViewSelectionChangeEvent<TmuxItem>) => {
-    const selected = event.selection.find((item) => Boolean(item.sessionName));
-    if (selected) selectedHydraItem = selected;
+    const selected = event.selection.find((item) => hasHydraItemIdentity(item));
+    if (selected) {
+      selectedHydraItem = selected;
+      selectedHydraItemAt = Date.now();
+    }
   };
   const getSelectedHydraItem = () => {
-    if (selectedHydraItem?.sessionName) return selectedHydraItem;
-    const selectedCopilot = copilotView.selection.find((item) => Boolean(item.sessionName));
-    if (selectedCopilot) return selectedCopilot;
-    return workerView.selection.find((item) => Boolean(item.sessionName));
+    if (selectedHydraItem && Date.now() - selectedHydraItemAt <= RECENT_TREE_SELECTION_MS) {
+      return selectedHydraItem;
+    }
+    return undefined;
+  };
+
+  const getCommandHydraItemFromArgs = (...args: unknown[]) => {
+    const queue = [...args];
+    for (const candidate of queue) {
+      if (Array.isArray(candidate)) {
+        queue.push(...candidate);
+        continue;
+      }
+      if (hasHydraItemIdentity(candidate as TmuxItem)) {
+        return candidate as TmuxItem;
+      }
+    }
+    return undefined;
+  };
+
+  const pickHydraItem = async (kinds: HydraSessionKind[]) => {
+    const choices = listHydraSessionChoices(kinds);
+    if (choices.length === 0) return undefined;
+
+    const picked = choices.length === 1 ? { choice: choices[0] } : await vscode.window.showQuickPick(
+      choices.map(choice => ({
+        label: choice.label,
+        description: choice.kind,
+        detail: choice.worktreePath,
+        choice,
+      })),
+      { placeHolder: 'Select a Hydra session' },
+    );
+    if (!picked) return undefined;
+
+    return {
+      label: picked.choice.label,
+      sessionName: picked.choice.sessionName,
+      worktreePath: picked.choice.worktreePath,
+      contextValue: picked.choice.kind === 'copilot' ? 'copilotItem' : 'workerItem',
+    } as unknown as TmuxItem;
+  };
+
+  const getCommandHydraItem = async (kinds: HydraSessionKind[], ...args: unknown[]) => {
+    const itemFromArgs = getCommandHydraItemFromArgs(...args);
+    if (itemFromArgs) {
+      return itemFromArgs;
+    }
+
+    await delay(TREE_SELECTION_SETTLE_MS);
+    const selected = getSelectedHydraItem();
+    return hasHydraItemIdentity(selected) ? selected : await pickHydraItem(kinds);
+  };
+
+  const runWithHydraItem = async (
+    kinds: HydraSessionKind[],
+    action: (item: TmuxItem) => Promise<void>,
+    ...args: unknown[]
+  ) => {
+    const item = await getCommandHydraItem(kinds, ...args);
+    if (!item) return;
+    await action(item);
   };
 
   context.subscriptions.push(
@@ -52,15 +121,15 @@ export function activate(context: vscode.ExtensionContext) {
     workerView,
     vscode.commands.registerCommand('tmux.attachCreate', attachCreate),
     vscode.commands.registerCommand('hydra.createWorker', newTask),
-    vscode.commands.registerCommand('tmux.removeTask', (item?: TmuxItem) => removeTask(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.removeTask', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], removeTask, ...args)),
     vscode.commands.registerCommand('tmux.refresh', () => { copilotProvider.refresh(); workerProvider.refresh(); }),
-    vscode.commands.registerCommand('tmux.attach', (item?: TmuxItem) => attach(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.attachInEditor', (item?: TmuxItem) => attachInEditor(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.openWorktree', (item?: TmuxItem) => openWorktree(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.reviewChanges', (item?: TmuxItem) => reviewChanges(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.copyPath', (item?: TmuxItem) => copyPath(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.newPane', (item?: TmuxItem) => newPane(item ?? getSelectedHydraItem())),
-    vscode.commands.registerCommand('tmux.newWindow', (item?: TmuxItem) => newWindow(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.attach', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attach, ...args)),
+    vscode.commands.registerCommand('tmux.attachInEditor', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attachInEditor, ...args)),
+    vscode.commands.registerCommand('tmux.openWorktree', async (...args: unknown[]) => runWithHydraItem(['worker'], openWorktree, ...args)),
+    vscode.commands.registerCommand('tmux.reviewChanges', async (...args: unknown[]) => runWithHydraItem(['worker'], reviewChanges, ...args)),
+    vscode.commands.registerCommand('tmux.copyPath', async (...args: unknown[]) => runWithHydraItem(['worker'], copyPath, ...args)),
+    vscode.commands.registerCommand('tmux.newPane', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newPane, ...args)),
+    vscode.commands.registerCommand('tmux.newWindow', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newWindow, ...args)),
     vscode.commands.registerCommand('tmux.terminalPaste', terminalSmartPaste),
     vscode.commands.registerCommand('tmux.pasteImage', pasteImageForce),
     vscode.commands.registerCommand('tmux.createWorktreeFromBranch', (item) => createWorktreeFromBranch(item)),
@@ -171,7 +240,7 @@ function revealSidebarItem(
       return name === buildHydraTerminalName(shortName, 'copilot');
     });
     if (found) {
-      copilotView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
+      copilotView.reveal(found, { select: false, focus: false }).then(undefined, () => {});
     }
     return;
   }
@@ -185,7 +254,7 @@ function revealSidebarItem(
       return name === buildHydraTerminalName(shortName, 'worker', workerId);
     });
     if (found) {
-      workerView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
+      workerView.reveal(found, { select: false, focus: false }).then(undefined, () => {});
     }
   }
 }
