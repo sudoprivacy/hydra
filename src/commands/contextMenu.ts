@@ -15,7 +15,23 @@ import { exec } from '../utils/exec';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { openChangesReview } from './reviewChanges';
 
-function getWorktreePath(item: TmuxItem): string | undefined {
+function getStringField(value: unknown, field: string): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = (value as Record<string, unknown>)[field];
+  return typeof candidate === 'string' && candidate ? candidate : undefined;
+}
+
+function getNestedStringField(value: unknown, objectField: string, stringField: string): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  return getStringField((value as Record<string, unknown>)[objectField], stringField);
+}
+
+function getWorktreePath(item?: TmuxItem): string | undefined {
+  const structuralPath = getStringField(item, 'worktreePath') ||
+    getNestedStringField(item, 'session', 'worktreePath') ||
+    getNestedStringField(item, 'worktree', 'path');
+  if (structuralPath) return structuralPath;
+
   if (item instanceof CopilotItem) return item.worktreePath;
   if (item instanceof TmuxSessionItem) return item.session.worktreePath;
   if (item instanceof InactiveWorktreeItem) return item.worktree.path;
@@ -26,7 +42,11 @@ function getWorktreePath(item: TmuxItem): string | undefined {
   return undefined;
 }
 
-function getRoleFromItem(item: TmuxItem): HydraRole | undefined {
+function getRoleFromItem(item?: TmuxItem): HydraRole | undefined {
+  const structuralRole = getNestedStringField(item, 'session', 'hydraRole');
+  if (structuralRole === 'worker' || structuralRole === 'copilot') return structuralRole;
+  if (getStringField(item, 'contextValue') === 'copilotItem') return 'copilot';
+
   if (item instanceof CopilotItem) return 'copilot';
   if (item instanceof TmuxSessionItem) return item.session.hydraRole;
   return undefined;
@@ -46,8 +66,8 @@ async function ensureSessionExists(sessionName: string, worktreePath?: string): 
   await backend.setSessionWorkdir(sessionName, worktreePath);
 }
 
-export async function attach(item: TmuxItem): Promise<void> {
-  if (!item.sessionName) {
+export async function attach(item?: TmuxItem): Promise<void> {
+  if (!item?.sessionName) {
     vscode.window.showErrorMessage('No session selected');
     return;
   }
@@ -68,8 +88,8 @@ export async function attach(item: TmuxItem): Promise<void> {
   }
 }
 
-export async function attachInEditor(item: TmuxItem): Promise<void> {
-  if (!item.sessionName) {
+export async function attachInEditor(item?: TmuxItem): Promise<void> {
+  if (!item?.sessionName) {
     vscode.window.showErrorMessage('No session selected');
     return;
   }
@@ -90,7 +110,7 @@ export async function attachInEditor(item: TmuxItem): Promise<void> {
   }
 }
 
-export async function openWorktree(item: TmuxItem): Promise<void> {
+export async function openWorktree(item?: TmuxItem): Promise<void> {
   const worktreePath = getWorktreePath(item);
   if (!worktreePath) {
     vscode.window.showErrorMessage('Worktree path not found');
@@ -100,7 +120,7 @@ export async function openWorktree(item: TmuxItem): Promise<void> {
   await vscode.commands.executeCommand('vscode.openFolder', worktreeUri, true);
 }
 
-export async function reviewChanges(item: TmuxItem): Promise<void> {
+export async function reviewChanges(item?: TmuxItem): Promise<void> {
   const worktreePath = getWorktreePath(item);
   if (!worktreePath) {
     vscode.window.showErrorMessage('Worktree path not found');
@@ -114,7 +134,7 @@ export async function reviewChanges(item: TmuxItem): Promise<void> {
   }
 }
 
-export async function copyPath(item: TmuxItem): Promise<void> {
+export async function copyPath(item?: TmuxItem): Promise<void> {
   const worktreePath = getWorktreePath(item);
   if (!worktreePath) {
     vscode.window.showErrorMessage('Worktree path not found');
@@ -124,8 +144,8 @@ export async function copyPath(item: TmuxItem): Promise<void> {
   vscode.window.showInformationMessage(`Copied: ${worktreePath}`);
 }
 
-export async function newPane(item: TmuxItem): Promise<void> {
-  if (!item.sessionName) {
+export async function newPane(item?: TmuxItem): Promise<void> {
+  if (!item?.sessionName) {
     vscode.window.showErrorMessage('No session selected');
     return;
   }
@@ -144,8 +164,8 @@ export async function newPane(item: TmuxItem): Promise<void> {
   }
 }
 
-export async function newWindow(item: TmuxItem): Promise<void> {
-  if (!item.sessionName) {
+export async function newWindow(item?: TmuxItem): Promise<void> {
+  if (!item?.sessionName) {
     vscode.window.showErrorMessage('No session selected');
     return;
   }

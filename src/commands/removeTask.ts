@@ -27,9 +27,9 @@ function isOrphanItem(item: TmuxItem): boolean {
   return false;
 }
 
-export async function removeTask(item: TmuxItem): Promise<void> {
+export async function removeTask(item?: TmuxItem): Promise<void> {
   if (!item || !item.sessionName) {
-    vscode.window.showErrorMessage("No session selected");
+    vscode.window.showErrorMessage("No session selected. Select a Hydra session and try again.");
     return;
   }
 
