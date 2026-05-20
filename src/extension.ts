@@ -35,20 +35,32 @@ export function activate(context: vscode.ExtensionContext) {
 
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
   const workerView = vscode.window.createTreeView('hydraWorkers', { treeDataProvider: workerProvider });
+  let selectedHydraItem: TmuxItem | undefined;
+  const rememberHydraSelection = (event: vscode.TreeViewSelectionChangeEvent<TmuxItem>) => {
+    const selected = event.selection.find((item) => Boolean(item.sessionName));
+    if (selected) selectedHydraItem = selected;
+  };
+  const getSelectedHydraItem = () => {
+    if (selectedHydraItem?.sessionName) return selectedHydraItem;
+    const selectedCopilot = copilotView.selection.find((item) => Boolean(item.sessionName));
+    if (selectedCopilot) return selectedCopilot;
+    return workerView.selection.find((item) => Boolean(item.sessionName));
+  };
+
   context.subscriptions.push(
     copilotView,
     workerView,
     vscode.commands.registerCommand('tmux.attachCreate', attachCreate),
     vscode.commands.registerCommand('hydra.createWorker', newTask),
-    vscode.commands.registerCommand('tmux.removeTask', (item) => removeTask(item)),
+    vscode.commands.registerCommand('tmux.removeTask', (item?: TmuxItem) => removeTask(item ?? getSelectedHydraItem())),
     vscode.commands.registerCommand('tmux.refresh', () => { copilotProvider.refresh(); workerProvider.refresh(); }),
-    vscode.commands.registerCommand('tmux.attach', attach),
-    vscode.commands.registerCommand('tmux.attachInEditor', attachInEditor),
-    vscode.commands.registerCommand('tmux.openWorktree', openWorktree),
-    vscode.commands.registerCommand('tmux.reviewChanges', reviewChanges),
-    vscode.commands.registerCommand('tmux.copyPath', copyPath),
-    vscode.commands.registerCommand('tmux.newPane', newPane),
-    vscode.commands.registerCommand('tmux.newWindow', newWindow),
+    vscode.commands.registerCommand('tmux.attach', (item?: TmuxItem) => attach(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.attachInEditor', (item?: TmuxItem) => attachInEditor(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.openWorktree', (item?: TmuxItem) => openWorktree(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.reviewChanges', (item?: TmuxItem) => reviewChanges(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.copyPath', (item?: TmuxItem) => copyPath(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.newPane', (item?: TmuxItem) => newPane(item ?? getSelectedHydraItem())),
+    vscode.commands.registerCommand('tmux.newWindow', (item?: TmuxItem) => newWindow(item ?? getSelectedHydraItem())),
     vscode.commands.registerCommand('tmux.terminalPaste', terminalSmartPaste),
     vscode.commands.registerCommand('tmux.pasteImage', pasteImageForce),
     vscode.commands.registerCommand('tmux.createWorktreeFromBranch', (item) => createWorktreeFromBranch(item)),
@@ -58,6 +70,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hydra.startCopilotCodex', () => createCopilotWithAgent('codex')),
     vscode.commands.registerCommand('hydra.startCopilotGemini', () => createCopilotWithAgent('gemini')),
     vscode.commands.registerCommand('hydra.startCopilotSudoCode', () => createCopilotWithAgent('sudocode')),
+    copilotView.onDidChangeSelection(rememberHydraSelection),
+    workerView.onDidChangeSelection(rememberHydraSelection),
   );
 
   ensureHydraGlobalConfig();
