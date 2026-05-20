@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026052000] - 2026-05-20
+
+### Fixed
+- Make Hydra sidebar actions resilient when VS Code does not pass a tree item argument, including Review Changes and Remove session flows
+
 ## [0.3.2026051800] - 2026-05-18
 
 ### Added
