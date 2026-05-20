@@ -11,6 +11,10 @@ const REVIEW_SCHEME = 'hydra-git';
 const MAX_GIT_OUTPUT = 50 * 1024 * 1024;
 const REVIEW_LABEL_PREFIX = `${HYDRA_PREFIX_REVIEW} `;
 
+interface ExecFileFailure extends Error {
+  code?: string | number;
+}
+
 interface ReviewLayoutState {
   column: vscode.ViewColumn;
   maximized: boolean;
@@ -50,10 +54,25 @@ async function getGitBinary(): Promise<string> {
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await execFile(await getGitBinary(), args, {
-    cwd,
-    maxBuffer: MAX_GIT_OUTPUT,
-  });
+  const binary = await getGitBinary();
+  let stdout: string | Buffer;
+  try {
+    ({ stdout } = await execFile(binary, args, {
+      cwd,
+      maxBuffer: MAX_GIT_OUTPUT,
+    }));
+  } catch (error) {
+    const failure = error as ExecFileFailure;
+    if (failure.code !== 'ENOENT') {
+      throw error;
+    }
+
+    gitBinary = undefined;
+    ({ stdout } = await execFile(await getGitBinary(), args, {
+      cwd,
+      maxBuffer: MAX_GIT_OUTPUT,
+    }));
+  }
   return stdout.toString();
 }
 
@@ -172,6 +191,11 @@ async function getCurrentBranch(worktreePath: string): Promise<string> {
 }
 
 async function getReviewBaseRef(worktreePath: string): Promise<string> {
+  const isWorktree = (await git(['rev-parse', '--is-inside-work-tree'], worktreePath)).trim();
+  if (isWorktree !== 'true') {
+    throw new Error(`Not a git worktree: ${worktreePath}`);
+  }
+
   const branch = await getCurrentBranch(worktreePath);
   if (branch) {
     const configuredBase = (await tryGit(['config', '--get', `branch.${branch}.vscode-merge-base`], worktreePath)).trim();
@@ -187,7 +211,8 @@ async function getReviewBaseRef(worktreePath: string): Promise<string> {
     }
   }
 
-  throw new Error('Unable to find a base branch for this worktree.');
+  const suffix = branch ? ` on branch "${branch}"` : '';
+  throw new Error(`Unable to find a base branch for this worktree${suffix}: ${worktreePath}`);
 }
 
 async function refExists(worktreePath: string, ref: string): Promise<boolean> {
