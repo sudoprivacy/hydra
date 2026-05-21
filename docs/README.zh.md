@@ -21,6 +21,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="hydra-demo.gif" alt="Hydra 在 VS Code 中编排并行 AI 代理的演示" width="800" />
+</p>
+
 🌏 **其他语言:** [English](../README.md) | **中文**
 
 ---

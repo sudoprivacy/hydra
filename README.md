@@ -21,6 +21,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="docs/hydra-demo.gif" alt="Hydra demo showing parallel AI agents in VS Code" width="800" />
+</p>
+
 🌏 **Read this in other languages:** **English** | [中文](docs/README.zh.md)
 
 ---
