@@ -301,6 +301,7 @@ export class CopilotItem extends TmuxItem {
     this.worktreePath = opts.worktreePath;
     this.agentType = opts.agentType;
     this.classification = opts.classification;
+    this.id = opts.sessionName;
     this.description = description;
     this.contextValue = 'copilotItem';
     this.command = {
@@ -374,6 +375,7 @@ export class WorktreeItem extends TmuxItem {
     this.hasGit = opts.hasGit;
     this.hasTmux = opts.hasTmux;
     this.isMainWorktree = Boolean(opts.isMainWorktree);
+    this.id = opts.sessionName;
     this.description = description;
 
     this.contextValue = 'workerItem';
