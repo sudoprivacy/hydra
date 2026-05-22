@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026052201] - 2026-05-22
+
+### Fixed
+- Fix sidebar loading sweep loop caused by synchronous writes
+
 ## [0.3.2026052200] - 2026-05-22
 
 ### Added
