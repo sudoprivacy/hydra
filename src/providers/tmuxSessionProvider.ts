@@ -243,13 +243,27 @@ interface PrInfo {
   state: 'open' | 'closed' | 'merged';
 }
 
+const PR_STATUS_CACHE_TTL_MS = 30_000;
+const PR_STATUS_FETCH_TIMEOUT_MS = 3_000;
+const prStatusCache = new Map<string, { fetchedAt: number; value: Map<string, PrInfo> }>();
+
 async function fetchRepoPrStatuses(repoRoot: string): Promise<Map<string, PrInfo>> {
+  const cached = prStatusCache.get(repoRoot);
+  if (cached && Date.now() - cached.fetchedAt < PR_STATUS_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
   const map = new Map<string, PrInfo>();
   try {
-    const json = await exec(
-      'gh pr list --state all --json headRefName,number,state --limit 100',
-      { cwd: repoRoot }
-    );
+    const json = await Promise.race([
+      exec(
+        'gh pr list --state all --json headRefName,number,state --limit 100',
+        { cwd: repoRoot }
+      ),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('gh pr list timeout')), PR_STATUS_FETCH_TIMEOUT_MS)
+      ),
+    ]);
     const prs: { headRefName: string; number: number; state: string }[] = JSON.parse(json);
     // Keep the first (most recent) PR per branch
     for (const pr of prs) {
@@ -261,8 +275,13 @@ async function fetchRepoPrStatuses(repoRoot: string): Promise<Map<string, PrInfo
       }
     }
   } catch {
-    void 0;
+    // Timeout, gh not installed, or non-zero exit: fall back to last good cache
+    // if we have one, otherwise return an empty map. Either way, do not block
+    // TreeView rendering on gh CLI latency.
+    if (cached) return cached.value;
   }
+
+  prStatusCache.set(repoRoot, { fetchedAt: Date.now(), value: map });
   return map;
 }
 

@@ -220,6 +220,28 @@ export interface CreateCopilotResult {
   postCreatePromise: Promise<void>;
 }
 
+// Non-enumerable sentinel used by sync() to tell updateSessionState whether the
+// mutator actually changed anything. Callers that don't set it keep the legacy
+// unconditional-write semantics.
+const SESSION_STATE_DIRTY_KEY = '__hydraDirty';
+
+function markSessionStateDirty(state: SessionState, dirty: boolean): void {
+  Object.defineProperty(state, SESSION_STATE_DIRTY_KEY, {
+    value: dirty,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function consumeSessionStateDirty(state: SessionState): boolean | undefined {
+  const record = state as unknown as Record<string, unknown>;
+  if (!(SESSION_STATE_DIRTY_KEY in record)) return undefined;
+  const value = record[SESSION_STATE_DIRTY_KEY] as boolean;
+  delete record[SESSION_STATE_DIRTY_KEY];
+  return value;
+}
+
 // ── SessionManager Class ──
 
 export class SessionManager {
@@ -254,24 +276,28 @@ export class SessionManager {
 
     return this.updateSessionState((state) => {
       const now = new Date().toISOString();
+      let dirty = false;
 
-      // Reconcile workers
+      // Reconcile workers — only mark dirty on real status/attached/membership changes.
+      // lastSeenAt is deliberately NOT bumped on every sidebar read; the real mutation
+      // paths (createWorker, startWorker, persistCopilotSessionId, etc.) already refresh it.
       for (const [key, worker] of Object.entries(state.workers)) {
         // Backfill workerId for workers created before this feature
         if (worker.workerId == null) {
           worker.workerId = state.nextWorkerId++;
+          dirty = true;
         }
         const live = liveSessionMap.get(worker.sessionName);
         if (live) {
-          worker.status = 'running';
-          worker.attached = live.attached;
-          worker.lastSeenAt = now;
+          if (worker.status !== 'running') { worker.status = 'running'; dirty = true; }
+          if (worker.attached !== live.attached) { worker.attached = live.attached; dirty = true; }
         } else if (worker.workdir && fs.existsSync(worker.workdir)) {
-          worker.status = 'stopped';
-          worker.attached = false;
+          if (worker.status !== 'stopped') { worker.status = 'stopped'; dirty = true; }
+          if (worker.attached !== false) { worker.attached = false; dirty = true; }
         } else {
           // Orphan: tmux dead + no worktree
           delete state.workers[key];
+          dirty = true;
         }
       }
 
@@ -279,11 +305,11 @@ export class SessionManager {
       for (const [key, copilot] of Object.entries(state.copilots)) {
         const live = liveSessionMap.get(copilot.sessionName);
         if (live) {
-          copilot.status = 'running';
-          copilot.attached = live.attached;
-          copilot.lastSeenAt = now;
+          if (copilot.status !== 'running') { copilot.status = 'running'; dirty = true; }
+          if (copilot.attached !== live.attached) { copilot.attached = live.attached; dirty = true; }
         } else {
           delete state.copilots[key];
+          dirty = true;
         }
       }
 
@@ -325,6 +351,7 @@ export class SessionManager {
             agentSessionFile: null,
             copilotSessionName: null,
           };
+          dirty = true;
         } else {
           state.copilots[session.name] = {
             sessionName: session.name,
@@ -339,10 +366,12 @@ export class SessionManager {
             sessionId: null,
             agentSessionFile: null,
           };
+          dirty = true;
         }
       }
 
-      state.updatedAt = now;
+      if (dirty) state.updatedAt = now;
+      markSessionStateDirty(state, dirty);
       return state;
     });
   }
@@ -1280,7 +1309,13 @@ export class SessionManager {
     try {
       const state = this.readSessionState();
       const result = mutate(state);
-      this.writeSessionState(state);
+      // Mutators that opt in (currently only sync()) signal whether anything
+      // actually changed via markSessionStateDirty(). Other callers keep the
+      // legacy unconditional-write behavior.
+      const dirty = consumeSessionStateDirty(state);
+      if (dirty === undefined || dirty) {
+        this.writeSessionState(state);
+      }
       return result;
     } finally {
       await release();
