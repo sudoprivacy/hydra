@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2026052200] - 2026-05-22
+
+### Added
+- Add README demo GIF to show the Hydra workflow
+
+### Fixed
+- Fix Hydra worker review and context-menu session resolution after editor tabs are closed or VS Code omits the tree item argument
+
 ## [0.3.2026052000] - 2026-05-20
 
 ### Fixed
