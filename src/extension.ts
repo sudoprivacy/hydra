@@ -241,7 +241,7 @@ function revealSidebarItem(
       return name === buildHydraTerminalName(shortName, 'copilot');
     });
     if (found) {
-      copilotView.reveal(found, { select: false, focus: false }).then(undefined, () => {});
+      copilotView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
     }
     return;
   }
@@ -255,7 +255,7 @@ function revealSidebarItem(
       return name === buildHydraTerminalName(shortName, 'worker', workerId);
     });
     if (found) {
-      workerView.reveal(found, { select: false, focus: false }).then(undefined, () => {});
+      workerView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
     }
   }
 }
