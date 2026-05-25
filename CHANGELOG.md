@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026052500] - 2026-05-25
+
+### Added
+- Add plan copilot mode for Claude and Codex, including guarded launch/resume behavior, CLI and VS Code entry points, persisted session mode, sidebar labels, and plan-specific onboarding
+
 ## [0.3.2026052201] - 2026-05-22
 
 ### Fixed
