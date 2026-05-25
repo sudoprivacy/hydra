@@ -5,6 +5,7 @@ import { SessionManager } from '../../core/sessionManager';
 import { toCanonicalPath, resolveAgentSessionFile } from '../../core/path';
 import { resolveRepoInput } from '../../core/repoRegistry';
 import { fetchOriginRequired } from '../../core/git';
+import type { CopilotMode } from '../../core/types';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
 
@@ -30,6 +31,19 @@ function requireSessionName(sessionName: string): string {
   return trimmed;
 }
 
+function resolveCopilotMode(opts: { mode?: string; plan?: boolean }): CopilotMode {
+  if (opts.plan) {
+    return 'plan';
+  }
+
+  const mode = (opts.mode || 'normal').trim().toLowerCase();
+  if (mode === 'normal' || mode === 'plan') {
+    return mode;
+  }
+
+  throw new Error(`Invalid --mode value "${opts.mode}". Expected "normal" or "plan".`);
+}
+
 export function registerCopilotCommands(program: Command): void {
   const copilot = program
     .command('copilot')
@@ -41,14 +55,18 @@ export function registerCopilotCommands(program: Command): void {
     .option('--workdir <path>', 'Working directory for the copilot', process.cwd())
     .option('--repo <identifier>', 'Run inside a registered repo: <owner/name> or absolute path (overrides --workdir)')
     .option('--agent <type>', 'Agent type (claude, codex, gemini, sudocode)', 'claude')
+    .option('--mode <mode>', 'Copilot mode (normal, plan)', 'normal')
+    .option('--plan', 'Shortcut for --mode plan')
     .option('--name <name>', 'Display name for the copilot session')
     .option('--session <name>', 'Explicit tmux session name')
-    .action(async (opts: { workdir: string; repo?: string; agent: string; name?: string; session?: string }) => {
+    .action(async (opts: { workdir: string; repo?: string; agent: string; mode?: string; plan?: boolean; name?: string; session?: string }) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        const requestedSession = opts.session || opts.name || `hydra-copilot-${opts.agent}`;
+        const copilotMode = resolveCopilotMode(opts);
+        const defaultSessionName = copilotMode === 'plan' ? `hydra-plan-${opts.agent}` : `hydra-copilot-${opts.agent}`;
+        const requestedSession = opts.session || opts.name || defaultSessionName;
         const sessionName = backend.sanitizeSessionName(requestedSession);
 
         let workdir: string;
@@ -65,12 +83,14 @@ export function registerCopilotCommands(program: Command): void {
         const finalCopilot = await sm.createCopilotAndFinalize({
           workdir,
           agentType: opts.agent,
+          copilotMode,
           name: opts.name,
           sessionName,
         });
 
         getTelemetry().capture('copilot_created', {
           agent: normalizeAgentForTelemetry(finalCopilot.agent),
+          mode: finalCopilot.copilotMode,
         });
 
         outputResult(
@@ -78,6 +98,7 @@ export function registerCopilotCommands(program: Command): void {
             status: 'created',
             session: finalCopilot.sessionName,
             agent: finalCopilot.agent,
+            mode: finalCopilot.copilotMode,
             workdir: finalCopilot.workdir,
             agentSessionId: finalCopilot.sessionId,
           },
@@ -85,6 +106,7 @@ export function registerCopilotCommands(program: Command): void {
           () => {
             console.log(`Created copilot: ${finalCopilot.sessionName}`);
             console.log(`  Agent:      ${finalCopilot.agent}`);
+            console.log(`  Mode:       ${finalCopilot.copilotMode}`);
             console.log(`  Workdir:    ${finalCopilot.workdir}`);
             console.log(`  Session ID: ${finalCopilot.sessionId || 'none'}`);
           },
@@ -134,6 +156,7 @@ export function registerCopilotCommands(program: Command): void {
             type: 'copilot',
             session: finalCopilot.sessionName,
             agent: finalCopilot.agent,
+            mode: finalCopilot.copilotMode,
             workdir: finalCopilot.workdir,
             agentSessionId: finalCopilot.sessionId,
           },
@@ -141,6 +164,7 @@ export function registerCopilotCommands(program: Command): void {
           () => {
             console.log(`Restored copilot: ${finalCopilot.sessionName}`);
             console.log(`  Agent:      ${finalCopilot.agent}`);
+            console.log(`  Mode:       ${finalCopilot.copilotMode}`);
             console.log(`  Workdir:    ${finalCopilot.workdir}`);
             console.log(`  Session ID: ${finalCopilot.sessionId || 'none'}`);
           },

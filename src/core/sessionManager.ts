@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { MultiplexerBackendCore } from './types';
+import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification } from './agentConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
 import { exec, resolveCommandPath } from './exec';
 import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
@@ -135,6 +135,7 @@ export interface CopilotInfo {
   status: 'running' | 'stopped';
   attached: boolean;
   agent: string;
+  copilotMode: CopilotMode;
   workdir: string;
   tmuxSession: string;
   createdAt: string;
@@ -198,6 +199,7 @@ export interface CreateWorkerOpts {
 export interface CreateCopilotOpts {
   workdir: string;
   agentType?: string;
+  copilotMode?: CopilotMode;
   /** User-given name for the copilot (used as displayName). */
   name?: string;
   sessionName?: string;
@@ -240,6 +242,10 @@ function consumeSessionStateDirty(state: SessionState): boolean | undefined {
   const value = record[SESSION_STATE_DIRTY_KEY] as boolean;
   delete record[SESSION_STATE_DIRTY_KEY];
   return value;
+}
+
+function normalizeCopilotMode(mode: CopilotMode | undefined): CopilotMode {
+  return mode === 'plan' ? 'plan' : 'normal';
 }
 
 // ── SessionManager Class ──
@@ -359,6 +365,7 @@ export class SessionManager {
             status: 'running',
             attached: session.attached,
             agent: discovered.agent,
+            copilotMode: 'normal',
             workdir: discovered.workdir,
             tmuxSession: session.name,
             createdAt: now,
@@ -780,9 +787,16 @@ export class SessionManager {
     ensureHydraGlobalConfig();
 
     const agentType = opts.agentType || 'claude';
+    const copilotMode = normalizeCopilotMode(opts.copilotMode);
+    if (!agentSupportsCopilotMode(agentType, copilotMode)) {
+      throw new Error(getUnsupportedCopilotModeMessage(agentType, copilotMode));
+    }
+
     const agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
-    const displayName = opts.name || opts.sessionName || `hydra-copilot-${agentType}`;
-    const sessionName = opts.sessionName || this.backend.sanitizeSessionName(`hydra-copilot-${agentType}`);
+    const defaultSessionName = copilotMode === 'plan' ? `hydra-plan-${agentType}` : `hydra-copilot-${agentType}`;
+    const displayName = opts.name || opts.sessionName || defaultSessionName;
+    const sessionName = opts.sessionName || this.backend.sanitizeSessionName(defaultSessionName);
+    const agentOptions: AgentCommandOptions = { copilotMode };
 
     const exists = await this.backend.hasSession(sessionName);
     if (exists) {
@@ -804,10 +818,10 @@ export class SessionManager {
 
     if (isResume) {
       sessionId = opts.resumeSessionId!;
-      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, opts.workdir, opts.resumeSessionFile);
+      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, opts.workdir, opts.resumeSessionFile, agentOptions);
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined);
+      const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions);
       launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
     }
@@ -820,6 +834,7 @@ export class SessionManager {
       status: 'running',
       attached: false,
       agent: agentType,
+      copilotMode,
       workdir: opts.workdir,
       tmuxSession: sessionName,
       createdAt: now,
@@ -835,6 +850,7 @@ export class SessionManager {
         createdAt: existingCopilot?.createdAt ?? now,
         sessionId: sessionId ?? existingCopilot?.sessionId ?? null,
         agentSessionFile: opts.resumeSessionFile ?? existingCopilot?.agentSessionFile ?? null,
+        copilotMode,
       };
 
       state.copilots[sessionName] = nextCopilot;
@@ -1057,6 +1073,7 @@ export class SessionManager {
     workdir: string,
     sessionId: string | null,
     displayName?: string,
+    copilotMode?: CopilotMode,
   ): Promise<void> {
     await this.updateSessionState((state) => {
       const now = new Date().toISOString();
@@ -1067,6 +1084,7 @@ export class SessionManager {
         status: 'running',
         attached: false,
         agent: agentType,
+        copilotMode: normalizeCopilotMode(copilotMode ?? existingCopilot?.copilotMode),
         workdir,
         tmuxSession: sessionName,
         createdAt: existingCopilot?.createdAt ?? now,
@@ -1147,6 +1165,7 @@ export class SessionManager {
     return this.createCopilot({
       workdir: copilot.workdir,
       agentType: copilot.agent,
+      copilotMode: copilot.copilotMode,
       name: copilot.displayName,
       sessionName: copilot.sessionName,
       resumeSessionId: entry.agentSessionId || undefined,
@@ -1290,6 +1309,7 @@ export class SessionManager {
           c.sessionId ??= null;
           c.agentSessionFile ??= null;
           c.displayName ??= c.sessionName;
+          c.copilotMode = normalizeCopilotMode(c.copilotMode);
         }
         return state;
       }
@@ -1759,8 +1779,9 @@ export class SessionManager {
     sessionId: string,
     workdir: string,
     agentSessionFile?: string | null,
+    agentOptions?: AgentCommandOptions,
   ): Promise<void> {
-    const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile);
+    const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile, agentOptions);
     if (!resumePlan) {
       throw new Error(`Agent "${agentType}" does not support session resume`);
     }

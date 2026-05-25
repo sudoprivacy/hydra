@@ -1,7 +1,8 @@
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { getActiveBackend, MultiplexerBackend } from '../utils/multiplexer';
-import { getAgentCommand, pickAgentType, AgentType } from '../utils/agentConfig';
+import { getAgentCommand, pickAgentType, AgentType, AGENT_LABELS } from '../utils/agentConfig';
+import { CopilotMode } from '../core/types';
 import { TmuxBackendCore } from '../core/tmux';
 import { SessionManager } from '../core/sessionManager';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
@@ -30,24 +31,81 @@ Workers cannot create other workers directly. If a worker reports that more para
 
 Full reference: https://github.com/joezhoujinjing/hydra/blob/main/AGENTS.md`;
 
-function sendCopilotOnboarding(backend: MultiplexerBackend, sessionName: string): void {
+const PLAN_ONBOARDING_PROMPT = `You are a Hydra plan copilot — an AI planner that analyzes tasks and produces implementation plans only.
+
+## Operating rules
+- Do not edit files, run implementation commands, create workers, commit, push, or open PRs.
+- Read code and documentation as needed.
+- Ask clarifying questions when requirements are ambiguous.
+- Produce a concrete implementation plan that another agent can execute.
+- Include affected files, ordered steps, risks, and verification commands.
+
+The user or a separate executor will handle implementation after the plan is approved.`;
+
+function getOnboardingPrompt(copilotMode: CopilotMode): string {
+  return copilotMode === 'plan' ? PLAN_ONBOARDING_PROMPT : ONBOARDING_PROMPT;
+}
+
+function sendCopilotOnboarding(backend: MultiplexerBackend, sessionName: string, copilotMode: CopilotMode): void {
   (async () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 8000));
-      await backend.sendMessage(sessionName, ONBOARDING_PROMPT);
+      await backend.sendMessage(sessionName, getOnboardingPrompt(copilotMode));
     } catch {
       // Best-effort — agent may not be ready yet
     }
   })();
 }
 
-export async function createCopilotWithAgent(agentType: AgentType): Promise<void> {
+function getDefaultSessionName(agentType: AgentType, copilotMode: CopilotMode): string {
+  return copilotMode === 'plan' ? `hydra-plan-${agentType}` : `hydra-copilot-${agentType}`;
+}
+
+function getCreatedMessage(sessionName: string, agentType: AgentType, copilotMode: CopilotMode): string {
+  if (copilotMode === 'plan') {
+    const strategy = agentType === 'claude' ? 'native plan mode' : 'read-only plan mode';
+    return `Plan copilot created: ${sessionName} (${AGENT_LABELS[agentType]}, ${strategy})`;
+  }
+  return `Copilot created: ${sessionName} (${agentType})`;
+}
+
+async function pickCopilotMode(): Promise<CopilotMode | undefined> {
+  const picked = await vscode.window.showQuickPick([
+    {
+      label: 'Normal Copilot',
+      description: 'Orchestrates workers and implementation',
+      value: 'normal' as CopilotMode,
+    },
+    {
+      label: 'Plan Copilot',
+      description: 'Produces implementation plans only',
+      value: 'plan' as CopilotMode,
+    },
+  ], {
+    placeHolder: 'Select copilot mode',
+  });
+  return picked?.value;
+}
+
+async function pickPlanAgentType(): Promise<AgentType | undefined> {
+  const items = [
+    { label: AGENT_LABELS.claude, description: 'Native plan mode', value: 'claude' as AgentType },
+    { label: AGENT_LABELS.codex, description: 'Read-only guarded plan mode', value: 'codex' as AgentType },
+  ];
+
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select agent for plan copilot',
+  });
+  return picked?.value;
+}
+
+export async function createCopilotWithAgent(agentType: AgentType, copilotMode: CopilotMode = 'normal'): Promise<void> {
   const backend = getActiveBackend();
   if (!await ensureBackendInstalled(backend)) {
     return;
   }
 
-  const sessionName = backend.sanitizeSessionName(`hydra-copilot-${agentType}`);
+  const sessionName = backend.sanitizeSessionName(getDefaultSessionName(agentType, copilotMode));
 
   // If session already exists, just attach
   if (await backend.hasSession(sessionName)) {
@@ -61,19 +119,26 @@ export async function createCopilotWithAgent(agentType: AgentType): Promise<void
     const copilotInfo = await sm.createCopilotAndFinalize({
       workdir: os.homedir(),
       agentType,
+      copilotMode,
       sessionName,
       agentCommand: getAgentCommand(agentType),
     });
 
-    sendCopilotOnboarding(backend, copilotInfo.sessionName);
+    sendCopilotOnboarding(backend, copilotInfo.sessionName, copilotMode);
     backend.attachSession(copilotInfo.sessionName, copilotInfo.workdir, undefined, 'copilot');
 
-    vscode.window.showInformationMessage(`Copilot created: ${sessionName} (${agentType})`);
+    vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, copilotMode));
     vscode.commands.executeCommand('tmux.refresh');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(`Failed to create copilot: ${message}`);
   }
+}
+
+export async function createPlanCopilot(): Promise<void> {
+  const agentType = await pickPlanAgentType();
+  if (!agentType) return;
+  await createCopilotWithAgent(agentType, 'plan');
 }
 
 export async function createCopilot(): Promise<void> {
@@ -82,12 +147,17 @@ export async function createCopilot(): Promise<void> {
     return;
   }
 
+  const copilotMode = await pickCopilotMode();
+  if (!copilotMode) return;
+
   // Pick agent type
-  const agentType = await pickAgentType();
+  const agentType = copilotMode === 'plan'
+    ? await pickPlanAgentType()
+    : await pickAgentType();
   if (!agentType) return;
 
   // Ask for session name (default: hydra-copilot-<agent>)
-  const defaultName = `hydra-copilot-${agentType}`;
+  const defaultName = getDefaultSessionName(agentType, copilotMode);
   const nameInput = await vscode.window.showInputBox({
     prompt: 'Copilot session name',
     value: defaultName,
@@ -116,15 +186,16 @@ export async function createCopilot(): Promise<void> {
     const copilotInfo = await sm.createCopilotAndFinalize({
       workdir: os.homedir(),
       agentType,
+      copilotMode,
       sessionName,
       name: nameInput.trim(),
       agentCommand: getAgentCommand(agentType),
     });
 
-    sendCopilotOnboarding(backend, copilotInfo.sessionName);
+    sendCopilotOnboarding(backend, copilotInfo.sessionName, copilotMode);
     backend.attachSession(copilotInfo.sessionName, copilotInfo.workdir, undefined, 'copilot');
 
-    vscode.window.showInformationMessage(`Copilot created: ${sessionName} (${agentType})`);
+    vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, copilotMode));
     vscode.commands.executeCommand('tmux.refresh');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

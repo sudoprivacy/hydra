@@ -1,4 +1,4 @@
-import { AgentType } from './types';
+import { AgentType, CopilotMode } from './types';
 
 export const AGENT_LABELS: Record<AgentType, string> = {
   claude: 'Claude', codex: 'Codex', gemini: 'Gemini', sudocode: 'Sudo Code', custom: 'Custom',
@@ -88,6 +88,20 @@ export function agentSupportsCompletionNotification(agentType: string): boolean 
   return AGENT_COMPLETION_NOTIFICATIONS[agentType] === true;
 }
 
+export function agentSupportsCopilotMode(agentType: string, copilotMode: CopilotMode): boolean {
+  if (copilotMode === 'normal') {
+    return true;
+  }
+  return agentType === 'claude' || agentType === 'codex';
+}
+
+export function getUnsupportedCopilotModeMessage(agentType: string, copilotMode: CopilotMode): string {
+  if (copilotMode === 'plan') {
+    return `Plan copilot mode is currently supported for Claude and Codex only. Agent "${agentType}" is not supported.`;
+  }
+  return `Copilot mode "${copilotMode}" is not supported for agent "${agentType}".`;
+}
+
 export function extractAgentCommandExecutable(command: string): string {
   const tokens = tokenizeCommand(command);
   if (tokens.length === 0) {
@@ -159,6 +173,53 @@ function ensureCommandFlag(command: string, flag: string): string {
   return appendCommandArgs(trimmed, flag);
 }
 
+export interface AgentCommandOptions {
+  copilotMode?: CopilotMode;
+}
+
+const PLAN_UNSAFE_FLAGS = [
+  '--dangerously-skip-permissions',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--yolo',
+];
+
+function isPlanCopilot(options?: AgentCommandOptions): boolean {
+  return options?.copilotMode === 'plan';
+}
+
+function assertPlanCommandIsSafe(agentBinary: string): void {
+  const tokens = tokenizeCommand(agentBinary);
+  const unsafe = PLAN_UNSAFE_FLAGS.find(flag => tokens.includes(flag));
+  if (unsafe) {
+    throw new Error(`Plan copilot mode cannot use unsafe agent flag "${unsafe}". Remove it from the configured agent command.`);
+  }
+}
+
+function buildAgentBaseCommand(
+  agentType: string,
+  agentBinary: string,
+  options?: AgentCommandOptions,
+): string {
+  if (!isPlanCopilot(options)) {
+    const yolo = AGENT_YOLO_FLAGS[agentType] || '';
+    return ensureCommandFlag(agentBinary, yolo);
+  }
+
+  assertPlanCommandIsSafe(agentBinary);
+
+  switch (agentType) {
+    case 'claude':
+      return ensureCommandFlag(agentBinary, '--permission-mode plan');
+    case 'codex': {
+      let command = ensureCommandFlag(agentBinary, '--sandbox read-only');
+      command = ensureCommandFlag(command, '--ask-for-approval never');
+      return command;
+    }
+    default:
+      throw new Error(getUnsupportedCopilotModeMessage(agentType, 'plan'));
+  }
+}
+
 /**
  * Build the shell command to RESUME an existing agent session.
  * Returns null if the agent type doesn't support resume.
@@ -168,8 +229,9 @@ export function buildAgentResumeCommand(
   agentBinary: string,
   sessionId: string,
   workdir?: string,
+  options?: AgentCommandOptions,
 ): string | null {
-  const plan = buildAgentResumePlan(agentType, agentBinary, sessionId, workdir);
+  const plan = buildAgentResumePlan(agentType, agentBinary, sessionId, workdir, null, options);
   return plan?.strategy === 'command' ? plan.command : null;
 }
 
@@ -187,21 +249,28 @@ export function buildAgentResumePlan(
   sessionId: string,
   workdir?: string,
   sessionFile?: string | null,
+  options?: AgentCommandOptions,
 ): AgentResumePlan | null {
   const quotedSessionId = shellQuoteForDisplay(sessionId);
   switch (agentType) {
     case 'claude': {
-      return { strategy: 'command', command: appendCommandArgs(agentBinary, `--resume ${quotedSessionId}`) };
+      const command = isPlanCopilot(options)
+        ? buildAgentBaseCommand(agentType, agentBinary, options)
+        : agentBinary;
+      return { strategy: 'command', command: appendCommandArgs(command, `--resume ${quotedSessionId}`) };
     }
     case 'codex': {
-      const command = ensureCommandFlag(agentBinary, AGENT_YOLO_FLAGS.codex);
+      const command = buildAgentBaseCommand(agentType, agentBinary, options);
       const cdArgs = workdir ? ['-C', shellQuoteForDisplay(workdir)] : [];
       return { strategy: 'command', command: appendCommandArgs(command, 'resume', ...cdArgs, quotedSessionId) };
     }
     case 'gemini':
+      if (isPlanCopilot(options)) {
+        throw new Error(getUnsupportedCopilotModeMessage(agentType, 'plan'));
+      }
       return { strategy: 'command', command: appendCommandArgs(agentBinary, `--resume ${quotedSessionId}`) };
     case 'sudocode': {
-      const command = ensureCommandFlag(agentBinary, AGENT_YOLO_FLAGS.sudocode);
+      const command = buildAgentBaseCommand(agentType, agentBinary, options);
       const resumeRef = sessionFile?.trim() || sessionId;
       return {
         strategy: 'replSlashCommand',
@@ -223,9 +292,9 @@ export function buildAgentLaunchCommand(
   agentBinary: string,
   task?: string,
   sessionId?: string,
+  options?: AgentCommandOptions,
 ): string {
-  const yolo = AGENT_YOLO_FLAGS[agentType] || '';
-  const command = ensureCommandFlag(agentBinary, yolo);
+  const command = buildAgentBaseCommand(agentType, agentBinary, options);
 
   switch (agentType) {
     case 'claude': {
