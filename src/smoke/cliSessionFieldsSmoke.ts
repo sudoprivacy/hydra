@@ -25,6 +25,7 @@ interface ListJsonEntry {
   sessionId: string | null;
   sessionFile: string | null;
   agentSessionId: string | null;
+  mode?: string;
   [k: string]: unknown;
 }
 interface ListJson {
@@ -193,6 +194,7 @@ function main(): void {
     const copilot = list.copilots.find(c => c.session === ctx.copilotSession);
     assertSessionFields(worker, ctx.workerSessionId, ctx.workerTranscript, 'worker');
     assertSessionFields(copilot, ctx.copilotSessionId, ctx.copilotTranscript, 'copilot');
+    assert.equal(copilot!.mode, 'normal', 'copilot.mode');
 
     // worker logs --json: confirm sessionId/sessionFile present.
     const workerLogsOut = runCli(['worker', 'logs', ctx.workerSession, '--lines', '1', '--json'], env);

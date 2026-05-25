@@ -17,7 +17,7 @@ import {
 } from './commands/contextMenu';
 import { terminalSmartPaste, pasteImageForce, cleanupTempImages } from './commands/pasteImage';
 import { createWorktreeFromBranch } from './commands/createWorktreeFromBranch';
-import { createCopilot, createCopilotWithAgent } from './commands/createCopilot';
+import { createCopilot, createCopilotWithAgent, createPlanCopilot } from './commands/createCopilot';
 import { ensureHydraGlobalConfig } from './utils/hydraGlobalConfig';
 import { installCli, ensurePathInShellProfile } from './core/cliInstaller';
 import { detectAvailableAgents, syncAgentCommandsToHydraConfig } from './utils/agentConfig';
@@ -135,6 +135,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tmux.createWorktreeFromBranch', (item) => createWorktreeFromBranch(item)),
     vscode.commands.registerCommand('hydra.openPR', openPR),
     vscode.commands.registerCommand('hydra.createCopilot', createCopilot),
+    vscode.commands.registerCommand('hydra.startPlanCopilot', createPlanCopilot),
     vscode.commands.registerCommand('hydra.startCopilotClaude', () => createCopilotWithAgent('claude')),
     vscode.commands.registerCommand('hydra.startCopilotCodex', () => createCopilotWithAgent('codex')),
     vscode.commands.registerCommand('hydra.startCopilotGemini', () => createCopilotWithAgent('gemini')),

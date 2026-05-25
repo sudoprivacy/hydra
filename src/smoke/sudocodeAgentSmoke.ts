@@ -116,6 +116,18 @@ function testAgentConfig(): void {
     buildAgentLaunchCommand('sudocode', 'scode --dangerously-skip-permissions', 'Implement the task'),
     'scode --dangerously-skip-permissions',
   );
+  assert.equal(
+    buildAgentLaunchCommand('claude', 'claude', undefined, '11111111-1111-4111-8111-111111111111', { copilotMode: 'plan' }),
+    "claude --permission-mode plan --session-id '11111111-1111-4111-8111-111111111111'",
+  );
+  assert.equal(
+    buildAgentResumeCommand('claude', 'claude', '11111111-1111-4111-8111-111111111111', undefined, { copilotMode: 'plan' }),
+    "claude --permission-mode plan --resume '11111111-1111-4111-8111-111111111111'",
+  );
+  assert.throws(
+    () => buildAgentLaunchCommand('gemini', 'gemini', undefined, undefined, { copilotMode: 'plan' }),
+    /Plan copilot mode is currently supported for Claude and Codex only/,
+  );
   assert.equal(buildAgentResumeCommand('sudocode', 'scode', 'session-1-0'), null);
 
   const plan = buildAgentResumePlan(

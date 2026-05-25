@@ -209,6 +209,19 @@ async function main(): Promise<void> {
   assert.ok(dedupedResumeCommand);
   assert.equal(countOccurrences(dedupedResumeCommand, BYPASS_FLAG), 1);
 
+  assert.equal(
+    agentConfig.buildAgentLaunchCommand('codex', 'codex', undefined, undefined, { copilotMode: 'plan' }),
+    'codex --sandbox read-only --ask-for-approval never',
+  );
+  assert.equal(
+    agentConfig.buildAgentResumeCommand('codex', 'codex', 'resume-session-id', '/workspace', { copilotMode: 'plan' }),
+    "codex --sandbox read-only --ask-for-approval never resume -C '/workspace' 'resume-session-id'",
+  );
+  assert.throws(
+    () => agentConfig.buildAgentLaunchCommand('codex', `codex ${BYPASS_FLAG}`, undefined, undefined, { copilotMode: 'plan' }),
+    /Plan copilot mode cannot use unsafe agent flag/,
+  );
+
   const smokeCodexCommand = 'codex-smoke-test';
   agentConfig.DEFAULT_AGENT_COMMANDS.codex = smokeCodexCommand;
 
@@ -253,6 +266,7 @@ async function main(): Promise<void> {
         status: 'stopped',
         attached: false,
         agent: 'codex',
+        copilotMode: 'normal',
         workdir: copilotRestoredWorkdir,
         tmuxSession: 'copilot-restored',
         createdAt: new Date().toISOString(),
@@ -278,6 +292,46 @@ async function main(): Promise<void> {
       backend.capturePaneCalls.some(call => call.sessionName === 'copilot-restored'),
     );
     assert.equal(copilot.sessionId, '22222222-2222-4222-8222-222222222222');
+  }
+
+  {
+    const copilotPlanRestoredWorkdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-copilot-plan-restored-'));
+    const archive = readJson<{ entries: Array<Record<string, unknown>> }>(archiveFile, { entries: [] });
+    archive.entries.push({
+      type: 'copilot',
+      sessionName: 'copilot-plan-restored',
+      agentSessionId: '33333333-3333-4333-8333-333333333333',
+      archivedAt: new Date().toISOString(),
+      data: {
+        sessionName: 'copilot-plan-restored',
+        displayName: 'copilot-plan-restored',
+        status: 'stopped',
+        attached: false,
+        agent: 'codex',
+        copilotMode: 'plan',
+        workdir: copilotPlanRestoredWorkdir,
+        tmuxSession: 'copilot-plan-restored',
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        sessionId: '33333333-3333-4333-8333-333333333333',
+      },
+    });
+    writeJson(archiveFile, archive);
+
+    const backend = new FakeBackend();
+    backend.paneOutputs.set('copilot-plan-restored', '⏵');
+    const sm = new SessionManager(backend);
+    forceFastSleeps(sm);
+
+    const copilot = await sm.restoreCopilotAndFinalize('copilot-plan-restored');
+    const command = lastSendKeysFor(backend, 'copilot-plan-restored');
+
+    assert.equal(
+      command,
+      `${smokeCodexCommand} --sandbox read-only --ask-for-approval never resume -C '${copilotPlanRestoredWorkdir}' '33333333-3333-4333-8333-333333333333'`,
+    );
+    assert.equal(copilot.copilotMode, 'plan');
+    assert.equal(copilot.sessionId, '33333333-3333-4333-8333-333333333333');
   }
 
   {

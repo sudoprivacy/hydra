@@ -6,7 +6,7 @@ import { getRepoRoot, getBaseBranch } from '../utils/git';
 import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multiplexer';
 import { toCanonicalPath } from '../utils/path';
 import { SessionManager, WorkerInfo } from '../core/sessionManager';
-import { Worktree } from '../core/types';
+import { CopilotMode, Worktree } from '../core/types';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
 
@@ -32,6 +32,7 @@ interface SessionWithStatus extends MultiplexerSession {
   slug: string;
   hydraRole?: HydraRole;
   hydraAgent?: string;
+  hydraCopilotMode?: CopilotMode;
 }
 
 function isCurrentWorkspacePath(targetPath: string | undefined, activeWorkspacePath: string): boolean {
@@ -304,21 +305,27 @@ export class TmuxItem extends vscode.TreeItem {
 export class CopilotItem extends TmuxItem {
   public readonly worktreePath?: string;
   public readonly agentType: string;
+  public readonly copilotMode: CopilotMode;
   public readonly classification: Classification;
 
   constructor(opts: {
     sessionName: string;
     displayName?: string;
     agentType: string;
+    copilotMode?: CopilotMode;
     worktreePath?: string;
     classification: Classification;
   }) {
     const label = opts.displayName || opts.sessionName;
-    const description = `[${opts.agentType}]`;
+    const copilotMode = opts.copilotMode || 'normal';
+    const description = copilotMode === 'plan'
+      ? `[${opts.agentType}] [plan]`
+      : `[${opts.agentType}]`;
     super(label, vscode.TreeItemCollapsibleState.Expanded, undefined, opts.sessionName);
 
     this.worktreePath = opts.worktreePath;
     this.agentType = opts.agentType;
+    this.copilotMode = copilotMode;
     this.classification = opts.classification;
     this.id = opts.sessionName;
     this.description = description;
@@ -461,6 +468,10 @@ export class TmuxDetailItem extends TmuxItem {
 
     if (session.status.classification === 'orphan') {
       parts.push('orphan');
+    }
+
+    if (session.hydraRole === 'copilot' && session.hydraCopilotMode === 'plan') {
+      parts.push(session.hydraAgent === 'claude' ? 'Native Plan' : 'Read Only Plan');
     }
 
     const label = parts.join(' · ');
@@ -759,6 +770,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
           sessionName: c.sessionName,
           displayName: c.displayName,
           agentType: c.agent,
+          copilotMode: c.copilotMode,
           worktreePath: c.workdir,
           classification,
         }));
@@ -787,6 +799,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
       slug: 'copilot',
       hydraRole: 'copilot',
       hydraAgent: copilot.agentType,
+      hydraCopilotMode: copilot.copilotMode,
     };
     return [new TmuxDetailItem(session, '', undefined, this._extensionUri)];
   }

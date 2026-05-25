@@ -25,6 +25,7 @@ export function registerListCommand(program: Command): void {
             name: c.displayName || c.sessionName || c.tmuxSession,
             session: c.sessionName || c.tmuxSession,
             agent: c.agent,
+            mode: c.copilotMode,
             status: c.status,
             attached: c.attached,
             workdir: c.workdir || null,
@@ -68,7 +69,8 @@ export function registerListCommand(program: Command): void {
                 : `[${c.status}]`;
               const attached = c.attached ? ' (attached)' : '';
               const name = c.displayName || c.sessionName || c.tmuxSession;
-              console.log(`  ${statusIcon} ${name}  [${c.agent}]${attached}`);
+              const modeLabel = c.copilotMode === 'plan' ? ' [plan]' : '';
+              console.log(`  ${statusIcon} ${name}  [${c.agent}]${modeLabel}${attached}`);
               if (c.workdir) console.log(`    workdir: ${c.workdir}`);
             }
           } else {

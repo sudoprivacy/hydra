@@ -81,6 +81,15 @@
       },
       {
         "view": "hydraCopilots",
+        "contents": "[Start Copilot](command:hydra.createCopilot)"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Plan Copilot](command:hydra.startPlanCopilot)",
+        "when": "hydra.claudeAvailable || hydra.codexAvailable"
+      },
+      {
+        "view": "hydraCopilots",
         "contents": "[Start Copilot (Claude)](command:hydra.startCopilotClaude)",
         "when": "hydra.claudeAvailable"
       },
@@ -172,6 +181,10 @@
         "command": "hydra.createCopilot",
         "title": "Hydra: Create Copilot",
         "icon": "$(hubot)"
+      },
+      {
+        "command": "hydra.startPlanCopilot",
+        "title": "Hydra: Start Plan Copilot"
       },
       {
         "command": "hydra.startCopilotClaude",
@@ -309,6 +322,7 @@
     "onCommand:tmux.createWorktreeFromBranch",
     "onCommand:hydra.openPR",
     "onCommand:hydra.createCopilot",
+    "onCommand:hydra.startPlanCopilot",
     "onCommand:hydra.startCopilotClaude",
     "onCommand:hydra.startCopilotCodex",
     "onCommand:hydra.startCopilotGemini",
