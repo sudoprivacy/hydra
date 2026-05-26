@@ -6,6 +6,7 @@ import { createRepoSessionPrefixConfig, isWorkdirInRepo } from '../utils/session
 import { SessionManager } from '../core/sessionManager';
 import { TmuxBackendCore } from '../core/tmux';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
+import { sendCopilotOnboarding } from './createCopilot';
 
 async function findSessionsForWorkspace(repoRoot: string): Promise<string[]> {
   const backend = getActiveBackend();
@@ -50,7 +51,10 @@ async function handleTreeViewItem(item: TmuxItem): Promise<void> {
         const sm = new SessionManager(new TmuxBackendCore());
         const result = await sm.startCopilot(sessionName);
         result.postCreatePromise.catch(() => {});
-        const workdir = result.copilotInfo.workdir;
+        const { workdir, copilotMode } = result.copilotInfo;
+        if (!result.resumed) {
+            sendCopilotOnboarding(backend, sessionName, copilotMode ?? 'normal');
+        }
         backend.attachSession(sessionName, workdir, undefined, 'copilot');
         vscode.window.showInformationMessage(`Resumed copilot: ${sessionName}`);
         vscode.commands.executeCommand('tmux.refresh');

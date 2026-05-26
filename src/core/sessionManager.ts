@@ -220,6 +220,8 @@ export interface CreateCopilotResult {
   copilotInfo: CopilotInfo;
   /** Resolves after the agent is ready and any deferred session ID capture has completed. */
   postCreatePromise: Promise<void>;
+  /** True when the agent was resumed from a stored sessionId; false on fresh start. */
+  resumed: boolean;
 }
 
 // Non-enumerable sentinel used by sync() to tell updateSessionState whether the
@@ -308,7 +310,7 @@ export class SessionManager {
       }
 
       // Reconcile copilots
-      for (const [key, copilot] of Object.entries(state.copilots)) {
+      for (const copilot of Object.values(state.copilots)) {
         const live = liveSessionMap.get(copilot.sessionName);
         if (live) {
           if (copilot.status !== 'running') { copilot.status = 'running'; dirty = true; }
@@ -851,6 +853,7 @@ export class SessionManager {
     return {
       copilotInfo,
       postCreatePromise: this.withPostCreateTimeout(postCreatePromise, sessionName, 'copilot startup'),
+      resumed: canResume,
     };
   }
 
@@ -939,7 +942,7 @@ export class SessionManager {
       'copilot startup',
     );
 
-    return { copilotInfo: persistedCopilotInfo, postCreatePromise };
+    return { copilotInfo: persistedCopilotInfo, postCreatePromise, resumed: isResume };
   }
 
   async createCopilotAndFinalize(opts: CreateCopilotOpts): Promise<CopilotInfo> {
