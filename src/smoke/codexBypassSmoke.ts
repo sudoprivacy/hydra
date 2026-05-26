@@ -9,7 +9,9 @@ import type {
   SessionStatusInfo,
 } from '../core/types';
 
-const BYPASS_FLAG = '--dangerously-bypass-approvals-and-sandbox';
+const APPROVAL_BYPASS_FLAG = '--dangerously-bypass-approvals-and-sandbox';
+const HOOK_TRUST_BYPASS_FLAG = '--dangerously-bypass-hook-trust';
+const BYPASS_FLAGS = `${APPROVAL_BYPASS_FLAG} ${HOOK_TRUST_BYPASS_FLAG}`;
 
 type SessionRecord = {
   agent?: string;
@@ -187,27 +189,29 @@ async function main(): Promise<void> {
   const { SessionManager } = await import('../core/sessionManager');
 
   const launchCommand = agentConfig.buildAgentLaunchCommand('codex', 'codex');
-  assert.equal(launchCommand, `codex ${BYPASS_FLAG}`);
+  assert.equal(launchCommand, `codex ${BYPASS_FLAGS}`);
 
   const dedupedLaunchCommand = agentConfig.buildAgentLaunchCommand(
     'codex',
-    `codex ${BYPASS_FLAG}`,
+    `codex ${BYPASS_FLAGS}`,
   );
-  assert.equal(countOccurrences(dedupedLaunchCommand, BYPASS_FLAG), 1);
+  assert.equal(countOccurrences(dedupedLaunchCommand, APPROVAL_BYPASS_FLAG), 1);
+  assert.equal(countOccurrences(dedupedLaunchCommand, HOOK_TRUST_BYPASS_FLAG), 1);
 
   const resumeCommand = agentConfig.buildAgentResumeCommand('codex', 'codex', 'resume-session-id');
   assert.equal(
     resumeCommand,
-    `codex ${BYPASS_FLAG} resume 'resume-session-id'`,
+    `codex ${BYPASS_FLAGS} resume 'resume-session-id'`,
   );
 
   const dedupedResumeCommand = agentConfig.buildAgentResumeCommand(
     'codex',
-    `codex ${BYPASS_FLAG}`,
+    `codex ${BYPASS_FLAGS}`,
     'resume-session-id',
   );
   assert.ok(dedupedResumeCommand);
-  assert.equal(countOccurrences(dedupedResumeCommand, BYPASS_FLAG), 1);
+  assert.equal(countOccurrences(dedupedResumeCommand, APPROVAL_BYPASS_FLAG), 1);
+  assert.equal(countOccurrences(dedupedResumeCommand, HOOK_TRUST_BYPASS_FLAG), 1);
 
   assert.equal(
     agentConfig.buildAgentLaunchCommand('codex', 'codex', undefined, undefined, { copilotMode: 'plan' }),
@@ -218,7 +222,7 @@ async function main(): Promise<void> {
     "codex --sandbox read-only --ask-for-approval never resume -C '/workspace' 'resume-session-id'",
   );
   assert.throws(
-    () => agentConfig.buildAgentLaunchCommand('codex', `codex ${BYPASS_FLAG}`, undefined, undefined, { copilotMode: 'plan' }),
+    () => agentConfig.buildAgentLaunchCommand('codex', `codex ${APPROVAL_BYPASS_FLAG}`, undefined, undefined, { copilotMode: 'plan' }),
     /Plan copilot mode cannot use unsafe agent flag/,
   );
 
@@ -243,7 +247,7 @@ async function main(): Promise<void> {
 
     assert.equal(
       backend.sendKeysCalls[0]?.keys,
-      `${smokeCodexCommand} ${BYPASS_FLAG}`,
+      `${smokeCodexCommand} ${BYPASS_FLAGS}`,
     );
     assert.equal(
       backend.sendMessageCalls.some(call => call.sessionName === 'copilot-fresh' && call.message === '/status'),
@@ -286,7 +290,7 @@ async function main(): Promise<void> {
 
     assert.equal(
       command,
-      `${smokeCodexCommand} ${BYPASS_FLAG} resume -C '${copilotRestoredWorkdir}' '22222222-2222-4222-8222-222222222222'`,
+      `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${copilotRestoredWorkdir}' '22222222-2222-4222-8222-222222222222'`,
     );
     assert.ok(
       backend.capturePaneCalls.some(call => call.sessionName === 'copilot-restored'),
@@ -375,7 +379,7 @@ async function main(): Promise<void> {
     const command = lastSendKeysFor(backend, 'worker-start');
     assert.equal(
       command,
-      `${smokeCodexCommand} ${BYPASS_FLAG} resume -C '${workerWorkdir}' '33333333-3333-4333-8333-333333333333'`,
+      `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${workerWorkdir}' '33333333-3333-4333-8333-333333333333'`,
     );
     assert.ok(
       backend.capturePaneCalls.some(call => call.sessionName === 'worker-start'),
@@ -438,7 +442,7 @@ async function main(): Promise<void> {
       const command = lastSendKeysFor(backend, 'worker-restored');
       assert.equal(
         command,
-        `${smokeCodexCommand} ${BYPASS_FLAG} resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
+        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
       );
       assert.equal(result.workerInfo.sessionName, 'worker-restored');
       assert.equal(result.workerInfo.sessionId, '44444444-4444-4444-8444-444444444444');
@@ -533,7 +537,7 @@ async function main(): Promise<void> {
       assert.equal(result.workerInfo.workdir, fooSlashBarWorktree);
       assert.equal(
         lastSendKeysFor(backend, 'repo-ns_foo-bar-2'),
-        `${smokeCodexCommand} ${BYPASS_FLAG} resume -C '${fooSlashBarWorktree}' 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'`,
+        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${fooSlashBarWorktree}' 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'`,
       );
       assert.ok(
         backend.sendMessageCalls.some(call =>
@@ -629,7 +633,7 @@ async function main(): Promise<void> {
       assert.equal(result.workerInfo.workdir, currentWorktree);
       assert.ok(
         backend.sendKeysCalls.some(call =>
-          call.sessionName === 'repo-ns_foo-bar' && call.keys === `${smokeCodexCommand} ${BYPASS_FLAG}`
+          call.sessionName === 'repo-ns_foo-bar' && call.keys === `${smokeCodexCommand} ${BYPASS_FLAGS}`
         ),
       );
       assert.equal(

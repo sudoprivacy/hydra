@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
 import { exec, resolveCommandPath } from './exec';
 import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
@@ -538,7 +538,7 @@ export class SessionManager {
       });
       if (agentType === 'codex') {
         const scriptPath = path.join(getHydraHome(), 'hooks', `notify-${sessionName}.sh`);
-        agentCommand = this.withCodexCompletionHookOverrides(agentCommand, repoRoot, scriptPath);
+        agentCommand = this.withCodexCompletionHookOverrides(agentCommand, repoRoot, worktreePath, scriptPath);
       }
     }
 
@@ -1621,11 +1621,11 @@ export class SessionManager {
   private ensureCodexHooksEnabled(configTomlPath: string): void {
     fs.mkdirSync(path.dirname(configTomlPath), { recursive: true });
 
-    const featureLine = 'codex_hooks = true';
+    const featureLine = 'hooks = true';
     const content = fs.existsSync(configTomlPath)
       ? fs.readFileSync(configTomlPath, 'utf-8')
       : '';
-    if (/^\s*codex_hooks\s*=\s*true\s*(?:#.*)?$/m.test(content)) {
+    if (/^\s*hooks\s*=\s*true\s*(?:#.*)?$/m.test(content)) {
       return;
     }
 
@@ -1648,7 +1648,7 @@ export class SessionManager {
 
     if (featuresStart >= 0) {
       for (let i = featuresStart + 1; i < featuresEnd; i++) {
-        if (/^\s*codex_hooks\s*=/.test(lines[i])) {
+        if (/^\s*hooks\s*=/.test(lines[i])) {
           lines[i] = featureLine;
           fs.writeFileSync(configTomlPath, lines.join('\n').replace(/\n*$/, '\n'), 'utf-8');
           return;
@@ -1680,12 +1680,19 @@ export class SessionManager {
     }
   }
 
-  private withCodexCompletionHookOverrides(agentCommand: string, repoRoot: string, scriptPath: string): string {
-    const trustRoots = new Set([repoRoot]);
-    try {
-      trustRoots.add(fs.realpathSync(repoRoot));
-    } catch {
-      // Fall back to the original path when realpath is unavailable.
+  private withCodexCompletionHookOverrides(
+    agentCommand: string,
+    repoRoot: string,
+    worktreePath: string,
+    scriptPath: string,
+  ): string {
+    const trustRoots = new Set([repoRoot, worktreePath]);
+    for (const trustPath of [repoRoot, worktreePath]) {
+      try {
+        trustRoots.add(fs.realpathSync(trustPath));
+      } catch {
+        // Fall back to the original path when realpath is unavailable.
+      }
     }
 
     const projects = [...trustRoots]
@@ -1702,7 +1709,7 @@ export class SessionManager {
     return [
       agentCommand.trim(),
       '-c',
-      shellQuote('features.codex_hooks=true'),
+      shellQuote('features.hooks=true'),
       '-c',
       shellQuote(`projects={${projects}}`),
       '-c',
@@ -1854,8 +1861,9 @@ export class SessionManager {
    * Poll the tmux pane output until the agent's ready indicator appears,
    * or fall back to the fixed delay on timeout.
    *
-   * Handles the Claude trust prompt: if detected, sends Enter to accept it
-   * before continuing to poll for the actual input prompt.
+   * Handles startup trust/review prompts before checking ready patterns. Codex
+   * pickers also render `›`, so prompt handling must run before readiness
+   * detection or Hydra will send setup slash commands into a modal.
    */
   private async waitForAgentReady(sessionName: string, agentType: string): Promise<void> {
     const pattern = AGENT_READY_PATTERNS[agentType];
@@ -1867,7 +1875,10 @@ export class SessionManager {
 
     const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
     let trustPromptHandled = false;
+    let codexTrustPromptHandled = false;
+    let codexHookReviewPromptHandled = false;
     let codexResumeCwdPromptHandled = false;
+    let geminiTrustPromptHandled = false;
     let sudoCodeBroadDirectoryPromptHandled = false;
 
     // Initial delay before first poll (agent needs time to start the process)
@@ -1881,6 +1892,29 @@ export class SessionManager {
         if (!trustPromptHandled && CLAUDE_TRUST_PROMPT_PATTERN.test(output)) {
           await this.backend.sendKeys(sessionName, '');
           trustPromptHandled = true;
+          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+
+        if (
+          agentType === 'codex' &&
+          !codexTrustPromptHandled &&
+          CODEX_TRUST_PROMPT_PATTERN.test(output)
+        ) {
+          await this.backend.sendKeys(sessionName, '');
+          codexTrustPromptHandled = true;
+          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+
+        if (
+          agentType === 'codex' &&
+          !codexHookReviewPromptHandled &&
+          CODEX_HOOK_REVIEW_PROMPT_PATTERN.test(output)
+        ) {
+          // Select "Trust all and continue" for Hydra-injected completion hooks.
+          await this.backend.sendKeys(sessionName, 'Down');
+          codexHookReviewPromptHandled = true;
           await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
           continue;
         }
@@ -1905,6 +1939,29 @@ export class SessionManager {
         ) {
           await this.backend.sendKeys(sessionName, 'y');
           sudoCodeBroadDirectoryPromptHandled = true;
+          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+
+        if (
+          agentType === 'gemini' &&
+          !geminiTrustPromptHandled &&
+          GEMINI_TRUST_PROMPT_PATTERN.test(output)
+        ) {
+          await this.backend.sendKeys(sessionName, '');
+          geminiTrustPromptHandled = true;
+          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+
+        if (
+          (agentType === 'codex' && (
+            CODEX_TRUST_PROMPT_PATTERN.test(output) ||
+            CODEX_HOOK_REVIEW_PROMPT_PATTERN.test(output) ||
+            CODEX_RESUME_CWD_PROMPT_PATTERN.test(output)
+          )) ||
+          (agentType === 'gemini' && GEMINI_TRUST_PROMPT_PATTERN.test(output))
+        ) {
           await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
           continue;
         }
