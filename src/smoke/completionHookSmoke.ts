@@ -40,6 +40,46 @@ function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
+class PromptBackend {
+  readonly type = 'tmux' as const;
+  readonly displayName = 'tmux';
+  readonly installHint = '';
+  readonly sentKeys: string[] = [];
+  private captureIndex = 0;
+
+  constructor(private readonly captures: string[]) {}
+
+  async isInstalled(): Promise<boolean> { return true; }
+  async listSessions(): Promise<unknown[]> { return []; }
+  async createSession(): Promise<void> {}
+  async killSession(): Promise<void> {}
+  async renameSession(): Promise<void> {}
+  async hasSession(): Promise<boolean> { return true; }
+  async getSessionWorkdir(): Promise<string | undefined> { return undefined; }
+  async setSessionWorkdir(): Promise<void> {}
+  async getSessionRole(): Promise<undefined> { return undefined; }
+  async setSessionRole(): Promise<void> {}
+  async getSessionAgent(): Promise<string | undefined> { return undefined; }
+  async setSessionAgent(): Promise<void> {}
+  async sendKeys(_sessionName: string, keys: string): Promise<void> {
+    this.sentKeys.push(keys);
+    this.captureIndex = Math.min(this.captureIndex + 1, this.captures.length - 1);
+  }
+  async capturePane(): Promise<string> {
+    return this.captures[Math.min(this.captureIndex, this.captures.length - 1)] || '';
+  }
+  async sendMessage(): Promise<void> {}
+  async getSessionInfo(): Promise<{ attached: boolean; lastActive: number }> {
+    return { attached: false, lastActive: 0 };
+  }
+  async getSessionPaneCount(): Promise<number> { return 1; }
+  async getSessionPanePids(): Promise<string[]> { return []; }
+  async splitPane(): Promise<void> {}
+  async newWindow(): Promise<void> {}
+  buildSessionName(repoName: string, slug: string): string { return `${repoName}_${slug}`; }
+  sanitizeSessionName(name: string): string { return name; }
+}
+
 async function main(): Promise<void> {
   // Redirect Hydra state to a temp directory so we don't pollute the real one
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-smoke-hook-'));
@@ -99,9 +139,9 @@ async function main(): Promise<void> {
     codexConfig.hooks.Stop[0].hooks[0].command.includes("printf '{}'"),
     'Codex hook should emit JSON on stdout',
   );
-  // Verify codex_hooks feature flag is enabled in config.toml
+  // Verify hooks feature flag is enabled in config.toml
   const codexToml = fs.readFileSync(path.join(fakeWorktree, '.codex', 'config.toml'), 'utf-8');
-  assert.ok(codexToml.includes('codex_hooks = true'), 'Codex config.toml should enable hooks feature flag');
+  assert.ok(codexToml.includes('hooks = true'), 'Codex config.toml should enable hooks feature flag');
 
   // Verify existing Codex [features] table is updated instead of duplicated
   const codexTomlPath = path.join(fakeWorktree, '.codex', 'config.toml');
@@ -110,7 +150,7 @@ async function main(): Promise<void> {
   const mergedCodexToml = fs.readFileSync(codexTomlPath, 'utf-8');
   assert.equal((mergedCodexToml.match(/^\[features\]$/gm) || []).length, 1);
   assert.ok(
-    mergedCodexToml.includes('[features]\ncodex_hooks = true\nexperimental = true\n\n[model]'),
+    mergedCodexToml.includes('[features]\nhooks = true\nexperimental = true\n\n[model]'),
     `Codex config.toml should merge into existing [features], got:\n${mergedCodexToml}`,
   );
 
@@ -142,12 +182,53 @@ async function main(): Promise<void> {
   assert.ok(scriptContent.includes('PENDING='), 'Script should have a per-message pending marker');
   assert.ok(scriptContent.includes('LOCKDIR='), 'Script should use a lock for duplicate hook entries');
 
+  const codexLaunch = sm['withCodexCompletionHookOverrides'](
+    'codex',
+    '/tmp/hydra-primary-repo',
+    '/tmp/hydra-worker-worktree',
+    scriptPath,
+  );
+  assert.ok(codexLaunch.includes('"/tmp/hydra-primary-repo"={trust_level="trusted"}'));
+  assert.ok(codexLaunch.includes('"/tmp/hydra-worker-worktree"={trust_level="trusted"}'));
+
   // Verify merge behavior: inject again and check Claude has 2 Stop entries
   sm['injectCompletionHook'](fakeWorktree, 'claude', hookInfo);
   const claudeConfig2 = JSON.parse(fs.readFileSync(path.join(fakeWorktree, '.claude', 'settings.json'), 'utf-8'));
   assert.equal(claudeConfig2.hooks.Stop.length, 2, 'Merge should append, not overwrite');
 
   console.log('  Part 1 (config injection): ok');
+
+  const codexPromptBackend = new PromptBackend([
+    [
+      'Do you trust the contents of this directory?',
+      '› 1. Yes, continue',
+      '  2. No, quit',
+    ].join('\n'),
+    [
+      'Hooks need review',
+      '› 1. Review hooks',
+      '  2. Trust all and continue',
+      "  3. Continue without trusting (hooks won't run)",
+    ].join('\n'),
+    '› ',
+  ]);
+  const codexPromptSm = new SessionManager(codexPromptBackend as never) as never as { waitForAgentReady: (sessionName: string, agentType: string) => Promise<void> };
+  await codexPromptSm.waitForAgentReady('codex-prompt-test', 'codex');
+  assert.deepEqual(codexPromptBackend.sentKeys, ['', 'Down']);
+
+  const geminiPromptBackend = new PromptBackend([
+    [
+      'Do you trust the files in this folder?',
+      '● 1. Trust folder',
+      "  2. Don't trust",
+    ].join('\n'),
+    '⏵',
+  ]);
+  const geminiPromptSm = new SessionManager(geminiPromptBackend as never) as never as { waitForAgentReady: (sessionName: string, agentType: string) => Promise<void> };
+  await geminiPromptSm.waitForAgentReady('gemini-prompt-test', 'gemini');
+  assert.deepEqual(geminiPromptBackend.sentKeys, ['']);
+
+  console.log('  Part 1b (trust prompt handling): ok');
 
   // ── Part 2: Run the notification script against real tmux ──
 

@@ -11,8 +11,8 @@ export const DEFAULT_AGENT_COMMANDS: Record<string, string> = {
 /** Per-agent flag to enable full auto-approve (skip all permission prompts) */
 export const AGENT_YOLO_FLAGS: Record<string, string> = {
   claude: '--dangerously-skip-permissions',
-  codex: '--dangerously-bypass-approvals-and-sandbox',
-  gemini: '--yolo',
+  codex: '--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust',
+  gemini: '--yolo --skip-trust',
   sudocode: '--dangerously-skip-permissions',
 };
 
@@ -152,6 +152,15 @@ export const CLAUDE_TRUST_PROMPT_PATTERN = /trust this folder/;
  */
 export const CODEX_RESUME_CWD_PROMPT_PATTERN = /Choose working directory to resume this session/i;
 
+/** Codex asks before loading project-local config/hooks from a new worktree. */
+export const CODEX_TRUST_PROMPT_PATTERN = /Do you trust the contents of this directory/i;
+
+/** Codex requires review before newly injected hooks become active. */
+export const CODEX_HOOK_REVIEW_PROMPT_PATTERN = /Hooks need review|hook needs review before it can run|Trust all and continue/i;
+
+/** Gemini asks before loading project-local settings/hooks from a new worktree. */
+export const GEMINI_TRUST_PROMPT_PATTERN = /Do you trust the files in this folder\?|Trust folder/i;
+
 /** Sudo Code asks for explicit confirmation when launched from a broad directory. */
 export const SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN = /Continue anyway\?\s+\[y\/N\]:/i;
 
@@ -173,6 +182,14 @@ function ensureCommandFlag(command: string, flag: string): string {
   return appendCommandArgs(trimmed, flag);
 }
 
+function ensureStandaloneCommandFlags(command: string, flags: string): string {
+  return flags
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .reduce((current, flag) => ensureCommandFlag(current, flag), command.trim());
+}
+
 export interface AgentCommandOptions {
   copilotMode?: CopilotMode;
 }
@@ -180,7 +197,9 @@ export interface AgentCommandOptions {
 const PLAN_UNSAFE_FLAGS = [
   '--dangerously-skip-permissions',
   '--dangerously-bypass-approvals-and-sandbox',
+  '--dangerously-bypass-hook-trust',
   '--yolo',
+  '--skip-trust',
 ];
 
 function isPlanCopilot(options?: AgentCommandOptions): boolean {
@@ -202,7 +221,7 @@ function buildAgentBaseCommand(
 ): string {
   if (!isPlanCopilot(options)) {
     const yolo = AGENT_YOLO_FLAGS[agentType] || '';
-    return ensureCommandFlag(agentBinary, yolo);
+    return ensureStandaloneCommandFlags(agentBinary, yolo);
   }
 
   assertPlanCommandIsSafe(agentBinary);
