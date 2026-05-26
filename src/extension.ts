@@ -234,7 +234,7 @@ async function revealSidebarItem(
   const name = terminal.name;
 
   if (name.startsWith(HYDRA_PREFIX_COPILOT)) {
-    const items = copilotProvider.getRootItemsCached();
+    const items = copilotProvider.getCopilotItems();
     const found = items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
@@ -247,7 +247,7 @@ async function revealSidebarItem(
   }
 
   if (name.startsWith(HYDRA_PREFIX_WORKER)) {
-    const items = await workerProvider.loadAndGetWorkerItems();
+    const items = await workerProvider.getWorkerItems();
     const found = items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
