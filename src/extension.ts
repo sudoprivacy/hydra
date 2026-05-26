@@ -174,7 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.onDidChangeActiveTerminal((terminal) => {
       if (!terminal) return;
-      revealSidebarItem(terminal, copilotProvider, workerProvider, copilotView, workerView);
+      revealSidebarItem(terminal, copilotProvider, workerProvider, copilotView, workerView).then(undefined, () => {});
     })
   );
 
@@ -224,13 +224,13 @@ function getShortName(sessionName: string): string {
   return parts.length > 1 ? parts.slice(1).join('_') : sessionName;
 }
 
-function revealSidebarItem(
+async function revealSidebarItem(
   terminal: vscode.Terminal,
   copilotProvider: CopilotProvider,
   workerProvider: WorkerProvider,
   copilotView: vscode.TreeView<TmuxItem>,
   workerView: vscode.TreeView<TmuxItem>
-): void {
+): Promise<void> {
   const name = terminal.name;
 
   if (name.startsWith(HYDRA_PREFIX_COPILOT)) {
@@ -247,7 +247,7 @@ function revealSidebarItem(
   }
 
   if (name.startsWith(HYDRA_PREFIX_WORKER)) {
-    const items = workerProvider.getWorkerItems();
+    const items = await workerProvider.loadAndGetWorkerItems();
     const found = items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
