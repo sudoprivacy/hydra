@@ -314,8 +314,11 @@ export class SessionManager {
           if (copilot.status !== 'running') { copilot.status = 'running'; dirty = true; }
           if (copilot.attached !== live.attached) { copilot.attached = live.attached; dirty = true; }
         } else {
-          delete state.copilots[key];
-          dirty = true;
+          if (copilot.status !== 'stopped' || copilot.attached !== false) {
+            copilot.status = 'stopped';
+            copilot.attached = false;
+            dirty = true;
+          }
         }
       }
 
