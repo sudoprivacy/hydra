@@ -223,7 +223,7 @@ async function main(): Promise<void> {
   );
   assert.throws(
     () => agentConfig.buildAgentLaunchCommand('codex', `codex ${APPROVAL_BYPASS_FLAG}`, undefined, undefined, { copilotMode: 'plan' }),
-    /Plan copilot mode cannot use unsafe agent flag/,
+    /Planner mode cannot use unsafe agent flag/,
   );
 
   const smokeCodexCommand = 'codex-smoke-test';

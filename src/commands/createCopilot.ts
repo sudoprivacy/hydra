@@ -31,7 +31,7 @@ Workers cannot create other workers directly. If a worker reports that more para
 
 Full reference: https://github.com/joezhoujinjing/hydra/blob/main/AGENTS.md`;
 
-const PLAN_ONBOARDING_PROMPT = `You are a Hydra plan copilot — an AI planner that analyzes tasks and produces implementation plans only.
+const PLAN_ONBOARDING_PROMPT = `You are a Hydra planner — a plan-only agent that analyzes tasks and produces implementation plans.
 
 ## Operating rules
 - Do not edit files, run implementation commands, create workers, commit, push, or open PRs.
@@ -40,7 +40,7 @@ const PLAN_ONBOARDING_PROMPT = `You are a Hydra plan copilot — an AI planner t
 - Produce a concrete implementation plan that another agent can execute.
 - Include affected files, ordered steps, risks, and verification commands.
 
-The user or a separate executor will handle implementation after the plan is approved.`;
+This planner cannot create Hydra workers. The user or a separate executor will handle implementation after the plan is approved.`;
 
 function getOnboardingPrompt(copilotMode: CopilotMode): string {
   return copilotMode === 'plan' ? PLAN_ONBOARDING_PROMPT : ONBOARDING_PROMPT;
@@ -63,49 +63,63 @@ function getDefaultSessionName(agentType: AgentType, copilotMode: CopilotMode): 
 
 function getCreatedMessage(sessionName: string, agentType: AgentType, copilotMode: CopilotMode): string {
   if (copilotMode === 'plan') {
-    const strategy = agentType === 'claude' ? 'native plan mode' : 'read-only plan mode';
-    return `Plan copilot created: ${sessionName} (${AGENT_LABELS[agentType]}, ${strategy})`;
+    const strategy = agentType === 'claude' ? 'native planner' : 'read-only planner';
+    return `Planner created: ${sessionName} (${AGENT_LABELS[agentType]}, ${strategy})`;
   }
   return `Copilot created: ${sessionName} (${agentType})`;
 }
 
-async function pickCopilotMode(): Promise<CopilotMode | undefined> {
+function agentSupportsPlanner(agentType: AgentType): boolean {
+  return agentType === 'claude' || agentType === 'codex';
+}
+
+async function pickModeForAgent(agentType: AgentType): Promise<CopilotMode | undefined> {
+  if (!agentSupportsPlanner(agentType)) {
+    return 'normal';
+  }
+
+  const plannerDescription = agentType === 'claude'
+    ? 'Native planner; cannot create workers'
+    : 'Read-only planner; cannot create workers';
   const picked = await vscode.window.showQuickPick([
     {
-      label: 'Normal Copilot',
-      description: 'Orchestrates workers and implementation',
+      label: 'Copilot',
+      description: 'Can create workers and drive implementation',
       value: 'normal' as CopilotMode,
     },
     {
-      label: 'Plan Copilot',
-      description: 'Produces implementation plans only',
+      label: 'Planner',
+      description: plannerDescription,
       value: 'plan' as CopilotMode,
     },
   ], {
-    placeHolder: 'Select copilot mode',
+    placeHolder: `Select ${AGENT_LABELS[agentType]} mode`,
   });
   return picked?.value;
 }
 
-async function pickPlanAgentType(): Promise<AgentType | undefined> {
+async function pickPlannerAgentType(): Promise<AgentType | undefined> {
   const items = [
-    { label: AGENT_LABELS.claude, description: 'Native plan mode', value: 'claude' as AgentType },
-    { label: AGENT_LABELS.codex, description: 'Read-only guarded plan mode', value: 'codex' as AgentType },
+    { label: AGENT_LABELS.claude, description: 'Native planner', value: 'claude' as AgentType },
+    { label: AGENT_LABELS.codex, description: 'Read-only guarded planner', value: 'codex' as AgentType },
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Select agent for plan copilot',
+    placeHolder: 'Select agent for planner',
   });
   return picked?.value;
 }
 
-export async function createCopilotWithAgent(agentType: AgentType, copilotMode: CopilotMode = 'normal'): Promise<void> {
+export async function createCopilotWithAgent(agentType: AgentType, copilotMode?: CopilotMode): Promise<void> {
   const backend = getActiveBackend();
   if (!await ensureBackendInstalled(backend)) {
     return;
   }
 
-  const sessionName = backend.sanitizeSessionName(getDefaultSessionName(agentType, copilotMode));
+  const resolvedMode = copilotMode ?? await pickModeForAgent(agentType);
+  if (!resolvedMode) return;
+
+  const sessionName = backend.sanitizeSessionName(getDefaultSessionName(agentType, resolvedMode));
 
   // If session already exists, just attach
   if (await backend.hasSession(sessionName)) {
@@ -119,15 +133,15 @@ export async function createCopilotWithAgent(agentType: AgentType, copilotMode: 
     const copilotInfo = await sm.createCopilotAndFinalize({
       workdir: os.homedir(),
       agentType,
-      copilotMode,
+      copilotMode: resolvedMode,
       sessionName,
       agentCommand: getAgentCommand(agentType),
     });
 
-    sendCopilotOnboarding(backend, copilotInfo.sessionName, copilotMode);
+    sendCopilotOnboarding(backend, copilotInfo.sessionName, resolvedMode);
     backend.attachSession(copilotInfo.sessionName, copilotInfo.workdir, undefined, 'copilot');
 
-    vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, copilotMode));
+    vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, resolvedMode));
     vscode.commands.executeCommand('tmux.refresh');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -136,7 +150,7 @@ export async function createCopilotWithAgent(agentType: AgentType, copilotMode: 
 }
 
 export async function createPlanCopilot(): Promise<void> {
-  const agentType = await pickPlanAgentType();
+  const agentType = await pickPlannerAgentType();
   if (!agentType) return;
   await createCopilotWithAgent(agentType, 'plan');
 }
@@ -147,14 +161,12 @@ export async function createCopilot(): Promise<void> {
     return;
   }
 
-  const copilotMode = await pickCopilotMode();
-  if (!copilotMode) return;
-
   // Pick agent type
-  const agentType = copilotMode === 'plan'
-    ? await pickPlanAgentType()
-    : await pickAgentType();
+  const agentType = await pickAgentType();
   if (!agentType) return;
+
+  const copilotMode = await pickModeForAgent(agentType);
+  if (!copilotMode) return;
 
   // Ask for session name (default: hydra-copilot-<agent>)
   const defaultName = getDefaultSessionName(agentType, copilotMode);

@@ -126,7 +126,7 @@ function testAgentConfig(): void {
   );
   assert.throws(
     () => buildAgentLaunchCommand('gemini', 'gemini', undefined, undefined, { copilotMode: 'plan' }),
-    /Plan copilot mode is currently supported for Claude and Codex only/,
+    /Planner mode is currently supported for Claude and Codex only/,
   );
   assert.equal(buildAgentResumeCommand('sudocode', 'scode', 'session-1-0'), null);
 

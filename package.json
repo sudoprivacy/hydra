@@ -81,15 +81,6 @@
       },
       {
         "view": "hydraCopilots",
-        "contents": "[Start Copilot](command:hydra.createCopilot)"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Plan Copilot](command:hydra.startPlanCopilot)",
-        "when": "hydra.claudeAvailable || hydra.codexAvailable"
-      },
-      {
-        "view": "hydraCopilots",
         "contents": "[Start Copilot (Claude)](command:hydra.startCopilotClaude)",
         "when": "hydra.claudeAvailable"
       },
@@ -184,7 +175,7 @@
       },
       {
         "command": "hydra.startPlanCopilot",
-        "title": "Hydra: Start Plan Copilot"
+        "title": "Hydra: Start Planner"
       },
       {
         "command": "hydra.startCopilotClaude",
