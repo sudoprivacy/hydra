@@ -421,30 +421,6 @@ export class WorktreeItem extends TmuxItem {
   }
 }
 
-export class WorkerItem extends WorktreeItem {
-  public readonly agentType?: string;
-
-  constructor(opts: {
-    branchLabel: string;
-    repoName: string;
-    sessionName: string;
-    worktreePath?: string;
-    isCurrentWorkspace: boolean;
-    hasGit: boolean;
-    hasTmux: boolean;
-    isMainWorktree?: boolean;
-    agentType?: string;
-  }) {
-    super(opts);
-    this.agentType = opts.agentType;
-    if (opts.agentType) {
-      this.description = this.description
-        ? `${this.description} [${opts.agentType}]`
-        : `[${opts.agentType}]`;
-    }
-  }
-}
-
 // ─── Detail Items (Level 3+) ──────────────────────────────
 
 export class TmuxDetailItem extends TmuxItem {
@@ -726,7 +702,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TmuxItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private _extensionUri: vscode.Uri | undefined;
-  private _rootItems: CopilotItem[] = [];
+  private _copilotItems: CopilotItem[] = [];
 
   setExtensionUri(uri: vscode.Uri): void { this._extensionUri = uri; }
   refresh(): void { this._onDidChangeTreeData.fire(undefined); }
@@ -734,10 +710,10 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
   getParent(element: TmuxItem): TmuxItem | undefined {
     if (element instanceof CopilotItem) return undefined;
     // Detail items are children of CopilotItems
-    return this._rootItems.find(c => c.sessionName === element.sessionName);
+    return this._copilotItems.find(c => c.sessionName === element.sessionName);
   }
 
-  getRootItemsCached(): CopilotItem[] { return this._rootItems; }
+  getCopilotItems(): CopilotItem[] { return this._copilotItems; }
 
   async getChildren(element?: TmuxItem): Promise<TmuxItem[]> {
     if (!element) return this.getRootItems();
@@ -752,7 +728,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
       const copilots = await sm.listCopilots();
 
       if (copilots.length === 0) {
-        this._rootItems = [];
+        this._copilotItems = [];
         return [];  // triggers viewsWelcome
       }
 
@@ -776,10 +752,10 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
         }));
       }
 
-      this._rootItems = items;
+      this._copilotItems = items;
       return items;
     } catch {
-      this._rootItems = [];
+      this._copilotItems = [];
       return [];
     }
   }
@@ -837,7 +813,14 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
     return undefined;
   }
 
-  getWorkerItems(): TmuxItem[] {
+  async getWorkerItems(): Promise<TmuxItem[]> {
+    if (this._repoGroups.length === 0) {
+      await this.getChildren(undefined);
+    }
+    const missingGroups = this._repoGroups.filter(g => !this._workerItemsByRepo.has(g.repoRoot));
+    if (missingGroups.length > 0) {
+      await Promise.all(missingGroups.map(g => this.getRepoGroupChildren(g)));
+    }
     const all: TmuxItem[] = [];
     for (const items of this._workerItemsByRepo.values()) {
       all.push(...items);
