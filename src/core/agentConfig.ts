@@ -97,7 +97,7 @@ export function agentSupportsCopilotMode(agentType: string, copilotMode: Copilot
 
 export function getUnsupportedCopilotModeMessage(agentType: string, copilotMode: CopilotMode): string {
   if (copilotMode === 'plan') {
-    return `Plan copilot mode is currently supported for Claude and Codex only. Agent "${agentType}" is not supported.`;
+    return `Planner mode is currently supported for Claude and Codex only. Agent "${agentType}" is not supported.`;
   }
   return `Copilot mode "${copilotMode}" is not supported for agent "${agentType}".`;
 }
@@ -210,7 +210,7 @@ function assertPlanCommandIsSafe(agentBinary: string): void {
   const tokens = tokenizeCommand(agentBinary);
   const unsafe = PLAN_UNSAFE_FLAGS.find(flag => tokens.includes(flag));
   if (unsafe) {
-    throw new Error(`Plan copilot mode cannot use unsafe agent flag "${unsafe}". Remove it from the configured agent command.`);
+    throw new Error(`Planner mode cannot use unsafe agent flag "${unsafe}". Remove it from the configured agent command.`);
   }
 }
 

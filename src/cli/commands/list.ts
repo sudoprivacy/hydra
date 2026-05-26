@@ -69,7 +69,7 @@ export function registerListCommand(program: Command): void {
                 : `[${c.status}]`;
               const attached = c.attached ? ' (attached)' : '';
               const name = c.displayName || c.sessionName || c.tmuxSession;
-              const modeLabel = c.copilotMode === 'plan' ? ' [plan]' : '';
+              const modeLabel = c.copilotMode === 'plan' ? ' [planner]' : '';
               console.log(`  ${statusIcon} ${name}  [${c.agent}]${modeLabel}${attached}`);
               if (c.workdir) console.log(`    workdir: ${c.workdir}`);
             }

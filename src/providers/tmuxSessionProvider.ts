@@ -319,7 +319,7 @@ export class CopilotItem extends TmuxItem {
     const label = opts.displayName || opts.sessionName;
     const copilotMode = opts.copilotMode || 'normal';
     const description = copilotMode === 'plan'
-      ? `[${opts.agentType}] [plan]`
+      ? `[${opts.agentType}] [planner]`
       : `[${opts.agentType}]`;
     super(label, vscode.TreeItemCollapsibleState.Expanded, undefined, opts.sessionName);
 
@@ -447,7 +447,7 @@ export class TmuxDetailItem extends TmuxItem {
     }
 
     if (session.hydraRole === 'copilot' && session.hydraCopilotMode === 'plan') {
-      parts.push(session.hydraAgent === 'claude' ? 'Native Plan' : 'Read Only Plan');
+      parts.push(session.hydraAgent === 'claude' ? 'Native Planner' : 'Read-only Planner');
     }
 
     const label = parts.join(' · ');
