@@ -814,8 +814,12 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   }
 
   async getWorkerItems(): Promise<TmuxItem[]> {
-    if (this._workerItemsByRepo.size === 0 && this._repoGroups.length > 0) {
-      await Promise.all(this._repoGroups.map(g => this.getRepoGroupChildren(g)));
+    if (this._repoGroups.length === 0) {
+      await this.getChildren(undefined);
+    }
+    const missingGroups = this._repoGroups.filter(g => !this._workerItemsByRepo.has(g.repoRoot));
+    if (missingGroups.length > 0) {
+      await Promise.all(missingGroups.map(g => this.getRepoGroupChildren(g)));
     }
     const all: TmuxItem[] = [];
     for (const items of this._workerItemsByRepo.values()) {
