@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { getRepoRoot } from '../utils/git';
 import { getActiveBackend } from '../utils/multiplexer';
-import { InactiveWorktreeItem, InactiveDetailItem, TmuxItem } from '../providers/tmuxSessionProvider';
+import { InactiveWorktreeItem, InactiveDetailItem, CopilotItem, TmuxItem } from '../providers/tmuxSessionProvider';
 import { createRepoSessionPrefixConfig, isWorkdirInRepo } from '../utils/sessionCompatibility';
 import { SessionManager } from '../core/sessionManager';
 import { TmuxBackendCore } from '../core/tmux';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
+import { sendCopilotOnboarding } from './createCopilot';
 
 async function findSessionsForWorkspace(repoRoot: string): Promise<string[]> {
   const backend = getActiveBackend();
@@ -42,6 +43,21 @@ async function handleTreeViewItem(item: TmuxItem): Promise<void> {
         const workdir = await backend.getSessionWorkdir(sessionName);
         const role = await backend.getSessionRole(sessionName);
         backend.attachSession(sessionName, workdir, undefined, role);
+        return;
+    }
+
+    // Stopped copilot: resume via SessionManager
+    if (item instanceof CopilotItem && item.classification === 'stopped') {
+        const sm = new SessionManager(new TmuxBackendCore());
+        const result = await sm.startCopilot(sessionName);
+        result.postCreatePromise.catch(() => {});
+        const { workdir, copilotMode } = result.copilotInfo;
+        if (!result.resumed) {
+            sendCopilotOnboarding(backend, sessionName, copilotMode ?? 'normal');
+        }
+        backend.attachSession(sessionName, workdir, undefined, 'copilot');
+        vscode.window.showInformationMessage(`Resumed copilot: ${sessionName}`);
+        vscode.commands.executeCommand('tmux.refresh');
         return;
     }
 

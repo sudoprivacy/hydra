@@ -220,6 +220,8 @@ export interface CreateCopilotResult {
   copilotInfo: CopilotInfo;
   /** Resolves after the agent is ready and any deferred session ID capture has completed. */
   postCreatePromise: Promise<void>;
+  /** True when the agent was resumed from a stored sessionId; false on fresh start. */
+  resumed: boolean;
 }
 
 // Non-enumerable sentinel used by sync() to tell updateSessionState whether the
@@ -308,14 +310,17 @@ export class SessionManager {
       }
 
       // Reconcile copilots
-      for (const [key, copilot] of Object.entries(state.copilots)) {
+      for (const copilot of Object.values(state.copilots)) {
         const live = liveSessionMap.get(copilot.sessionName);
         if (live) {
           if (copilot.status !== 'running') { copilot.status = 'running'; dirty = true; }
           if (copilot.attached !== live.attached) { copilot.attached = live.attached; dirty = true; }
         } else {
-          delete state.copilots[key];
-          dirty = true;
+          if (copilot.status !== 'stopped' || copilot.attached !== false) {
+            copilot.status = 'stopped';
+            copilot.attached = false;
+            dirty = true;
+          }
         }
       }
 
@@ -781,6 +786,77 @@ export class SessionManager {
     };
   }
 
+  async startCopilot(sessionName: string): Promise<CreateCopilotResult> {
+    const existingCopilot = this.readSessionState().copilots[sessionName];
+    if (!existingCopilot) {
+      throw new Error(`Copilot "${sessionName}" not found in sessions.json`);
+    }
+
+    const agent = existingCopilot.agent || 'claude';
+    const copilotMode = normalizeCopilotMode(existingCopilot.copilotMode);
+    const agentOptions: AgentCommandOptions = { copilotMode };
+    const command = await this.resolveAgentCommand(this.getDefaultAgentCommand(agent));
+
+    await this.backend.createSession(sessionName, existingCopilot.workdir);
+    await this.backend.setSessionWorkdir(sessionName, existingCopilot.workdir);
+    await this.backend.setSessionRole(sessionName, 'copilot');
+    await this.backend.setSessionAgent(sessionName, agent);
+
+    const storedSessionId = existingCopilot.sessionId;
+    const resolvedResumeSessionFile = storedSessionId
+      ? resolveAgentSessionFile(agent, existingCopilot.workdir, storedSessionId, existingCopilot.agentSessionFile)
+      : null;
+    const canResume = !!storedSessionId &&
+      (agent !== 'sudocode' || !!resolvedResumeSessionFile) &&
+      !!buildAgentResumePlan(agent, command, storedSessionId, existingCopilot.workdir, resolvedResumeSessionFile);
+
+    let copilotInfo: CopilotInfo;
+    let postCreatePromise: Promise<void>;
+
+    if (canResume && storedSessionId) {
+      await this.launchAgentResume(
+        sessionName, agent, command, storedSessionId,
+        existingCopilot.workdir, resolvedResumeSessionFile, agentOptions,
+      );
+      copilotInfo = await this.updateSessionState((currentState) => {
+        const current = currentState.copilots[sessionName];
+        if (!current) throw new Error(`Copilot "${sessionName}" not found in sessions.json`);
+        current.status = 'running';
+        current.attached = false;
+        current.agentSessionFile = resolvedResumeSessionFile ?? existingCopilot.agentSessionFile ?? current.agentSessionFile ?? null;
+        current.lastSeenAt = new Date().toISOString();
+        currentState.updatedAt = current.lastSeenAt;
+        return { ...current };
+      });
+      postCreatePromise = this.waitForAgentReady(sessionName, agent);
+    } else {
+      const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
+      const launchCmd = buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions);
+      const launchStartedAt = Date.now();
+      await this.backend.sendKeys(sessionName, launchCmd);
+      copilotInfo = await this.updateSessionState((currentState) => {
+        const current = currentState.copilots[sessionName];
+        if (!current) throw new Error(`Copilot "${sessionName}" not found in sessions.json`);
+        current.status = 'running';
+        current.attached = false;
+        current.sessionId = preAssignedSessionId;
+        current.agentSessionFile = null;
+        current.lastSeenAt = new Date().toISOString();
+        currentState.updatedAt = current.lastSeenAt;
+        return { ...current };
+      });
+      postCreatePromise = this.waitForReadyAndCaptureSessionId(
+        sessionName, agent, preAssignedSessionId, existingCopilot.workdir, launchStartedAt,
+      );
+    }
+
+    return {
+      copilotInfo,
+      postCreatePromise: this.withPostCreateTimeout(postCreatePromise, sessionName, 'copilot startup'),
+      resumed: canResume,
+    };
+  }
+
   // ── Copilot Lifecycle ──
 
   async createCopilot(opts: CreateCopilotOpts): Promise<CreateCopilotResult> {
@@ -866,7 +942,7 @@ export class SessionManager {
       'copilot startup',
     );
 
-    return { copilotInfo: persistedCopilotInfo, postCreatePromise };
+    return { copilotInfo: persistedCopilotInfo, postCreatePromise, resumed: isResume };
   }
 
   async createCopilotAndFinalize(opts: CreateCopilotOpts): Promise<CopilotInfo> {

@@ -46,7 +46,7 @@ function getOnboardingPrompt(copilotMode: CopilotMode): string {
   return copilotMode === 'plan' ? PLAN_ONBOARDING_PROMPT : ONBOARDING_PROMPT;
 }
 
-function sendCopilotOnboarding(backend: MultiplexerBackend, sessionName: string, copilotMode: CopilotMode): void {
+export function sendCopilotOnboarding(backend: MultiplexerBackend, sessionName: string, copilotMode: CopilotMode): void {
   (async () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 8000));
