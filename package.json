@@ -40,13 +40,13 @@
     "theme": "dark"
   },
   "badges": [],
-  "homepage": "https://github.com/joezhoujinjing/hydra",
+  "homepage": "https://github.com/sudoprivacy/hydra",
   "bugs": {
-    "url": "https://github.com/joezhoujinjing/hydra/issues"
+    "url": "https://github.com/sudoprivacy/hydra/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/joezhoujinjing/hydra.git"
+    "url": "https://github.com/sudoprivacy/hydra.git"
   },
   "main": "./out/extension.js",
   "bin": {

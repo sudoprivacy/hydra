@@ -160,7 +160,7 @@ export function resolveRepoIdentifier(input: string): string {
  * Everything else is treated as a registry identifier (short form / URL).
  *
  * This rule is what makes the legacy `hydra worker create --repo . --branch foo`
- * flow keep working alongside the new short-form `--repo joezhoujinjing/hydra`.
+ * flow keep working alongside the new short-form `--repo sudoprivacy/hydra`.
  */
 export function looksLikePathInput(input: string): boolean {
   const trimmed = (input ?? '').trim();

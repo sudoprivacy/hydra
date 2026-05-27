@@ -86,7 +86,7 @@ jobs:
         # Clone the repo with core.symlinks=false to simulate typical Windows behavior
         # (GitHub Actions runners have Developer Mode enabled, so we must force this)
         $cloneDir = "$env:RUNNER_TEMP\hydra-clone"
-        git clone -c core.symlinks=false https://github.com/joezhoujinjing/hydra.git $cloneDir
+        git clone -c core.symlinks=false https://github.com/sudoprivacy/hydra.git $cloneDir
 
         # Show what git created for the symlink files (should be regular text files)
         Write-Host "=== Before fix: .codex/skills is a file containing target path ==="

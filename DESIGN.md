@@ -17,7 +17,7 @@ points fall out of that:
   user happens to have on `main`. If they forgot to fetch, workers branch
   off stale code.
 - **Ergonomics.** Telling an AI agent "create a worker on
-  `joezhoujinjing/hydra`" requires it to know exactly where the user
+  `sudoprivacy/hydra`" requires it to know exactly where the user
   cloned the repo on disk. There's no canonical name.
 
 ## Model
@@ -43,7 +43,7 @@ Three input forms are accepted:
 
 | Input form | Behavior |
 | --- | --- |
-| `joezhoujinjing/hydra` | **Recommended.** Resolves to `~/.hydra/repos/joezhoujinjing/hydra/`. Errors with "Run: hydra repo add ..." if not registered. |
+| `sudoprivacy/hydra` | **Recommended.** Resolves to `~/.hydra/repos/sudoprivacy/hydra/`. Errors with "Run: hydra repo add ..." if not registered. |
 | `/Users/me/code/hydra`, `.`, `./foo`, `../foo`, `~/foo` | **Backward-compat.** Used as-is. Existing workflows keep working — `hydra worker create --repo . --branch foo` from a clone is still the natural path-based form. |
 | `https://github.com/...` | Rejected with a hint to run `hydra repo add <url>` first. |
 

@@ -26,7 +26,7 @@ const DEFAULT_TIMEOUT_MS = 500;
 // past this window; the bounded race below races the backend against an
 // unref'd timer, so process exit is not blocked even if the network stalls.
 const FLUSH_TIMEOUT_MS = 1500;
-const TELEMETRY_README_URL = 'https://github.com/joezhoujinjing/hydra#telemetry';
+const TELEMETRY_README_URL = 'https://github.com/sudoprivacy/hydra#telemetry';
 
 const FIRST_RUN_NOTICE =
   'Hydra collects anonymous usage stats to improve the tool. ' +
