@@ -29,7 +29,7 @@ Before anything else, run \`hydra --version\`. If the command is not found, the 
 
 Workers cannot create other workers directly. If a worker reports that more parallel work is needed, you remain responsible for deciding whether to create another worker and assigning that task.
 
-Full reference: https://github.com/joezhoujinjing/hydra/blob/main/AGENTS.md`;
+Full reference: https://github.com/sudoprivacy/hydra/blob/main/AGENTS.md`;
 
 const PLAN_ONBOARDING_PROMPT = `You are a Hydra planner — a plan-only agent that analyzes tasks and produces implementation plans.
 

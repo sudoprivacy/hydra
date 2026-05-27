@@ -17,7 +17,7 @@
     <img src="https://vsmarketplacebadges.dev/installs/zhoujinjing.hydra-code.svg" alt="Installs" />
   </a>
   <a href="../LICENSE.md">
-    <img src="https://img.shields.io/github/license/joezhoujinjing/hydra" alt="License" />
+    <img src="https://img.shields.io/github/license/sudoprivacy/hydra" alt="License" />
   </a>
 </p>
 

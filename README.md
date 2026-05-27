@@ -17,7 +17,7 @@
     <img src="https://vsmarketplacebadges.dev/installs/zhoujinjing.hydra-code.svg" alt="Installs" />
   </a>
   <a href="LICENSE.md">
-    <img src="https://img.shields.io/github/license/joezhoujinjing/hydra" alt="License" />
+    <img src="https://img.shields.io/github/license/sudoprivacy/hydra" alt="License" />
   </a>
 </p>
 
@@ -117,8 +117,8 @@ hoping you remembered to pull `main` before spawning a worker? Register
 it once, then refer to it by its `<owner>/<name>`:
 
 ```bash
-hydra repo add joezhoujinjing/hydra
-hydra worker create --repo joezhoujinjing/hydra --branch feat/foo
+hydra repo add sudoprivacy/hydra
+hydra worker create --repo sudoprivacy/hydra --branch feat/foo
 ```
 
 Hydra clones the repo into `~/.hydra/repos/<owner>/<name>/` and treats
@@ -138,7 +138,7 @@ remote — no more "I forgot to pull" drift.
 ### Commands
 
 ```bash
-hydra repo add <identifier>     # joezhoujinjing/hydra | https://github.com/... | git@github.com:...
+hydra repo add <identifier>     # sudoprivacy/hydra | https://github.com/... | git@github.com:...
 hydra repo list                 # show registered repos and last-fetched time
 hydra repo fetch <owner/name>   # git fetch origin in the managed clone
 hydra repo fetch --all          # refresh every registered repo
