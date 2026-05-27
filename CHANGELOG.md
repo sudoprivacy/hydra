@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2026052600] - 2026-05-26
+
+### Changed
+- Improve planner copilot entry UX with clearer create/start behavior and sidebar presentation
+- Replace the Activity Bar icon with a simplified abstract Hydra glyph optimized for small VS Code sidebar rendering
+
+### Fixed
+- Keep worker and copilot sidebar selection highlighted when switching terminal tabs, including workers inside collapsed repo groups
+- Fix agent completion hook startup prompts
+
 ## [0.3.2026052500] - 2026-05-25
 
 ### Added
