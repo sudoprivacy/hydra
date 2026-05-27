@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026052700] - 2026-05-27
+
+### Fixed
+- Persist and resume copilot sessions across tmux restarts
+
 ## [0.3.2026052600] - 2026-05-26
 
 ### Changed
