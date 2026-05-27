@@ -180,7 +180,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const intervalId = setInterval(() => {
       refreshAll();
-  }, 30000);
+  }, 60000);
 
   context.subscriptions.push({
       dispose: () => clearInterval(intervalId)
@@ -234,7 +234,7 @@ async function revealSidebarItem(
   const name = terminal.name;
 
   if (name.startsWith(HYDRA_PREFIX_COPILOT)) {
-    const items = copilotProvider.getCopilotItems();
+    const items = await copilotProvider.refreshAndGetCopilotItems();
     const found = items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
@@ -247,7 +247,7 @@ async function revealSidebarItem(
   }
 
   if (name.startsWith(HYDRA_PREFIX_WORKER)) {
-    const items = await workerProvider.getWorkerItems();
+    const items = await workerProvider.refreshAndGetWorkerItems();
     const found = items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);

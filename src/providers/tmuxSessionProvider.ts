@@ -356,6 +356,7 @@ export class RepoGroupItem extends TmuxItem {
     baseBranch?: string
   ) {
     super(repoName, vscode.TreeItemCollapsibleState.Expanded, repoName);
+    this.id = repoRoot;
     this.contextValue = 'repoGroup';
     this.iconPath = new vscode.ThemeIcon('repo');
     if (baseBranch) {
@@ -715,6 +716,12 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
 
   getCopilotItems(): CopilotItem[] { return this._copilotItems; }
 
+  async refreshAndGetCopilotItems(): Promise<CopilotItem[]> {
+    await this.getChildren(undefined);
+    this._onDidChangeTreeData.fire(undefined);
+    return this._copilotItems;
+  }
+
   async getChildren(element?: TmuxItem): Promise<TmuxItem[]> {
     if (!element) return this.getRootItems();
     if (element instanceof CopilotItem) return this.getCopilotDetailItems(element);
@@ -811,6 +818,15 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       }
     }
     return undefined;
+  }
+
+  async refreshAndGetWorkerItems(): Promise<TmuxItem[]> {
+    const groups = await this.getChildren(undefined);
+    await Promise.all(groups.map(g => this.getChildren(g)));
+    this._onDidChangeTreeData.fire(undefined);
+    const all: TmuxItem[] = [];
+    for (const items of this._workerItemsByRepo.values()) all.push(...items);
+    return all;
   }
 
   async getWorkerItems(): Promise<TmuxItem[]> {
