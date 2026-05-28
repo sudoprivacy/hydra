@@ -798,7 +798,10 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   private _workerItemsByRepo = new Map<string, TmuxItem[]>();
 
   setExtensionUri(uri: vscode.Uri): void { this._extensionUri = uri; }
-  refresh(): void { this._onDidChangeTreeData.fire(undefined); }
+  refresh(): void {
+    this._workerItemsByRepo.clear();
+    this._onDidChangeTreeData.fire(undefined);
+  }
   getTreeItem(element: TmuxItem): vscode.TreeItem { return element; }
   getParent(element: TmuxItem): TmuxItem | undefined {
     if (element instanceof RepoGroupItem) return undefined;

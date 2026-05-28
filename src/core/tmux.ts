@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { exec } from './exec';
+import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { getHydraConfigPath, getHydraHome, getTmuxCommand, toCanonicalPath } from './path';
 import { shellQuote, pwshQuote } from './shell';
 import { MultiplexerBackendCore, MultiplexerSession, SessionStatusInfo, HydraRole } from './types';
@@ -17,6 +18,7 @@ const TMUX_ENV_KEYS_TO_STRIP = [
   'TERM_PROGRAM_VERSION',
   'VSCODE_INJECTION',
   'VSCODE_SHELL_INTEGRATION',
+  HYDRA_COPILOT_SESSION_ENV,
 ];
 
 function isTmuxIntegrationEnvKey(key: string): boolean {
@@ -56,7 +58,7 @@ function buildStoredTmuxEnvScrubCommandPowerShell(sessionName?: string): string 
 
   return [
     ...varsToSet,
-    `foreach ($name in @('ELECTRON_RUN_AS_NODE', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'VSCODE_INJECTION', 'VSCODE_SHELL_INTEGRATION')) {`,
+    `foreach ($name in @('ELECTRON_RUN_AS_NODE', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'VSCODE_INJECTION', 'VSCODE_SHELL_INTEGRATION', '${HYDRA_COPILOT_SESSION_ENV}')) {`,
     `  ${tmuxCommand} set-environment -gu $name *>$null`,
     `  ${tmuxCommand} set-environment${sessionTarget} -u $name *>$null`,
     '}',
@@ -90,7 +92,7 @@ export function buildStoredTmuxEnvScrubCommand(sessionName?: string): string {
 
   return [
     ...varsToSet,
-    'for name in ELECTRON_RUN_AS_NODE TERM_PROGRAM TERM_PROGRAM_VERSION VSCODE_INJECTION VSCODE_SHELL_INTEGRATION; do',
+    `for name in ELECTRON_RUN_AS_NODE TERM_PROGRAM TERM_PROGRAM_VERSION VSCODE_INJECTION VSCODE_SHELL_INTEGRATION ${HYDRA_COPILOT_SESSION_ENV}; do`,
     `${tmuxCommand} set-environment -gu "$name" >/dev/null 2>&1 || true`,
     `${tmuxCommand} set-environment${sessionTarget} -u "$name" >/dev/null 2>&1 || true`,
     'done',

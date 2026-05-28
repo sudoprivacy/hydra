@@ -5,6 +5,7 @@ import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
 import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
+import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
 import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
@@ -816,7 +817,7 @@ export class SessionManager {
     if (canResume && storedSessionId) {
       await this.launchAgentResume(
         sessionName, agent, command, storedSessionId,
-        existingCopilot.workdir, resolvedResumeSessionFile, agentOptions,
+        existingCopilot.workdir, resolvedResumeSessionFile, agentOptions, sessionName,
       );
       copilotInfo = await this.updateSessionState((currentState) => {
         const current = currentState.copilots[sessionName];
@@ -831,7 +832,10 @@ export class SessionManager {
       postCreatePromise = this.waitForAgentReady(sessionName, agent);
     } else {
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions);
+      const launchCmd = this.withCopilotSessionEnv(
+        buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions),
+        sessionName,
+      );
       const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
       copilotInfo = await this.updateSessionState((currentState) => {
@@ -894,10 +898,22 @@ export class SessionManager {
 
     if (isResume) {
       sessionId = opts.resumeSessionId!;
-      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, opts.workdir, opts.resumeSessionFile, agentOptions);
+      await this.launchAgentResume(
+        sessionName,
+        agentType,
+        agentCommand,
+        sessionId,
+        opts.workdir,
+        opts.resumeSessionFile,
+        agentOptions,
+        sessionName,
+      );
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions);
+      const launchCmd = this.withCopilotSessionEnv(
+        buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions),
+        sessionName,
+      );
       launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
     }
@@ -1855,6 +1871,14 @@ export class SessionManager {
     return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
   }
 
+  private withCopilotSessionEnv(command: string, sessionName?: string): string {
+    if (!sessionName) return command;
+    if (process.platform === 'win32') {
+      return `$env:${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)}; ${command}`;
+    }
+    return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
+  }
+
   private async launchAgentResume(
     sessionName: string,
     agentType: string,
@@ -1863,13 +1887,14 @@ export class SessionManager {
     workdir: string,
     agentSessionFile?: string | null,
     agentOptions?: AgentCommandOptions,
+    copilotSessionName?: string,
   ): Promise<void> {
     const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile, agentOptions);
     if (!resumePlan) {
       throw new Error(`Agent "${agentType}" does not support session resume`);
     }
 
-    await this.backend.sendKeys(sessionName, resumePlan.command);
+    await this.backend.sendKeys(sessionName, this.withCopilotSessionEnv(resumePlan.command, copilotSessionName));
     if (resumePlan.strategy === 'replSlashCommand') {
       await this.waitForAgentReady(sessionName, agentType);
       const beforeResume = await this.captureCleanPane(sessionName, 400);

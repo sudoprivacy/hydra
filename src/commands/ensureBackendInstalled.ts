@@ -5,6 +5,7 @@ const INSTALL_PSMUX_ACTION = 'Install psmux';
 const COPY_COMMAND_ACTION = 'Copy command';
 
 const PSMUX_INSTALL_COMMAND = 'winget install psmux --accept-source-agreements --accept-package-agreements';
+const TMUX_INSTALL_COMMAND = 'brew install tmux';
 
 function showPsmuxInstallTerminal(): void {
   const terminal = vscode.window.createTerminal({ name: 'Hydra Setup: psmux' });
@@ -34,6 +35,18 @@ async function promptForPsmuxInstall(): Promise<void> {
   }
 }
 
+async function promptForTmuxInstall(backend: MultiplexerBackend): Promise<void> {
+  const choice = await vscode.window.showErrorMessage(
+    `${backend.displayName} is required but not installed. Run: ${TMUX_INSTALL_COMMAND}`,
+    COPY_COMMAND_ACTION,
+  );
+
+  if (choice === COPY_COMMAND_ACTION) {
+    await vscode.env.clipboard.writeText(TMUX_INSTALL_COMMAND);
+    void vscode.window.showInformationMessage('Copied tmux install command to clipboard.');
+  }
+}
+
 export async function ensureBackendInstalled(backend: MultiplexerBackend): Promise<boolean> {
   if (await backend.isInstalled()) {
     return true;
@@ -44,6 +57,6 @@ export async function ensureBackendInstalled(backend: MultiplexerBackend): Promi
     return false;
   }
 
-  vscode.window.showErrorMessage(`${backend.displayName} not found. ${backend.installHint}`);
+  await promptForTmuxInstall(backend);
   return false;
 }

@@ -328,6 +328,7 @@
     "e2e:isolated:shell": "node scripts/e2e-isolated-runner.js --shell --keep",
     "smoke:tmux-attach": "node out/smoke/tmuxAttachSmoke.js",
     "smoke:identity": "node out/smoke/sessionIdentitySmoke.js",
+    "smoke:copilot-env-e2e": "node out/smoke/copilotEnvE2eSmoke.js",
     "smoke:codex-bypass": "node out/smoke/codexBypassSmoke.js",
     "smoke:completion-hook": "node out/smoke/completionHookSmoke.js",
     "smoke:worker-delete": "node out/smoke/workerDeleteFailClosedSmoke.js",
@@ -340,7 +341,7 @@
     "smoke:cli-config": "node out/smoke/cliConfigSmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

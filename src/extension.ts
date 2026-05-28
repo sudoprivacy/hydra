@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import { CopilotProvider, WorkerProvider, TmuxItem } from './providers/tmuxSessionProvider';
 import { attachCreate } from './commands/attachCreate';
@@ -32,6 +33,7 @@ import { getHydraSessionsFile } from './core/path';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
+const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
 const RECENT_TREE_SELECTION_MS = 1000;
 const TREE_SELECTION_SETTLE_MS = 75;
 
@@ -202,8 +204,10 @@ function registerSessionFileRefreshWatcher(context: vscode.ExtensionContext, ref
     new vscode.RelativePattern(path.dirname(sessionsFile), path.basename(sessionsFile)),
   );
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastSessionsFileSignature = getFileSignature(sessionsFile);
 
   const scheduleRefresh = () => {
+    lastSessionsFileSignature = getFileSignature(sessionsFile);
     if (refreshTimer) {
       clearTimeout(refreshTimer);
     }
@@ -212,6 +216,17 @@ function registerSessionFileRefreshWatcher(context: vscode.ExtensionContext, ref
       refreshAll();
     }, SESSION_REFRESH_DEBOUNCE_MS);
   };
+
+  fs.watchFile(sessionsFile, { interval: SESSION_REFRESH_POLL_INTERVAL_MS }, (current, previous) => {
+    if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
+      return;
+    }
+    const currentSignature = getFileStatSignature(current);
+    if (currentSignature === lastSessionsFileSignature) {
+      return;
+    }
+    scheduleRefresh();
+  });
 
   context.subscriptions.push(
     watcher,
@@ -223,9 +238,25 @@ function registerSessionFileRefreshWatcher(context: vscode.ExtensionContext, ref
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
+        fs.unwatchFile(sessionsFile);
       },
     },
   );
+}
+
+function getFileSignature(filePath: string): string {
+  try {
+    return getFileStatSignature(fs.statSync(filePath));
+  } catch {
+    return 'missing';
+  }
+}
+
+function getFileStatSignature(stat: fs.Stats): string {
+  if (stat.mtimeMs === 0 && stat.size === 0) {
+    return 'missing';
+  }
+  return `${stat.mtimeMs}:${stat.size}`;
 }
 
 function getShortName(sessionName: string): string {
