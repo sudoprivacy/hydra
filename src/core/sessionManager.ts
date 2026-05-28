@@ -3,7 +3,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
-import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand } from './hydraGlobalConfig';
+import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
 import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
@@ -428,7 +428,7 @@ export class SessionManager {
 
     const { repoRoot, branchName } = opts;
     let { task, taskFile } = opts;
-    const agentType = opts.agentType || 'claude';
+    const agentType = opts.agentType || getHydraGlobalDefaultAgent().agent;
     let agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
 
     const validationError = coreGit.validateBranchName(branchName);
@@ -693,7 +693,7 @@ export class SessionManager {
       throw new Error(`Worktree "${existingWorker.workdir}" does not exist`);
     }
 
-    const agent = agentType || existingWorker.agent || 'claude';
+    const agent = agentType || existingWorker.agent || getHydraGlobalDefaultAgent().agent;
     const command = await this.resolveAgentCommand(agentCommand || this.getDefaultAgentCommand(agent));
 
     await this.backend.createSession(sessionName, existingWorker.workdir);
@@ -793,7 +793,7 @@ export class SessionManager {
       throw new Error(`Copilot "${sessionName}" not found in sessions.json`);
     }
 
-    const agent = existingCopilot.agent || 'claude';
+    const agent = existingCopilot.agent || getHydraGlobalDefaultAgent().agent;
     const copilotMode = normalizeCopilotMode(existingCopilot.copilotMode);
     const agentOptions: AgentCommandOptions = { copilotMode };
     const command = await this.resolveAgentCommand(this.getDefaultAgentCommand(agent));
@@ -866,7 +866,7 @@ export class SessionManager {
   async createCopilot(opts: CreateCopilotOpts): Promise<CreateCopilotResult> {
     ensureHydraGlobalConfig();
 
-    const agentType = opts.agentType || 'claude';
+    const agentType = opts.agentType || getHydraGlobalDefaultAgent().agent;
     const copilotMode = normalizeCopilotMode(opts.copilotMode);
     if (!agentSupportsCopilotMode(agentType, copilotMode)) {
       throw new Error(getUnsupportedCopilotModeMessage(agentType, copilotMode));

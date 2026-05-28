@@ -83,7 +83,7 @@ Imagine you're porting 40 features from an old codebase. Doing it alone is a wee
 4. **Spawn your first Worker:** 
    - Click **"Create Worker"**.
    - Name your branch (e.g., `feat/my-new-idea`).
-   - Choose an agent (e.g., `claude`).
+   - Choose an agent or use your configured default.
    - **Watch the magic happen.**
 
 ---
@@ -107,6 +107,25 @@ A Copilot is your tech lead. It doesn't need a worktree; it lives in your curren
 ### 🖇️ Smart Tools
 - **CLI-First:** The `hydra` command lets you (and your agents) control everything from the terminal.
 - **Smart Paste:** Copy an image? `Cmd+V` in the terminal saves it and inserts the path. Perfect for showing UI bugs to your agents.
+
+---
+
+## Default agent
+
+Hydra uses `claude` as the fallback agent until you configure a different
+default. Set it once and both worker and copilot creation use it whenever
+`--agent` is omitted:
+
+```bash
+hydra config set default-agent codex
+hydra config get default-agent
+
+hydra worker create --repo . --branch feat/foo
+hydra copilot create
+```
+
+Pass `--agent <type>` on any create command to override the default for that
+one session.
 
 ---
 

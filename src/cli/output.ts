@@ -64,8 +64,10 @@ export function classifyError(message: string): number {
   // Validation errors
   if (
     lower.includes('invalid branch name') ||
+    lower.includes('invalid default agent') ||
     lower.includes('required option') ||
     lower.includes('missing required') ||
+    lower.includes('unknown config key') ||
     lower.includes('workers cannot create other workers') ||
     lower.includes('validation')
   ) {

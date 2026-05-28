@@ -21,7 +21,12 @@ import { createWorktreeFromBranch } from './commands/createWorktreeFromBranch';
 import { createCopilot, createCopilotWithAgent, createPlanCopilot } from './commands/createCopilot';
 import { ensureHydraGlobalConfig } from './utils/hydraGlobalConfig';
 import { installCli, ensurePathInShellProfile } from './core/cliInstaller';
-import { detectAvailableAgents, syncAgentCommandsToHydraConfig } from './utils/agentConfig';
+import {
+  detectAvailableAgents,
+  seedDefaultAgentToHydraConfig,
+  syncAgentCommandsToHydraConfig,
+  syncDefaultAgentToHydraConfig,
+} from './utils/agentConfig';
 import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } from './utils/hydraEditorGroup';
 import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
@@ -148,6 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureHydraGlobalConfig();
   silentInstallCli(context);
+  seedDefaultAgentToHydraConfig();
   syncAgentCommandsToHydraConfig();
   autoAttachOnStartup();
   detectAndSetAgentContext();
@@ -160,6 +166,9 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('hydra.agentCommands')) {
         syncAgentCommandsToHydraConfig();
         detectAndSetAgentContext();
+      }
+      if (e.affectsConfiguration('hydra.defaultAgent')) {
+        syncDefaultAgentToHydraConfig();
       }
     })
   );
