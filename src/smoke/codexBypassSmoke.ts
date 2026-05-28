@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { HYDRA_COPILOT_SESSION_ENV } from '../core/env';
 import type {
   HydraRole,
   MultiplexerBackendCore,
@@ -171,6 +172,20 @@ function lastSendKeysFor(backend: FakeBackend, sessionName: string): string {
   return call.keys;
 }
 
+function shellQuoteForExpected(value: string): string {
+  if (process.platform === 'win32') {
+    return `"${value.replace(/"/g, '`"')}"`;
+  }
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function withCopilotSessionEnv(sessionName: string, command: string): string {
+  if (process.platform === 'win32') {
+    return `$env:${HYDRA_COPILOT_SESSION_ENV}=${shellQuoteForExpected(sessionName)}; ${command}`;
+  }
+  return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuoteForExpected(sessionName)} ${command}`;
+}
+
 function forceFastSleeps(sessionManager: object): void {
   (sessionManager as { sleep: (ms: number) => Promise<void> }).sleep = async () => {};
 }
@@ -247,7 +262,7 @@ async function main(): Promise<void> {
 
     assert.equal(
       backend.sendKeysCalls[0]?.keys,
-      `${smokeCodexCommand} ${BYPASS_FLAGS}`,
+      withCopilotSessionEnv('copilot-fresh', `${smokeCodexCommand} ${BYPASS_FLAGS}`),
     );
     assert.equal(
       backend.sendMessageCalls.some(call => call.sessionName === 'copilot-fresh' && call.message === '/status'),
@@ -290,7 +305,10 @@ async function main(): Promise<void> {
 
     assert.equal(
       command,
-      `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${copilotRestoredWorkdir}' '22222222-2222-4222-8222-222222222222'`,
+      withCopilotSessionEnv(
+        'copilot-restored',
+        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${copilotRestoredWorkdir}' '22222222-2222-4222-8222-222222222222'`,
+      ),
     );
     assert.ok(
       backend.capturePaneCalls.some(call => call.sessionName === 'copilot-restored'),
@@ -332,7 +350,10 @@ async function main(): Promise<void> {
 
     assert.equal(
       command,
-      `${smokeCodexCommand} --sandbox read-only --ask-for-approval never resume -C '${copilotPlanRestoredWorkdir}' '33333333-3333-4333-8333-333333333333'`,
+      withCopilotSessionEnv(
+        'copilot-plan-restored',
+        `${smokeCodexCommand} --sandbox read-only --ask-for-approval never resume -C '${copilotPlanRestoredWorkdir}' '33333333-3333-4333-8333-333333333333'`,
+      ),
     );
     assert.equal(copilot.copilotMode, 'plan');
     assert.equal(copilot.sessionId, '33333333-3333-4333-8333-333333333333');

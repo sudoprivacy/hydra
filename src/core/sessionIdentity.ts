@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from './exec';
+import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { getHydraSessionsFile, getTmuxCommand, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
 
@@ -77,9 +78,18 @@ function buildWorkerIdentity(worker: RawSession): HydraIdentity {
   };
 }
 
+function isActiveSession(session: RawSession): boolean {
+  return session.status !== 'stopped';
+}
+
+function withSessionName(sessionName: string, session: RawSession): RawSession {
+  return { ...session, sessionName: session.sessionName || sessionName };
+}
+
 function findBestMatch(cwd: string, state: RawSessionState): HydraIdentity | null {
   let bestIdentity: HydraIdentity | null = null;
   let bestDepth = -1;
+  let bestTie = false;
 
   const consider = (identity: HydraIdentity): void => {
     if (!identity.workdir) return;
@@ -90,42 +100,65 @@ function findBestMatch(cwd: string, state: RawSessionState): HydraIdentity | nul
     if (depth > bestDepth) {
       bestIdentity = { ...identity, workdir: identity.workdir };
       bestDepth = depth;
+      bestTie = false;
+    } else if (depth === bestDepth) {
+      bestTie = true;
     }
   };
 
-  for (const copilot of Object.values(state.copilots || {})) {
-    consider(buildCopilotIdentity(copilot));
+  for (const [sessionName, copilot] of Object.entries(state.copilots || {})) {
+    consider(buildCopilotIdentity(withSessionName(sessionName, copilot)));
   }
 
-  for (const worker of Object.values(state.workers || {})) {
-    consider(buildWorkerIdentity(worker));
+  for (const [sessionName, worker] of Object.entries(state.workers || {})) {
+    consider(buildWorkerIdentity(withSessionName(sessionName, worker)));
   }
 
-  return bestIdentity;
+  return bestTie ? null : bestIdentity;
 }
 
-export function detectIdentityBySessionName(sessionName: string): HydraIdentity | null {
-  const state = readSessionState();
-  if (!state) return null;
-
-  for (const worker of Object.values(state.workers || {})) {
-    if (worker.sessionName === sessionName) {
-      return buildWorkerIdentity(worker);
+function findIdentityBySessionName(state: RawSessionState, sessionName: string): HydraIdentity | null {
+  for (const [stateKey, worker] of Object.entries(state.workers || {})) {
+    const identitySessionName = worker.sessionName || stateKey;
+    if (identitySessionName === sessionName) {
+      return buildWorkerIdentity(withSessionName(stateKey, worker));
     }
   }
 
-  for (const copilot of Object.values(state.copilots || {})) {
-    if (copilot.sessionName === sessionName) {
-      return buildCopilotIdentity(copilot);
+  for (const [stateKey, copilot] of Object.entries(state.copilots || {})) {
+    const identitySessionName = copilot.sessionName || stateKey;
+    if (identitySessionName === sessionName) {
+      return buildCopilotIdentity(withSessionName(stateKey, copilot));
     }
   }
 
   return null;
 }
 
+function detectCopilotIdentityByEnv(state: RawSessionState): HydraIdentity | null {
+  const sessionName = process.env[HYDRA_COPILOT_SESSION_ENV]?.trim();
+  if (!sessionName) return null;
+
+  for (const [stateKey, copilot] of Object.entries(state.copilots || {})) {
+    const identitySessionName = copilot.sessionName || stateKey;
+    if (identitySessionName === sessionName && isActiveSession(copilot)) {
+      return buildCopilotIdentity(withSessionName(stateKey, copilot));
+    }
+  }
+
+  return null;
+}
+
+export function detectIdentityBySessionName(sessionName: string): HydraIdentity | null {
+  const state = readSessionState();
+  if (!state) return null;
+
+  return findIdentityBySessionName(state, sessionName);
+}
+
 /**
  * Lightweight identity detection — reads sessions.json (no tmux sync)
- * and matches cwd against known session workdirs.
+ * and uses process-scoped copilot identity before falling back to cwd.
  * Returns null if not running inside a known Hydra session.
  */
 export function detectIdentity(cwd?: string): HydraIdentity | null {
@@ -133,7 +166,7 @@ export function detectIdentity(cwd?: string): HydraIdentity | null {
   const state = readSessionState();
   if (!state) return null;
 
-  return findBestMatch(dir, state);
+  return detectCopilotIdentityByEnv(state) || findBestMatch(dir, state);
 }
 
 async function getCurrentTmuxSessionName(): Promise<string | null> {
