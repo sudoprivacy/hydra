@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { HYDRA_COPILOT_SESSION_ENV } from '../core/env';
 import {
   detectCurrentTmuxIdentity,
   detectIdentity,
@@ -85,6 +86,74 @@ async function main(): Promise<void> {
   const copilotIdentity = detectIdentity(path.join(tempHome, 'notes'));
   assert.equal(copilotIdentity?.role, 'copilot');
   assert.equal(copilotIdentity?.sessionName, 'hydra-copilot-codex');
+
+  writeJson(sessionsFile, {
+    copilots: {
+      'hydra-copilot-codex': {
+        sessionName: 'hydra-copilot-codex',
+        displayName: 'hydra-copilot-codex',
+        agent: 'codex',
+        workdir: copilotWorkdir,
+        sessionId: 'copilot-session-id',
+      },
+      'hydra-copilot-claude': {
+        sessionName: 'hydra-copilot-claude',
+        displayName: 'hydra-copilot-claude',
+        agent: 'claude',
+        workdir: copilotWorkdir,
+        sessionId: 'claude-copilot-session-id',
+      },
+      'hydra-copilot-stopped': {
+        sessionName: 'hydra-copilot-stopped',
+        displayName: 'hydra-copilot-stopped',
+        status: 'stopped',
+        agent: 'codex',
+        workdir: copilotWorkdir,
+        sessionId: 'stopped-copilot-session-id',
+      },
+    },
+    workers: {
+      'repo-id_fix-nested-workers': {
+        sessionName: 'repo-id_fix-nested-workers',
+        displayName: 'fix-nested-workers',
+        workerId: 7,
+        repo: 'repo',
+        repoRoot: path.join(tempHome, 'repo'),
+        branch: 'fix/nested-workers',
+        slug: 'fix-nested-workers',
+        status: 'running',
+        attached: false,
+        agent: 'codex',
+        workdir: workerWorkdir,
+        tmuxSession: 'repo-id_fix-nested-workers',
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        sessionId: 'worker-session-id',
+        copilotSessionName: 'hydra-copilot-codex',
+      },
+    },
+    nextWorkerId: 8,
+    updatedAt: new Date().toISOString(),
+  });
+
+  delete process.env[HYDRA_COPILOT_SESSION_ENV];
+  const ambiguousCopilotIdentity = detectIdentity(path.join(tempHome, 'notes'));
+  assert.equal(ambiguousCopilotIdentity, null);
+
+  process.env[HYDRA_COPILOT_SESSION_ENV] = 'hydra-copilot-claude';
+  const envCopilotIdentity = detectIdentity(path.join(tempHome, 'notes'));
+  assert.equal(envCopilotIdentity?.role, 'copilot');
+  assert.equal(envCopilotIdentity?.sessionName, 'hydra-copilot-claude');
+
+  process.env[HYDRA_COPILOT_SESSION_ENV] = 'repo-id_fix-nested-workers';
+  const workerEnvIdentity = detectIdentity(path.join(tempHome, 'notes'));
+  assert.equal(workerEnvIdentity, null);
+
+  process.env[HYDRA_COPILOT_SESSION_ENV] = 'hydra-copilot-stopped';
+  const stoppedEnvIdentity = detectIdentity(path.join(tempHome, 'notes'));
+  assert.equal(stoppedEnvIdentity, null);
+
+  delete process.env[HYDRA_COPILOT_SESSION_ENV];
 
   const outsideIdentity = detectIdentity(path.dirname(tempHome));
   assert.equal(outsideIdentity, null);
