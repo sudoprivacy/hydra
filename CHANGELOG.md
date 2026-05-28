@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2026052800] - 2026-05-28
+
+### Added
+- Add configurable default agent support across CLI config, copilot/worker creation, global config, docs, and smoke coverage
+
+### Changed
+- Update repository references from `joezhoujinjing/hydra` to `sudoprivacy/hydra`
+
+### Fixed
+- Refresh the sidebar promptly after external worker creation updates session state
+- Detect copilot identity from process environment for CLI commands running inside copilot sessions
+- Clarify the missing tmux install prompt on macOS and Linux
+
 ## [0.3.2026052700] - 2026-05-27
 
 ### Fixed
