@@ -280,6 +280,8 @@ export interface HydraGlobalConfig {
   HYDRA_CONFIG_PATH?: string;
   cli?: HydraCliConfig;
   share?: HydraShareConfig;
+  defaultAgent?: string;
+  agentCommands?: Record<string, string>;
 }
 
 export interface HydraResolvedPaths {

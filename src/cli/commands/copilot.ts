@@ -8,6 +8,7 @@ import { fetchOriginRequired } from '../../core/git';
 import type { CopilotMode } from '../../core/types';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
+import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
 
 function expandPath(p: string): string {
   const canonical = toCanonicalPath(p);
@@ -54,18 +55,19 @@ export function registerCopilotCommands(program: Command): void {
     .description('Create a new copilot')
     .option('--workdir <path>', 'Working directory for the copilot', process.cwd())
     .option('--repo <identifier>', 'Run inside a registered repo: <owner/name> or absolute path (overrides --workdir)')
-    .option('--agent <type>', 'Agent type (claude, codex, gemini, sudocode)', 'claude')
+    .option('--agent <type>', 'Agent type override (claude, codex, gemini, sudocode, custom)')
     .option('--mode <mode>', 'Copilot mode (normal, plan)', 'normal')
     .option('--plan', 'Shortcut for --mode plan')
     .option('--name <name>', 'Display name for the copilot session')
     .option('--session <name>', 'Explicit tmux session name')
-    .action(async (opts: { workdir: string; repo?: string; agent: string; mode?: string; plan?: boolean; name?: string; session?: string }) => {
+    .action(async (opts: { workdir: string; repo?: string; agent?: string; mode?: string; plan?: boolean; name?: string; session?: string }) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
+        const agentType = opts.agent || getHydraGlobalDefaultAgent().agent;
         const copilotMode = resolveCopilotMode(opts);
-        const defaultSessionName = copilotMode === 'plan' ? `hydra-plan-${opts.agent}` : `hydra-copilot-${opts.agent}`;
+        const defaultSessionName = copilotMode === 'plan' ? `hydra-plan-${agentType}` : `hydra-copilot-${agentType}`;
         const requestedSession = opts.session || opts.name || defaultSessionName;
         const sessionName = backend.sanitizeSessionName(requestedSession);
 
@@ -82,7 +84,7 @@ export function registerCopilotCommands(program: Command): void {
 
         const finalCopilot = await sm.createCopilotAndFinalize({
           workdir,
-          agentType: opts.agent,
+          agentType,
           copilotMode,
           name: opts.name,
           sessionName,

@@ -439,7 +439,7 @@ async function testFirstRunNoticeFiresOnce(): Promise<void> {
       assert.equal(occurrences, 1, `first-run notice must fire exactly once (got ${occurrences})`);
       assert.match(
         stderr,
-        /https:\/\/github\.com\/joezhoujinjing\/hydra#telemetry/,
+        /https:\/\/github\.com\/sudoprivacy\/hydra#telemetry/,
         'first-run notice must include the README link',
       );
     }

@@ -34,7 +34,7 @@ Only copilots create workers. If you are running inside a Hydra worker workdir a
 1. **Parse the user's request** to extract:
    - **repo**: A path or short name (e.g., "sudocode", "hydra", "~/code/foo")
    - **branch**: The git branch to create (e.g., "feat/auth", "fix/bug-123")
-   - **agent** (optional): Agent type — `claude` (default), `codex`, `gemini`
+   - **agent** (optional): Agent type — uses `hydra config get default-agent` when omitted
    - **task** (optional): A task description or prompt for the agent
 
 2. **Resolve repo name to path** if not an absolute path:
@@ -50,7 +50,7 @@ Only copilots create workers. If you are running inside a Hydra worker workdir a
    Available options:
    - `--repo <path>` — Path to the repository (required)
    - `--branch <name>` — Branch name to create (required)
-   - `--agent <type>` — Agent type: `claude` (default), `codex`, `gemini`
+   - `--agent <type>` — Agent type override: `claude`, `codex`, `gemini`, `sudocode`, `custom`
    - `--base <branch>` — Base branch override (defaults to main/master)
    - `--task <prompt>` — Task prompt for the agent
    - `--task-file <path>` — Path to a markdown file with detailed requirements (recommended for complex tasks)
@@ -141,10 +141,10 @@ When acting as a **copilot** (orchestrating multiple workers), follow this workf
 ## Examples
 
 User: "create a worker for feat/auth on sudocode"
-→ `hydra worker create --repo ~/code/org/sudocode --branch feat/auth --agent claude`
+→ `hydra worker create --repo ~/code/org/sudocode --branch feat/auth`
 
 User: "new worker with task 'refactor the API layer'"
-→ `hydra worker create --repo $(pwd) --branch task/refactor-api --agent claude --task "refactor the API layer"`
+→ `hydra worker create --repo $(pwd) --branch task/refactor-api --task "refactor the API layer"`
 
 User: "clean up old workers"
 → Run `hydra list`, cross-reference with merged PRs, ask user, then delete confirmed ones one at a time.

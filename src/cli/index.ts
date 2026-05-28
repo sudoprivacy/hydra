@@ -11,6 +11,7 @@ import { registerDoctorCommand } from './commands/doctor';
 import { registerWhoamiCommand } from './commands/whoami';
 import { registerTestCommand } from './commands/test';
 import { registerShareCommands } from './commands/share';
+import { registerConfigCommands } from './commands/config';
 import { peekTelemetry } from '../core/telemetry';
 
 const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
@@ -59,5 +60,6 @@ registerDoctorCommand(program);
 registerWhoamiCommand(program);
 registerTestCommand(program);
 registerShareCommands(program);
+registerConfigCommands(program);
 
 program.parse();

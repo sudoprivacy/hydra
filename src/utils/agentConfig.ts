@@ -2,7 +2,11 @@ import * as vscode from 'vscode';
 import { AgentType } from '../core/types';
 import { AGENT_LABELS, extractAgentCommandExecutable } from '../core/agentConfig';
 import { resolveCommandPath } from '../core/exec';
-import { updateHydraGlobalAgentCommands } from '../core/hydraGlobalConfig';
+import {
+  hasHydraGlobalDefaultAgent,
+  setHydraGlobalDefaultAgent,
+  updateHydraGlobalAgentCommands,
+} from '../core/hydraGlobalConfig';
 
 export type { AgentType } from '../core/types';
 export { AGENT_LABELS, DEFAULT_AGENT_COMMANDS, buildAgentLaunchCommand } from '../core/agentConfig';
@@ -41,6 +45,16 @@ export function getAgentCommands(): Record<string, string> {
 
 export function syncAgentCommandsToHydraConfig(): void {
   updateHydraGlobalAgentCommands(getAgentCommands());
+}
+
+export function seedDefaultAgentToHydraConfig(): void {
+  if (!hasHydraGlobalDefaultAgent()) {
+    setHydraGlobalDefaultAgent(getDefaultAgent());
+  }
+}
+
+export function syncDefaultAgentToHydraConfig(): void {
+  setHydraGlobalDefaultAgent(getDefaultAgent());
 }
 
 export async function pickAgentType(): Promise<AgentType | undefined> {

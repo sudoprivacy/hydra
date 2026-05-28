@@ -8,6 +8,7 @@ import { outputResult, outputError, type OutputOpts } from '../output';
 import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMessage } from '../identity';
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
 import { agentSupportsCompletionNotification } from '../../core/agentConfig';
+import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
 
 export function registerWorkerCommands(program: Command): void {
   const worker = program
@@ -19,7 +20,7 @@ export function registerWorkerCommands(program: Command): void {
     .description('Create a new worker')
     .requiredOption('--repo <path>', 'Path to the repository')
     .requiredOption('--branch <name>', 'Branch name')
-    .option('--agent <type>', 'Agent type (claude, codex, gemini, sudocode)', 'claude')
+    .option('--agent <type>', 'Agent type override (claude, codex, gemini, sudocode, custom)')
     .option('--base <branch>', 'Base branch override')
     .option('--task <prompt>', 'Task prompt for the agent')
     .option('--task-file <path>', 'Path to a file containing the task description')
@@ -29,7 +30,7 @@ export function registerWorkerCommands(program: Command): void {
     .action(async (opts: {
       repo: string;
       branch: string;
-      agent: string;
+      agent?: string;
       base?: string;
       task?: string;
       taskFile?: string;
@@ -53,6 +54,7 @@ export function registerWorkerCommands(program: Command): void {
 
         // Check if branch exists before create to detect resume
         const branchExisted = await localBranchExists(repoRoot, opts.branch);
+        const agentType = opts.agent || getHydraGlobalDefaultAgent().agent;
 
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
@@ -68,7 +70,7 @@ export function registerWorkerCommands(program: Command): void {
         const { workerInfo, postCreatePromise } = await sm.createWorker({
           repoRoot,
           branchName: opts.branch,
-          agentType: opts.agent,
+          agentType,
           baseBranchOverride: opts.base,
           task: opts.task,
           taskFile: opts.taskFile,

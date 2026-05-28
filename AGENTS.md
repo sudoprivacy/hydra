@@ -98,7 +98,8 @@ The CLI is a thin wrapper that delegates to the extension's bundled Node.js code
 
 ```bash
 hydra list --json                                    # What's running?
-hydra copilot create --agent codex --workdir .      # Launch a copilot in the current directory
+hydra config set default-agent codex                 # Optional: make Codex the default agent
+hydra copilot create --workdir .                     # Launch a copilot in the current directory
 hydra worker create --repo . --branch feat/foo       # Spawn a worker
 hydra worker logs <session> --lines 30               # Read its output
 hydra worker send <session> "fix the failing test"   # Send instructions
@@ -114,6 +115,7 @@ All commands support `--json` (auto-enabled when piped), `--quiet`, and `--no-in
 - `hydra worker ...` creates, inspects, messages, restarts, and deletes worker sessions.
 - `hydra copilot ...` creates, inspects, messages, renames, restores, and deletes copilot sessions.
 - `hydra archive ...` inspects archived sessions and restores them by name.
+- `hydra config ...` shows and updates CLI defaults such as `default-agent`.
 
 ## CLI discovery
 
