@@ -44,7 +44,7 @@ In Greek mythology, the Hydra was a beast that grew two heads for every one cut 
 Imagine you're porting 40 features from an old codebase. Doing it alone is a weeks-long slog. With Hydra, it looks like this:
 
 1. **Spawn a Copilot** on your `main` branch. You tell it: "Analyze these 40 features and break them into 8 logical groups."
-2. **Delegate to Workers.** With a single command, your Copilot spawns 8 Workers. Each gets its own git branch, its own isolated worktree, and its own AI agent (Claude, Gemini, or Codex).
+2. **Delegate to Code Workers.** With a single command, your Copilot spawns 8 Workers. Each gets its own git branch, its own isolated worktree, and its own AI agent (Claude, Gemini, or Codex).
 3. **Orchestrate.** You watch your sidebar. 8 terminals are alive. 8 agents are coding. You see their CPU usage, their git diffs, and their progress in real-time.
 4. **Review & Ship.** As Workers finish, you review their diffs, merge their branches, and move on.
 
@@ -80,9 +80,10 @@ Imagine you're porting 40 features from an old codebase. Doing it alone is a wee
 1. **Install:** Search for **"Hydra Code"** in the VS Code Marketplace.
 2. **Prerequisites:** Ensure `tmux` and `git` are installed on your system.
 3. **Launch Copilot:** Open the Hydra sidebar (robot icon) and click **"Create Copilot"**.
-4. **Spawn your first Worker:** 
+4. **Spawn your first Worker:**
    - Click **"Create Worker"**.
-   - Name your branch (e.g., `feat/my-new-idea`).
+   - In a git repo, choose **Code Worker** and name your branch (e.g., `feat/my-new-idea`).
+   - Outside a git repo, Hydra creates a **Task Worker** in the current folder.
    - Choose an agent or use your configured default.
    - **Watch the magic happen.**
 
@@ -96,9 +97,10 @@ Your sidebar is no longer just a file explorer. It's a high-fidelity dashboard f
 - **Git Intelligence:** Track how many commits every worker is ahead of main, and see exactly how many files they've touched.
 - **One-Click Attach:** Jump into any agent's terminal or embed it directly as an editor tab.
 
-### 💂 The Army (Workers & Worktrees)
-Hydra automates the heavy lifting of git management.
-- **Isolated Worktrees:** Every worker gets a dedicated directory under `~/.hydra/worktrees/` (outside the repo). They won't mess with your primary workspace.
+### 💂 The Army (Workers)
+Hydra automates the heavy lifting of running many agents at once.
+- **Code Workers:** Every code worker gets a dedicated git worktree under `~/.hydra/worktrees/` (outside the repo). They won't mess with your primary workspace.
+- **Task Workers:** Run an agent in a plain folder for research, writing, analysis, or other work that does not need a branch.
 - **Autonomous Mode:** Workers can be launched with auto-approved permissions, letting them work while you sleep.
 
 ### 🧠 The Brain (Copilots)
@@ -121,6 +123,7 @@ hydra config set default-agent codex
 hydra config get default-agent
 
 hydra worker create --repo . --branch feat/foo
+hydra worker create --dir ~/Desktop/research --name market-research --task "Write a competitor summary"
 hydra copilot create
 ```
 
@@ -150,8 +153,10 @@ remote — no more "I forgot to pull" drift.
 ├── repos/
 │   └── joezhoujinjing/
 │       └── hydra/          ← managed clone (always clean)
-└── worktrees/
-    └── <repo-id>/<slug>/   ← per-worker worktree
+├── worktrees/
+│   └── <repo-id>/<slug>/   ← per-worker worktree
+└── tasks/
+    └── <task-slug>/        ← managed task worker folder
 ```
 
 ### Commands

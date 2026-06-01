@@ -115,7 +115,9 @@ async function main(): Promise<void> {
     sessionName: 'repo_feat-auth',
     workerId: 7,
     displayName: 'feat-auth',
+    source: 'repo',
     branch: 'feat/auth',
+    workdir: fakeWorktree,
   };
 
   // ── Part 1: Verify hook config files for each agent ──
@@ -184,8 +186,7 @@ async function main(): Promise<void> {
 
   const codexLaunch = sm['withCodexCompletionHookOverrides'](
     'codex',
-    '/tmp/hydra-primary-repo',
-    '/tmp/hydra-worker-worktree',
+    ['/tmp/hydra-primary-repo', '/tmp/hydra-worker-worktree'],
     scriptPath,
   );
   assert.ok(codexLaunch.includes('"/tmp/hydra-primary-repo"={trust_level="trusted"}'));
@@ -261,6 +262,7 @@ async function main(): Promise<void> {
         workerId: 71,
         displayName: 'feat-auth-claude',
         branch: 'feat/auth-claude',
+        workdir: runtimeWorktree,
       },
       codex: {
         ...hookInfo,
@@ -269,6 +271,7 @@ async function main(): Promise<void> {
         workerId: 72,
         displayName: 'feat-auth-codex',
         branch: 'feat/auth-codex',
+        workdir: runtimeWorktree,
       },
       gemini: {
         ...hookInfo,
@@ -277,6 +280,7 @@ async function main(): Promise<void> {
         workerId: 73,
         displayName: 'feat-auth-gemini',
         branch: 'feat/auth-gemini',
+        workdir: runtimeWorktree,
       },
     };
     sm['injectCompletionHook'](runtimeWorktree, 'claude', runtimeInfos.claude);

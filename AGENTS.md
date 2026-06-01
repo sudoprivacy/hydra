@@ -1,6 +1,6 @@
 # Hydra — Agent Operating Manual
 
-Hydra is a VS Code extension that lets an AI agent orchestrate parallel workers. Each worker is a git worktree + tmux session + AI agent. You manage them through the `hydra` CLI.
+Hydra is a VS Code extension that lets an AI agent orchestrate parallel workers. A worker is a tmux session + AI agent running in a workdir; code workers add a git worktree and branch, while task workers use a plain folder. You manage them through the `hydra` CLI.
 
 Guidelines for AI agents and developers working on this project.
 
@@ -36,13 +36,15 @@ To test the extension in a VS Code Extension Development Host, use the `/test-hy
 
 ## Key Patterns
 
-- **Worktree Location**: Extension-managed worktrees go under `~/.hydra/worktrees/<repo-identifier>/` (outside the repo to avoid tool/config leakage from parent). Legacy worktrees under `<repo>/.hydra/worktrees/` and `~/.tmux-worktrees/<hash>/` are still recognized.
-- **Session Namespace**: `{repoName}-{pathHash}_{branchSlug}` for collision safety across same-name repos in different directories.
+- **Worker Sources**: Code workers are repo/branch/git-worktree backed. Task workers are directory-backed and have no repo, branch, or git worktree.
+- **Worktree Location**: Extension-managed code-worker worktrees go under `~/.hydra/worktrees/<repo-identifier>/` (outside the repo to avoid tool/config leakage from parent). Legacy worktrees under `<repo>/.hydra/worktrees/` and `~/.tmux-worktrees/<hash>/` are still recognized.
+- **Task Folder Location**: Hydra-managed task-worker folders go under `~/.hydra/tasks/<task-slug>/`. User-provided task folders are never deleted unless a product decision introduces a separate force flag.
+- **Session Namespace**: Code workers use `{repoName}-{pathHash}_{branchSlug}` for collision safety across same-name repos in different directories. Task workers use `task_<taskSlug>`.
 - **Root Detection**: Compare worktree path to primary via `git rev-parse --git-common-dir` — never infer from branch name or folder basename.
 - **Slug Collision**: basename → parent dir disambiguation → short path hash. Reserve `main` for the primary worktree.
 - **Canonical Path Matching**: Normalize to absolute paths with `~` expansion for equality checks. Do not collapse symlinks via `realpath`.
 - **Unpublished Task Branches**: Don't set `branch.<name>.remote`/`.merge` before first push — VS Code SCM would try to sync against a non-existent remote. Set only `branch.<name>.vscode-merge-base`.
-- **Tree Context Menu**: Use per-type `contextValue` — `copilotItem`, `workerItem`, `inactiveWorkerItem`, `detailItem`, `gitStatusItem` — to scope right-click actions to relevant item types.
+- **Tree Context Menu**: Use per-type `contextValue` — `copilotItem`, `workerItem`, `inactiveWorkerItem`, `taskWorkerItem`, `inactiveTaskWorkerItem`, `detailItem`, `gitStatusItem` — to scope right-click actions to relevant item types.
 - **No-Git Workspace**: Show one primary item labeled `current project (no git)` mapped to workspace path.
 - **Polymorphism**: Commands must handle `TmuxItem` base class and variants (`TmuxSessionItem`, `InactiveWorktreeItem`, etc.). Use `getWorktreePath(item)` helper.
 - **Legacy Compatibility**: Centralized in `src/utils/sessionCompatibility.ts`.
@@ -63,7 +65,7 @@ Critical lessons learned — do not change without understanding the full implic
 
 - **Session Presentation**: Two-line layout (Group/Status + Detail).
 - **Terminal Interaction**: Open in Editor Area (Tabs) by default.
-- **Tree Levels**: Level 2 = branch/HEAD with green circle status. Level 3 = tmux usage. Level 4 = git summary (only when non-empty).
+- **Tree Levels**: Code worker Level 2 = branch/HEAD with green circle status, Level 3 = tmux usage, Level 4 = git summary (only when non-empty). Task workers are grouped under `Local Tasks` and show folder/workdir language, not worktree language.
 - **Current Workspace**: Sort to top with `👆` marker, match against workspace folder path.
 - **Deduplication**: Active Session > Inactive Worktree.
 
@@ -101,6 +103,7 @@ hydra list --json                                    # What's running?
 hydra config set default-agent codex                 # Optional: make Codex the default agent
 hydra copilot create --workdir .                     # Launch a copilot in the current directory
 hydra worker create --repo . --branch feat/foo       # Spawn a worker
+hydra worker create --dir ~/notes --name research    # Spawn a task worker
 hydra worker logs <session> --lines 30               # Read its output
 hydra worker send <session> "fix the failing test"   # Send instructions
 hydra copilot restore <session>                      # Restore an archived copilot by session name
@@ -170,7 +173,7 @@ gh pr create -R <owner>/<repo> --head <branch> --title "<title>" --body "<body>"
 
 ## Rules
 
-- **One branch per worker** — don't reuse sessions for unrelated tasks
+- **One branch per code worker** — don't reuse sessions for unrelated tasks
 - **Copilot owns worker creation** — workers must not run `hydra worker create`; if more parallel work is needed, ask the parent copilot to create and assign another worker
 - **Be specific in tasks** — include file paths, function names, and acceptance criteria
 - **Parallelize independent work** — two non-conflicting tasks = two workers

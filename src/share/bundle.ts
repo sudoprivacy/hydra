@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentSessionFile } from '../core/path';
-import type { CopilotInfo, WorkerInfo } from '../core/sessionManager';
+import { isDirectoryWorker, type CopilotInfo, type WorkerInfo } from '../core/sessionManager';
 import { exportCodexNativeSession } from './codexAdapter';
 import { collectRepoInfo } from './repo';
 import type { HydraShareBundle, ShareHydraSessionInfo } from './types';
@@ -41,6 +41,13 @@ function buildHydraSessionInfo(session: ShareableSession, sessionId: string): Sh
     };
   }
 
+  if (isDirectoryWorker(session.data)) {
+    throw new Error('Task workers cannot be shared yet. Share currently supports copilots and code workers only.');
+  }
+  if (!session.data.repo || !session.data.repoRoot || !session.data.branch) {
+    throw new Error(`Code worker "${session.data.sessionName}" is missing repository metadata and cannot be shared.`);
+  }
+
   return {
     type: 'worker',
     sessionName: session.data.sessionName,
@@ -63,6 +70,9 @@ export async function createShareBundle(
   session: ShareableSession,
   shareId = generateShareId(),
 ): Promise<HydraShareBundle> {
+  if (session.type === 'worker' && isDirectoryWorker(session.data)) {
+    throw new Error('Task workers cannot be shared yet. Share currently supports copilots and code workers only.');
+  }
   const sessionId = assertCodexSession(session);
   const repo = await collectRepoInfo(session.data.workdir);
 

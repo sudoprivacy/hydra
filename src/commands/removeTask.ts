@@ -9,7 +9,7 @@ import {
   GitStatusItem,
   CopilotItem,
 } from "../providers/tmuxSessionProvider";
-import { SessionManager } from "../core/sessionManager";
+import { isDirectoryWorker, SessionManager } from "../core/sessionManager";
 import { TmuxBackendCore } from "../core/tmux";
 import { resolveSessionKind, resolveSessionName } from "./treeItemResolver";
 
@@ -24,7 +24,12 @@ function isMainWorktreeItem(item: TmuxItem): boolean {
 function isOrphanItem(item: TmuxItem): boolean {
   if (item instanceof TmuxSessionItem) return item.session.status.classification === 'orphan';
   if (item instanceof TmuxDetailItem && item.session) return item.session.status.classification === 'orphan';
-  if (item instanceof WorktreeItem) return !item.hasGit;
+  if (item instanceof WorktreeItem) {
+    if (item.contextValue === 'taskWorkerItem' || item.contextValue === 'inactiveTaskWorkerItem') {
+      return false;
+    }
+    return !item.hasGit;
+  }
   return false;
 }
 
@@ -86,6 +91,36 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
     if (confirm !== "Kill Session") return;
 
     await sm.deleteWorker(sessionName);
+    vscode.commands.executeCommand("tmux.refresh");
+    return;
+  }
+
+  const worker = await sm.getWorker(sessionName);
+  if (worker && isDirectoryWorker(worker)) {
+    if (worker.managedWorkdir) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete task worker "${sessionName}"? Files are kept unless you choose to delete them.`,
+        { modal: true },
+        "Delete Worker",
+        "Delete Worker & Files",
+      );
+      if (!confirm) return;
+
+      await sm.deleteWorker(sessionName, { deleteFiles: confirm === "Delete Worker & Files" });
+      vscode.window.showInformationMessage(`Removed task worker: ${sessionName}`);
+      vscode.commands.executeCommand("tmux.refresh");
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      `Delete task worker "${sessionName}"? The folder will be kept.`,
+      { modal: true },
+      "Delete Worker",
+    );
+    if (confirm !== "Delete Worker") return;
+
+    await sm.deleteWorker(sessionName);
+    vscode.window.showInformationMessage(`Removed task worker: ${sessionName}`);
     vscode.commands.executeCommand("tmux.refresh");
     return;
   }

@@ -133,7 +133,7 @@
       },
       {
         "command": "tmux.openWorktree",
-        "title": "Open in New Window"
+        "title": "Open Folder in New Window"
       },
       {
         "command": "tmux.reviewChanges",
@@ -217,7 +217,7 @@
         "tmuxWorktree.baseBranch": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Override the base branch used when creating new task worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect from `origin/main`, `main`, `origin/master`, `master`."
+          "markdownDescription": "Legacy setting: override the base branch used when creating new code-worker worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect from `origin/main`, `main`, `origin/master`, `master`."
         },
         "hydra.baseBranch": {
           "type": "string",
@@ -274,22 +274,22 @@
         },
         {
           "command": "tmux.openWorktree",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
           "group": "1_open@2"
         },
         {
           "command": "tmux.attach",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'copilotItem')",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
           "group": "1_open@3"
         },
         {
           "command": "tmux.copyPath",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
           "group": "2_copy"
         },
         {
           "command": "tmux.removeTask",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'copilotItem')",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
           "group": "9_danger"
         }
       ]
@@ -331,6 +331,8 @@
     "smoke:copilot-env-e2e": "node out/smoke/copilotEnvE2eSmoke.js",
     "smoke:codex-bypass": "node out/smoke/codexBypassSmoke.js",
     "smoke:completion-hook": "node out/smoke/completionHookSmoke.js",
+    "smoke:task-worker": "node out/smoke/taskWorkerSmoke.js",
+    "smoke:task-worker-cli-e2e": "node out/smoke/taskWorkerCliE2eSmoke.js",
     "smoke:worker-delete": "node out/smoke/workerDeleteFailClosedSmoke.js",
     "smoke:telemetry": "node out/smoke/telemetrySmoke.js",
     "smoke:telemetry-e2e": "node out/smoke/telemetryE2eSmoke.js",
@@ -341,7 +343,7 @@
     "smoke:cli-config": "node out/smoke/cliConfigSmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

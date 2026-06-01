@@ -69,6 +69,12 @@ export function classifyError(message: string): number {
     lower.includes('missing required') ||
     lower.includes('unknown config key') ||
     lower.includes('workers cannot create other workers') ||
+    lower.includes('cannot be used with') ||
+    lower.includes('mutually exclusive') ||
+    lower.includes('only valid') ||
+    lower.includes('only supported') ||
+    lower.includes('requires --') ||
+    lower.includes('is required') ||
     lower.includes('validation')
   ) {
     return EXIT_VALIDATION;

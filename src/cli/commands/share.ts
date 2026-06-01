@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { Command } from 'commander';
 import { TmuxBackendCore } from '../../core/tmux';
-import { SessionManager, type CopilotInfo, type WorkerInfo } from '../../core/sessionManager';
+import { isDirectoryWorker, SessionManager, type CopilotInfo, type WorkerInfo } from '../../core/sessionManager';
 import {
   branchNameToSlug,
   ensureWorktreesDir,
@@ -277,6 +277,7 @@ function buildImportedWorkerInfo(
 ): WorkerInfo {
   const now = new Date().toISOString();
   return {
+    source: 'repo',
     sessionName,
     displayName: bundleSession.displayName || slug,
     workerId: source.workerId,
@@ -288,6 +289,7 @@ function buildImportedWorkerInfo(
     attached: false,
     agent: 'codex',
     workdir,
+    managedWorkdir: false,
     tmuxSession: sessionName,
     createdAt: now,
     lastSeenAt: now,
@@ -467,6 +469,9 @@ export function registerShareCommands(program: Command): void {
         const session = findShareableSession(state, sessionName);
         if (!session) {
           throw new Error(`Session "${sessionName}" not found`);
+        }
+        if (session.type === 'worker' && isDirectoryWorker(session.data)) {
+          throw new Error('Task workers cannot be shared yet. Share currently supports copilots and code workers only.');
         }
 
         if (opts.stop) {

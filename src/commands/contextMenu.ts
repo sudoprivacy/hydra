@@ -36,18 +36,18 @@ function getRoleFromItem(item?: TmuxItem): HydraRole | undefined {
   return undefined;
 }
 
-async function ensureSessionExists(sessionName: string, worktreePath?: string): Promise<void> {
+async function ensureSessionExists(sessionName: string, workdir?: string): Promise<void> {
   const backend = getActiveBackend();
   if (await backend.hasSession(sessionName)) {
     return;
   }
 
-  if (!worktreePath) {
-    throw new Error('Worktree path not found (cannot create session).');
+  if (!workdir) {
+    throw new Error('Workdir not found (cannot create session).');
   }
 
-  await backend.createSession(sessionName, worktreePath);
-  await backend.setSessionWorkdir(sessionName, worktreePath);
+  await backend.createSession(sessionName, workdir);
+  await backend.setSessionWorkdir(sessionName, workdir);
 }
 
 export async function attach(item?: TmuxItem): Promise<void> {
@@ -99,7 +99,7 @@ export async function attachInEditor(item?: TmuxItem): Promise<void> {
 export async function openWorktree(item?: TmuxItem): Promise<void> {
   const worktreePath = await resolveWorktreePath(item);
   if (!worktreePath) {
-    vscode.window.showErrorMessage('Worktree path not found');
+    vscode.window.showErrorMessage('Workdir not found');
     return;
   }
   const worktreeUri = vscode.Uri.file(worktreePath);
@@ -109,7 +109,7 @@ export async function openWorktree(item?: TmuxItem): Promise<void> {
 export async function reviewChanges(item?: TmuxItem): Promise<void> {
   const worktreePath = await resolveWorktreePath(item);
   if (!worktreePath) {
-    vscode.window.showErrorMessage('Worktree path not found');
+    vscode.window.showErrorMessage('Workdir not found');
     return;
   }
 
@@ -123,7 +123,7 @@ export async function reviewChanges(item?: TmuxItem): Promise<void> {
 export async function copyPath(item?: TmuxItem): Promise<void> {
   const worktreePath = await resolveWorktreePath(item);
   if (!worktreePath) {
-    vscode.window.showErrorMessage('Worktree path not found');
+    vscode.window.showErrorMessage('Workdir not found');
     return;
   }
   await vscode.env.clipboard.writeText(worktreePath);

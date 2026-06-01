@@ -185,7 +185,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.onDidChangeActiveTerminal((terminal) => {
       if (!terminal) return;
-      revealSidebarItem(terminal, copilotProvider, workerProvider, copilotView, workerView).then(undefined, () => {});
+      refreshAll();
+      delay(750)
+        .then(() => revealSidebarItem(terminal, copilotProvider, workerProvider, copilotView, workerView))
+        .then(undefined, () => {});
     })
   );
 

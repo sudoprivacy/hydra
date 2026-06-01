@@ -1,11 +1,11 @@
 ---
 name: hydra
-description: Use when you need to create a Hydra worker from natural language by resolving a repo, branch, and agent, then launching the corresponding worker session.
+description: Use when you need to create a Hydra code worker or task worker from natural language by resolving a repo/branch or folder/name and agent, then launching the corresponding worker session.
 ---
 
 # Skill: hydra
 
-Create and manage Hydra workers (git worktree + tmux session + AI agent) from natural language.
+Create and manage Hydra workers (tmux session + AI agent in a workdir) from natural language. Code workers use git worktrees and branches; task workers use plain folders.
 
 ## Prerequisites
 
@@ -34,22 +34,34 @@ Only copilots create workers. If you are running inside a Hydra worker workdir a
 1. **Parse the user's request** to extract:
    - **repo**: A path or short name (e.g., "sudocode", "hydra", "~/code/foo")
    - **branch**: The git branch to create (e.g., "feat/auth", "fix/bug-123")
+   - **folder/name** for task workers: a local folder or a temp task-worker name
    - **agent** (optional): Agent type — uses `hydra config get default-agent` when omitted
    - **task** (optional): A task description or prompt for the agent
 
-2. **Resolve repo name to path** if not an absolute path:
+2. **Choose the worker type**:
+   - Use a **code worker** when the task changes a git repo and needs a branch.
+   - Use a **task worker** for research, writing, analysis, or any non-git folder task.
+   - If running in a git repo, `hydra worker create` needs `--branch` for code workers; use `--dir` or `--temp` for task workers.
+   - If running outside a git repo with no `--repo`, `--dir`, or `--temp`, Hydra defaults to a task worker in the current directory.
+
+3. **Resolve repo name to path** for code workers if not an absolute path:
    - Search in `~/code/<name>` first, then `~/code/*/<name>` (e.g. `~/code/org/myproject`)
    - Then try the current working directory if it matches
    - If ambiguous, ask the user
 
-3. **Run the command**:
+4. **Run the command**:
    ```bash
    hydra worker create --repo <resolved_path> --branch <branch> --agent <agent> [--task "<task>"] [--task-file <path>]
+   hydra worker create --dir <folder> --name <name> --agent <agent> [--task "<task>"] [--task-file <path>]
+   hydra worker create --temp --name <name> --agent <agent> [--task "<task>"] [--task-file <path>]
    ```
 
    Available options:
-   - `--repo <path>` — Path to the repository (required)
-   - `--branch <name>` — Branch name to create (required)
+   - `--repo <path>` — Path to the repository for a code worker
+   - `--branch <name>` — Branch name to create for a code worker
+   - `--dir <path>` — Folder for a task worker; `--name` defaults to the folder basename
+   - `--temp` — Create a Hydra-managed task folder under `~/.hydra/tasks`; requires `--name`
+   - `--name <name>` — Task worker name
    - `--agent <type>` — Agent type override: `claude`, `codex`, `gemini`, `sudocode`, `custom`
    - `--base <branch>` — Base branch override (defaults to main/master)
    - `--task <prompt>` — Task prompt for the agent
@@ -70,7 +82,7 @@ hydra worker logs <session> --lines 200
 
 ### Reviewing changes
 
-Worker worktrees live at `<repo>/.hydra/worktrees/<slug>/`.
+Code worker worktrees live under `~/.hydra/worktrees/<repo-id>/<slug>/`. Task workers do not have git review or PR workflows.
 
 ```bash
 git -C <worktree_path> diff --stat
@@ -115,9 +127,10 @@ When the user asks to clean up, delete, or remove workers:
 - `hydra worker logs <session> [--lines N]` — Read worker terminal output (default: 50 lines)
 - `hydra worker send <session> <message>` — Send a message to a worker (reliable double-Enter)
 - `hydra worker send --all <message>` — Broadcast to all running workers
-- `hydra worker stop <session>` — Stop a worker (kill tmux session, keep worktree)
+- `hydra worker stop <session>` — Stop a worker (kill tmux session, keep workdir)
 - `hydra worker start <session>` — Start a stopped worker
-- `hydra worker delete <session>` — Delete a worker (kill session + remove worktree + delete branch)
+- `hydra worker delete <session>` — Delete a worker. Code workers remove worktree + branch; task workers keep files by default.
+- `hydra worker delete <session> --delete-files` — Also delete files for Hydra-managed temp task workers.
 
 ## Copilot role
 
@@ -136,7 +149,7 @@ When acting as a **copilot** (orchestrating multiple workers), follow this workf
 - Be specific in task prompts — include file paths, function names, and acceptance criteria
 - Parallelize independent work — two non-conflicting tasks = two workers
 - Review before shipping — always read the full diff before creating a PR
-- One branch per worker — don't reuse sessions for unrelated tasks
+- One branch per code worker — don't reuse sessions for unrelated tasks
 
 ## Examples
 
@@ -145,6 +158,9 @@ User: "create a worker for feat/auth on sudocode"
 
 User: "new worker with task 'refactor the API layer'"
 → `hydra worker create --repo $(pwd) --branch task/refactor-api --task "refactor the API layer"`
+
+User: "research competitors in this folder"
+→ `hydra worker create --dir "$(pwd)" --name competitor-research --task "research competitors"`
 
 User: "clean up old workers"
 → Run `hydra list`, cross-reference with merged PRs, ask user, then delete confirmed ones one at a time.

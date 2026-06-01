@@ -1,14 +1,112 @@
 import { Command } from 'commander';
+import * as path from 'path';
 import { TmuxBackendCore } from '../../core/tmux';
-import { SessionManager } from '../../core/sessionManager';
+import { isDirectoryWorker, SessionManager, type WorkerInfo } from '../../core/sessionManager';
 import { getRepoRootFromPath, localBranchExists } from '../../core/git';
-import { resolveAgentSessionFile } from '../../core/path';
+import { expandAndResolvePath, resolveAgentSessionFile } from '../../core/path';
 import { resolveRepoInput } from '../../core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMessage } from '../identity';
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
 import { agentSupportsCompletionNotification } from '../../core/agentConfig';
 import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
+
+type WorkerCreateCliOpts = {
+  repo?: string;
+  branch?: string;
+  dir?: string;
+  temp?: boolean;
+  name?: string;
+  base?: string;
+};
+
+type ResolvedCreateMode =
+  | { type: 'code'; repo: string; branch: string }
+  | { type: 'task'; workdir?: string; name?: string; managedWorkdir: boolean };
+
+function getDirectoryName(inputPath: string): string {
+  return path.basename(inputPath.replace(/[\\/]+$/, '')) || 'task';
+}
+
+async function tryGetCurrentRepoRoot(): Promise<string | null> {
+  try {
+    return await getRepoRootFromPath(process.cwd());
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCreateMode(opts: WorkerCreateCliOpts): Promise<ResolvedCreateMode> {
+  const taskModeRequested = !!opts.dir || opts.temp === true;
+
+  if (opts.repo && taskModeRequested) {
+    throw new Error('--repo cannot be used with --dir or --temp.');
+  }
+  if (opts.dir && opts.temp) {
+    throw new Error('--dir and --temp are mutually exclusive.');
+  }
+
+  if (taskModeRequested) {
+    if (opts.branch) {
+      throw new Error('--branch is only valid for code workers.');
+    }
+    if (opts.base) {
+      throw new Error('--base is only valid for code workers.');
+    }
+    if (opts.temp) {
+      if (!opts.name?.trim()) {
+        throw new Error('--name is required when using --temp.');
+      }
+      return { type: 'task', name: opts.name.trim(), managedWorkdir: true };
+    }
+
+    const workdir = expandAndResolvePath(opts.dir!);
+    return {
+      type: 'task',
+      workdir,
+      name: opts.name?.trim() || getDirectoryName(workdir),
+      managedWorkdir: false,
+    };
+  }
+
+  if (opts.repo) {
+    if (!opts.branch?.trim()) {
+      throw new Error('--branch is required when using --repo.');
+    }
+    if (opts.name) {
+      throw new Error('--name is only valid for task workers.');
+    }
+    return { type: 'code', repo: opts.repo, branch: opts.branch.trim() };
+  }
+
+  const currentRepoRoot = await tryGetCurrentRepoRoot();
+  if (currentRepoRoot) {
+    if (!opts.branch?.trim()) {
+      throw new Error(
+        'Current directory is a git repository. --branch is required to create a code worker; use --dir or --temp to create a task worker.',
+      );
+    }
+    if (opts.name) {
+      throw new Error('--name is only valid for task workers.');
+    }
+    return { type: 'code', repo: currentRepoRoot, branch: opts.branch.trim() };
+  }
+
+  if (opts.branch?.trim()) {
+    throw new Error('--branch requires --repo or a current directory inside a git repository.');
+  }
+  if (opts.base) {
+    throw new Error('--base is only valid for code workers.');
+  }
+
+  const workdir = expandAndResolvePath(process.cwd());
+  return {
+    type: 'task',
+    workdir,
+    name: opts.name?.trim() || getDirectoryName(workdir),
+    managedWorkdir: false,
+  };
+}
 
 export function registerWorkerCommands(program: Command): void {
   const worker = program
@@ -18,8 +116,11 @@ export function registerWorkerCommands(program: Command): void {
   worker
     .command('create')
     .description('Create a new worker')
-    .requiredOption('--repo <path>', 'Path to the repository')
-    .requiredOption('--branch <name>', 'Branch name')
+    .option('--repo <path>', 'Path to the repository for a code worker')
+    .option('--branch <name>', 'Branch name for a code worker')
+    .option('--dir <path>', 'Directory for a task worker')
+    .option('--temp', 'Create a Hydra-managed task worker folder')
+    .option('--name <name>', 'Task worker name')
     .option('--agent <type>', 'Agent type override (claude, codex, gemini, sudocode, custom)')
     .option('--base <branch>', 'Base branch override')
     .option('--task <prompt>', 'Task prompt for the agent')
@@ -28,8 +129,11 @@ export function registerWorkerCommands(program: Command): void {
     .option('--notify-copilot', 'Notify parent copilot when worker completes (default: true)', true)
     .option('--no-notify-copilot', 'Disable completion notification to parent copilot')
     .action(async (opts: {
-      repo: string;
-      branch: string;
+      repo?: string;
+      branch?: string;
+      dir?: string;
+      temp?: boolean;
+      name?: string;
       agent?: string;
       base?: string;
       task?: string;
@@ -44,16 +148,6 @@ export function registerWorkerCommands(program: Command): void {
           throw new Error(getWorkerCreationBlockedMessage(identity));
         }
 
-        // Single dispatch helper: handles short-form, abs paths, and explicit
-        // relative paths (`.`, `./foo`, `../foo`). Decides managed-ness against
-        // the resolved (pre-rev-parse) path so the macOS /var → /private/var
-        // realpath flip in `git rev-parse --show-toplevel` doesn't defeat the
-        // comparison against ~/.hydra/repos/.
-        const { path: repoPath, isManaged: isManagedRepo } = resolveRepoInput(opts.repo);
-        const repoRoot = await getRepoRootFromPath(repoPath);
-
-        // Check if branch exists before create to detect resume
-        const branchExisted = await localBranchExists(repoRoot, opts.branch);
         const agentType = opts.agent || getHydraGlobalDefaultAgent().agent;
 
         const backend = new TmuxBackendCore();
@@ -67,38 +161,78 @@ export function registerWorkerCommands(program: Command): void {
           }
         }
 
-        const { workerInfo, postCreatePromise } = await sm.createWorker({
-          repoRoot,
-          branchName: opts.branch,
-          agentType,
-          baseBranchOverride: opts.base,
-          task: opts.task,
-          taskFile: opts.taskFile,
-          copilotSessionName,
-          notifyCopilot: opts.notifyCopilot,
-          fetchMode: isManagedRepo ? 'required' : 'best-effort',
-        });
+        const mode = await resolveCreateMode(opts);
+        let workerInfo: WorkerInfo;
+        let postCreatePromise: Promise<void>;
+        let status = 'created';
 
-        const status = branchExisted ? 'exists' : 'created';
+        if (mode.type === 'code') {
+          // Single dispatch helper: handles short-form, abs paths, and explicit
+          // relative paths (`.`, `./foo`, `../foo`). Decides managed-ness against
+          // the resolved (pre-rev-parse) path so the macOS /var → /private/var
+          // realpath flip in `git rev-parse --show-toplevel` doesn't defeat the
+          // comparison against ~/.hydra/repos/.
+          const { path: repoPath, isManaged: isManagedRepo } = resolveRepoInput(mode.repo);
+          const repoRoot = await getRepoRootFromPath(repoPath);
+          const branchExisted = await localBranchExists(repoRoot, mode.branch);
+
+          const result = await sm.createWorker({
+            repoRoot,
+            branchName: mode.branch,
+            agentType,
+            baseBranchOverride: opts.base,
+            task: opts.task,
+            taskFile: opts.taskFile,
+            copilotSessionName,
+            notifyCopilot: opts.notifyCopilot,
+            fetchMode: isManagedRepo ? 'required' : 'best-effort',
+          });
+          workerInfo = result.workerInfo;
+          postCreatePromise = result.postCreatePromise;
+          status = branchExisted ? 'exists' : 'created';
+        } else {
+          const result = await sm.createDirectoryWorker({
+            workdir: mode.workdir,
+            name: mode.name,
+            managedWorkdir: mode.managedWorkdir,
+            agentType,
+            task: opts.task,
+            taskFile: opts.taskFile,
+            copilotSessionName,
+            notifyCopilot: opts.notifyCopilot,
+          });
+          workerInfo = result.workerInfo;
+          postCreatePromise = result.postCreatePromise;
+        }
+
+        const type = isDirectoryWorker(workerInfo) ? 'task' : 'code';
 
         getTelemetry().capture(
-          branchExisted ? 'worker_resumed' : 'worker_created',
-          { agent: normalizeAgentForTelemetry(workerInfo.agent) },
+          status === 'exists' ? 'worker_resumed' : 'worker_created',
+          { agent: normalizeAgentForTelemetry(workerInfo.agent), workerType: type },
         );
 
         outputResult(
           {
             status,
+            type,
             session: workerInfo.sessionName,
             branch: workerInfo.branch,
+            name: workerInfo.displayName || workerInfo.slug,
             agent: workerInfo.agent,
             workdir: workerInfo.workdir,
+            managedWorkdir: workerInfo.managedWorkdir === true,
           },
           globalOpts,
           () => {
-            const label = branchExisted ? 'Worker resumed' : 'Worker created';
+            const label = status === 'exists' ? 'Worker resumed' : 'Worker created';
             console.log(`${label}: ${workerInfo.sessionName}`);
-            console.log(`  Branch:   ${workerInfo.branch}`);
+            console.log(`  Type:     ${type}`);
+            if (type === 'task') {
+              console.log(`  Name:     ${workerInfo.displayName || workerInfo.slug}`);
+            } else {
+              console.log(`  Branch:   ${workerInfo.branch}`);
+            }
             console.log(`  Agent:    ${workerInfo.agent}`);
             console.log(`  Workdir:  ${workerInfo.workdir}`);
             console.log(`  Session:  ${workerInfo.tmuxSession}`);
@@ -114,18 +248,24 @@ export function registerWorkerCommands(program: Command): void {
 
   worker
     .command('delete <session>')
-    .description('Delete a worker (kill session + remove worktree + delete branch)')
-    .action(async (sessionName: string) => {
+    .description('Delete a worker')
+    .option('--delete-files', 'Delete files for Hydra-managed temp task worker folders')
+    .action(async (sessionName: string, opts: { deleteFiles?: boolean }) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        await sm.deleteWorker(sessionName);
+        const workerInfo = await sm.getWorker(sessionName);
+        const workerType = workerInfo ? (isDirectoryWorker(workerInfo) ? 'task' : 'code') : undefined;
+        await sm.deleteWorker(sessionName, { deleteFiles: opts.deleteFiles === true });
 
-        getTelemetry().capture('worker_deleted');
+        getTelemetry().capture('worker_deleted', {
+          workerType,
+          deleteFiles: opts.deleteFiles === true,
+        });
 
         outputResult(
-          { status: 'deleted', session: sessionName },
+          { status: 'deleted', session: sessionName, deleteFiles: opts.deleteFiles === true },
           globalOpts,
           () => console.log(`Deleted worker: ${sessionName}`),
         );
@@ -136,7 +276,7 @@ export function registerWorkerCommands(program: Command): void {
 
   worker
     .command('stop <session>')
-    .description('Stop a worker (kill tmux session, keep worktree)')
+    .description('Stop a worker (kill tmux session, keep workdir)')
     .action(async (sessionName: string) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
@@ -188,7 +328,7 @@ export function registerWorkerCommands(program: Command): void {
 
   worker
     .command('rename <session> <new-branch>')
-    .description('Rename a worker (branch, worktree, and session)')
+    .description('Rename a code worker (branch, worktree, and session)')
     .action(async (sessionName: string, newBranch: string) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
