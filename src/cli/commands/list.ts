@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { TmuxBackendCore } from '../../core/tmux';
-import { SessionManager } from '../../core/sessionManager';
+import { isDirectoryWorker, isRepoWorker, SessionManager } from '../../core/sessionManager';
 import { resolveAgentSessionFile } from '../../core/path';
 import { outputResult, outputError, type OutputOpts } from '../output';
 
@@ -36,6 +36,7 @@ export function registerListCommand(program: Command): void {
           workers: workers.map(w => ({
             number: w.workerId,
             name: w.displayName || w.slug || w.sessionName || w.tmuxSession,
+            type: isDirectoryWorker(w) ? 'task' : 'code',
             session: w.sessionName || w.tmuxSession,
             repo: w.repo || null,
             branch: w.branch || null,
@@ -43,6 +44,7 @@ export function registerListCommand(program: Command): void {
             status: w.status,
             attached: w.attached,
             workdir: w.workdir || null,
+            managedWorkdir: w.managedWorkdir === true,
             copilotSessionName: w.copilotSessionName || null,
             sessionId: w.sessionId,
             sessionFile: resolveAgentSessionFile(w.agent, w.workdir, w.sessionId, w.agentSessionFile),
@@ -82,9 +84,12 @@ export function registerListCommand(program: Command): void {
             console.log('\nWorkers:');
             if (isTTY) console.log('\u2500'.repeat(60));
 
+            const codeWorkers = workers.filter(isRepoWorker);
+            const taskWorkers = workers.filter(isDirectoryWorker);
+
             // Group by repo
-            const byRepo = new Map<string, typeof workers>();
-            for (const w of workers) {
+            const byRepo = new Map<string, typeof codeWorkers>();
+            for (const w of codeWorkers) {
               const key = w.repo || 'unknown';
               const group = byRepo.get(key) || [];
               group.push(w);
@@ -106,6 +111,23 @@ export function registerListCommand(program: Command): void {
                 const name = w.displayName || w.slug || w.sessionName || w.tmuxSession;
                 const num = w.workerId != null ? `#${w.workerId} ` : '';
                 console.log(`    ${statusIcon} ${num}${name}${branch}  [${w.agent}]${attached}`);
+                if (w.workdir) console.log(`      workdir: ${w.workdir}`);
+              }
+            }
+
+            if (taskWorkers.length > 0) {
+              const sortedTasks = taskWorkers
+                .sort((a, b) => (a.sessionName || a.tmuxSession).localeCompare(b.sessionName || b.tmuxSession));
+              console.log('  Local Tasks:');
+              for (const w of sortedTasks) {
+                const statusIcon = isTTY
+                  ? (w.status === 'running' ? '\x1b[32m\u25CF\x1b[0m' : '\u25CB')
+                  : `[${w.status}]`;
+                const attached = w.attached ? ' (attached)' : '';
+                const name = w.displayName || w.slug || w.sessionName || w.tmuxSession;
+                const num = w.workerId != null ? `#${w.workerId} ` : '';
+                const managed = w.managedWorkdir ? ' managed' : '';
+                console.log(`    ${statusIcon} ${num}${name}  [${w.agent}]${managed}${attached}`);
                 if (w.workdir) console.log(`      workdir: ${w.workdir}`);
               }
             }

@@ -6,6 +6,7 @@ import { TmuxBackendCore } from '../../core/tmux';
 
 interface WhoamiResult {
   role: 'worker';
+  type: 'code' | 'task';
   sessionName: string;
   displayName: string;
   agent: string;
@@ -14,8 +15,9 @@ interface WhoamiResult {
   status: string;
   // Worker-specific
   workerId?: number;
-  branch?: string;
-  repo?: string;
+  branch?: string | null;
+  repo?: string | null;
+  managedWorkdir?: boolean;
   copilotSessionName?: string | null;
 }
 
@@ -36,6 +38,7 @@ export function registerWhoamiCommand(program: Command): void {
         if (cwd === resolve(worker.workdir) || cwd.startsWith(resolve(worker.workdir) + '/')) {
           const data: WhoamiResult = {
             role: 'worker',
+            type: worker.source === 'directory' ? 'task' : 'code',
             sessionName: worker.sessionName,
             displayName: worker.displayName,
             agent: worker.agent,
@@ -45,6 +48,7 @@ export function registerWhoamiCommand(program: Command): void {
             workerId: worker.workerId,
             branch: worker.branch,
             repo: worker.repo,
+            managedWorkdir: worker.managedWorkdir === true,
             copilotSessionName: worker.copilotSessionName,
           };
 
@@ -67,14 +71,22 @@ export function registerWhoamiCommand(program: Command): void {
 function prettyPrintWorker(worker: WorkerInfo): void {
   console.log('');
   console.log(`  Role:        worker`);
+  console.log(`  Type:        ${worker.source === 'directory' ? 'task' : 'code'}`);
   console.log(`  Session:     ${worker.sessionName}`);
   console.log(`  Worker #:    ${worker.workerId}`);
-  console.log(`  Branch:      ${worker.branch}`);
-  console.log(`  Repo:        ${worker.repo}`);
+  if (worker.source === 'directory') {
+    console.log(`  Name:        ${worker.displayName || worker.slug}`);
+  } else {
+    console.log(`  Branch:      ${worker.branch}`);
+    console.log(`  Repo:        ${worker.repo}`);
+  }
   console.log(`  Agent:       ${worker.agent}`);
   console.log(`  Session ID:  ${worker.sessionId ?? '(none)'}`);
   console.log(`  Copilot:     ${worker.copilotSessionName ?? '(none)'}`);
   console.log(`  Workdir:     ${worker.workdir}`);
+  if (worker.source === 'directory') {
+    console.log(`  Managed:     ${worker.managedWorkdir === true ? 'yes' : 'no'}`);
+  }
   console.log(`  Status:      ${worker.status}`);
   console.log('');
 }

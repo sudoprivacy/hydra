@@ -1,25 +1,29 @@
 import { Command } from 'commander';
 import { TmuxBackendCore } from '../../core/tmux';
-import { SessionManager, ArchivedSessionInfo } from '../../core/sessionManager';
+import { isDirectoryWorker, SessionManager, ArchivedSessionInfo, type WorkerInfo } from '../../core/sessionManager';
 import { outputResult, outputError, type OutputOpts } from '../output';
 
 function formatEntry(entry: ArchivedSessionInfo): Record<string, unknown> {
+  const worker = entry.type === 'worker' ? entry.data as WorkerInfo : null;
   return {
     sessionName: entry.sessionName,
     type: entry.type,
+    workerType: worker ? (isDirectoryWorker(worker) ? 'task' : 'code') : null,
     agentSessionId: entry.agentSessionId,
     agentSessionFile: entry.agentSessionFile || null,
     archivedAt: entry.archivedAt,
     agent: entry.data.agent,
-    branch: entry.type === 'worker' ? (entry.data as { branch?: string }).branch || null : null,
+    branch: worker?.branch || null,
+    name: worker ? worker.displayName || worker.slug || null : null,
   };
 }
 
 function printEntry(entry: ArchivedSessionInfo): void {
-  const branch = entry.type === 'worker'
-    ? ` (${(entry.data as { branch?: string }).branch || 'unknown'})`
+  const worker = entry.type === 'worker' ? entry.data as WorkerInfo : null;
+  const label = worker
+    ? ` (${isDirectoryWorker(worker) ? (worker.displayName || worker.slug || 'task') : (worker.branch || 'unknown')})`
     : '';
-  console.log(`  [${entry.type}] ${entry.sessionName}${branch}`);
+  console.log(`  [${entry.type}] ${entry.sessionName}${label}`);
   console.log(`    Agent:      ${entry.data.agent}`);
   console.log(`    Session ID: ${entry.agentSessionId || 'none'}`);
   if (entry.agentSessionFile) console.log(`    Session file: ${entry.agentSessionFile}`);
@@ -125,12 +129,15 @@ export function registerArchiveCommands(program: Command): void {
 
         if (entry.type === 'worker') {
           const { workerInfo, postCreatePromise } = await sm.restoreWorker(sessionName);
+          const workerType = isDirectoryWorker(workerInfo) ? 'task' : 'code';
           outputResult(
             {
               status: 'restored',
               type: 'worker',
+              workerType,
               session: workerInfo.sessionName,
               branch: workerInfo.branch,
+              name: workerInfo.displayName || workerInfo.slug,
               agent: workerInfo.agent,
               workdir: workerInfo.workdir,
               agentSessionId: workerInfo.sessionId,
@@ -138,7 +145,12 @@ export function registerArchiveCommands(program: Command): void {
             globalOpts,
             () => {
               console.log(`Restored worker: ${workerInfo.sessionName}`);
-              console.log(`  Branch:     ${workerInfo.branch}`);
+              console.log(`  Type:       ${workerType}`);
+              if (workerType === 'task') {
+                console.log(`  Name:       ${workerInfo.displayName || workerInfo.slug}`);
+              } else {
+                console.log(`  Branch:     ${workerInfo.branch}`);
+              }
               console.log(`  Agent:      ${workerInfo.agent}`);
               console.log(`  Workdir:    ${workerInfo.workdir}`);
               console.log(`  Session ID: ${workerInfo.sessionId || 'none'}`);

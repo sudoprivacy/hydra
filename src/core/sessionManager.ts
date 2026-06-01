@@ -7,7 +7,7 @@ import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefa
 import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
-import { getHydraArchiveFile, getHydraHome, getHydraSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
+import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
@@ -106,19 +106,24 @@ export function lookupWorkerId(sessionName: string): number | undefined {
 
 // ── Types ──
 
+export type WorkerSource = 'repo' | 'directory';
+
 export interface WorkerInfo {
+  source?: WorkerSource;
   sessionName: string;
-  /** Human-friendly name for display (the branch slug without the hash prefix). */
+  /** Human-friendly name for display (branch slug or task name). */
   displayName: string;
   workerId: number;
-  repo: string;
-  repoRoot: string;
-  branch: string;
+  repo: string | null;
+  repoRoot: string | null;
+  branch: string | null;
   slug: string;
   status: 'running' | 'stopped';
   attached: boolean;
   agent: string;
   workdir: string;
+  /** True only for Hydra-owned task worker folders under ~/.hydra/tasks. */
+  managedWorkdir?: boolean;
   tmuxSession: string;
   createdAt: string;
   lastSeenAt: string;
@@ -171,7 +176,7 @@ interface SavedWorkerMatch {
   stateKey?: string;
 }
 
-export interface CreateWorkerOpts {
+export interface CreateRepoWorkerOpts {
   repoRoot: string;
   branchName: string;
   agentType?: string;
@@ -193,8 +198,65 @@ export interface CreateWorkerOpts {
    * Pre-create fetch behaviour:
    *   'best-effort' — default, swallow errors (used for ad-hoc abs-path repos)
    *   'required'    — error out if fetch fails (used for ~/.hydra/repos/-managed repos)
-   */
+  */
   fetchMode?: 'best-effort' | 'required';
+}
+
+export type CreateWorkerOpts = CreateRepoWorkerOpts;
+
+export interface CreateDirectoryWorkerOpts {
+  workdir?: string;
+  name?: string;
+  managedWorkdir?: boolean;
+  agentType?: string;
+  task?: string;
+  taskFile?: string;
+  agentCommand?: string;
+  /** When set, launch the agent with --resume instead of a fresh session. */
+  resumeSessionId?: string;
+  /** Native session file to use for agents whose resume command accepts paths. */
+  resumeSessionFile?: string | null;
+  /** Session name of the copilot that spawned this worker. */
+  copilotSessionName?: string;
+  /** Whether to notify the parent copilot when the worker completes (default: true). */
+  notifyCopilot?: boolean;
+  /** Existing persisted identity to preserve when restoring an archived worker. */
+  preservedWorkerInfo?: WorkerInfo;
+}
+
+export interface DeleteWorkerOpts {
+  deleteFiles?: boolean;
+}
+
+interface PreparedWorkerLaunch {
+  source: WorkerSource;
+  sessionName: string;
+  displayName: string;
+  slug: string;
+  workdir: string;
+  repo: string | null;
+  repoRoot: string | null;
+  branch: string | null;
+  managedWorkdir: boolean;
+  agentType: string;
+  agentCommand: string;
+  task?: string;
+  resumeSessionId?: string;
+  resumeSessionFile?: string | null;
+  copilotSessionName?: string;
+  notifyCopilot: boolean;
+  preservedWorkerInfo?: WorkerInfo;
+  preservedStateKey?: string;
+}
+
+interface WorkerNotificationInfo {
+  copilotSessionName: string;
+  sessionName: string;
+  workerId: number;
+  displayName: string;
+  source: WorkerSource;
+  branch?: string | null;
+  workdir: string;
 }
 
 export interface CreateCopilotOpts {
@@ -229,6 +291,19 @@ export interface CreateCopilotResult {
 // mutator actually changed anything. Callers that don't set it keep the legacy
 // unconditional-write semantics.
 const SESSION_STATE_DIRTY_KEY = '__hydraDirty';
+const TASK_WORKER_SESSION_NAMESPACE = 'task';
+
+export function getWorkerSource(worker: WorkerInfo): WorkerSource {
+  return worker.source === 'directory' ? 'directory' : 'repo';
+}
+
+export function isRepoWorker(worker: WorkerInfo): boolean {
+  return getWorkerSource(worker) === 'repo';
+}
+
+export function isDirectoryWorker(worker: WorkerInfo): boolean {
+  return getWorkerSource(worker) === 'directory';
+}
 
 function markSessionStateDirty(state: SessionState, dirty: boolean): void {
   Object.defineProperty(state, SESSION_STATE_DIRTY_KEY, {
@@ -291,9 +366,18 @@ export class SessionManager {
       // lastSeenAt is deliberately NOT bumped on every sidebar read; the real mutation
       // paths (createWorker, startWorker, persistCopilotSessionId, etc.) already refresh it.
       for (const [key, worker] of Object.entries(state.workers)) {
+        const source = getWorkerSource(worker);
         // Backfill workerId for workers created before this feature
         if (worker.workerId == null) {
           worker.workerId = state.nextWorkerId++;
+          dirty = true;
+        }
+        if (worker.source !== source) {
+          worker.source = source;
+          dirty = true;
+        }
+        if (worker.managedWorkdir == null) {
+          worker.managedWorkdir = false;
           dirty = true;
         }
         const live = liveSessionMap.get(worker.sessionName);
@@ -301,6 +385,9 @@ export class SessionManager {
           if (worker.status !== 'running') { worker.status = 'running'; dirty = true; }
           if (worker.attached !== live.attached) { worker.attached = live.attached; dirty = true; }
         } else if (worker.workdir && fs.existsSync(worker.workdir)) {
+          if (worker.status !== 'stopped') { worker.status = 'stopped'; dirty = true; }
+          if (worker.attached !== false) { worker.attached = false; dirty = true; }
+        } else if (source === 'directory') {
           if (worker.status !== 'stopped') { worker.status = 'stopped'; dirty = true; }
           if (worker.attached !== false) { worker.attached = false; dirty = true; }
         } else {
@@ -344,18 +431,21 @@ export class SessionManager {
             repoRoot = coreGit.resolveRepoRootFromWorktreePath(discovered.workdir) || '';
           }
           const slug = this.extractSlugFromSessionName(session.name);
+          const source: WorkerSource = repoRoot ? 'repo' : 'directory';
           state.workers[session.name] = {
+            source,
             sessionName: session.name,
             displayName: slug,
             workerId: state.nextWorkerId++,
-            repo: repoRoot ? path.basename(repoRoot) : 'unknown',
-            repoRoot,
-            branch: '',
+            repo: repoRoot ? path.basename(repoRoot) : null,
+            repoRoot: repoRoot || null,
+            branch: null,
             slug,
             status: 'running',
             attached: session.attached,
             agent: discovered.agent,
             workdir: discovered.workdir,
+            managedWorkdir: false,
             tmuxSession: session.name,
             createdAt: now,
             lastSeenAt: now,
@@ -394,7 +484,7 @@ export class SessionManager {
     const workers = Object.values(state.workers);
     if (!repoRoot) return workers;
     const canonical = path.resolve(repoRoot);
-    return workers.filter(w => path.resolve(w.repoRoot) === canonical);
+    return workers.filter(w => isRepoWorker(w) && w.repoRoot && path.resolve(w.repoRoot) === canonical);
   }
 
   async listCopilots(repoRoot?: string): Promise<CopilotInfo[]> {
@@ -424,6 +514,10 @@ export class SessionManager {
   // ── Worker Lifecycle ──
 
   async createWorker(opts: CreateWorkerOpts): Promise<CreateWorkerResult> {
+    return this.createRepoWorker(opts);
+  }
+
+  async createRepoWorker(opts: CreateRepoWorkerOpts): Promise<CreateWorkerResult> {
     ensureHydraGlobalConfig();
 
     const { repoRoot, branchName } = opts;
@@ -501,141 +595,225 @@ export class SessionManager {
     // Replace them with NTFS junctions so they work without admin privileges.
     fixWindowsSymlinks(worktreePath);
 
-    let taskFilename: string | undefined;
-    if (taskFile) {
-      const absTaskFile = path.isAbsolute(taskFile) ? taskFile : path.resolve(taskFile);
-      if (fs.existsSync(absTaskFile)) {
-        taskFilename = path.basename(absTaskFile);
-        const targetTaskFile = path.join(worktreePath, taskFilename);
-        fs.copyFileSync(absTaskFile, targetTaskFile);
-
-        // If no task prompt given, instruct agent to read the file
-        if (!task) {
-          task = `Read the task in \`${taskFilename}\` and implement it.`;
-        }
-      }
-    }
+    task = this.prepareTaskFile(worktreePath, task, taskFile, 'repo', 'implement').task;
 
     // Resolve @imports in instruction files
     this.resolveImports(path.join(worktreePath, 'CLAUDE.md'), repoRoot);
     this.resolveImports(path.join(worktreePath, 'AGENTS.md'), repoRoot);
     this.resolveImports(path.join(worktreePath, 'GEMINI.md'), repoRoot);
 
-    // Create tmux session + set metadata
     const sessionName = preservedWorker?.worker.sessionName && preservedWorker.worker.slug === finalSlug
       ? preservedWorker.worker.sessionName
       : this.backend.buildSessionName(repoSessionNamespace, finalSlug);
-    const copilotSessionName = opts.copilotSessionName;
-    const shouldNotifyCopilot = agentSupportsCompletionNotification(agentType) &&
-      opts.notifyCopilot !== false &&
-      !!copilotSessionName &&
-      !!(task || taskFile);
-    if (shouldNotifyCopilot) {
+    return this.launchPreparedWorker({
+      source: 'repo',
+      sessionName,
+      displayName: finalSlug,
+      slug: finalSlug,
+      workdir: worktreePath,
+      repo: coreGit.getRepoName(repoRoot),
+      repoRoot,
+      branch: branchName,
+      managedWorkdir: false,
+      agentType,
+      agentCommand,
+      task,
+      resumeSessionId: opts.resumeSessionId,
+      resumeSessionFile: opts.resumeSessionFile,
+      copilotSessionName: opts.copilotSessionName,
+      notifyCopilot: opts.notifyCopilot !== false,
+      preservedWorkerInfo: preservedWorker?.worker,
+      preservedStateKey: preservedWorker?.stateKey,
+    });
+  }
+
+  async createDirectoryWorker(opts: CreateDirectoryWorkerOpts): Promise<CreateWorkerResult> {
+    ensureHydraGlobalConfig();
+
+    let workdir = opts.workdir ? expandAndResolvePath(opts.workdir) : '';
+    const managedWorkdir = opts.managedWorkdir === true;
+    const preservedWorker = opts.preservedWorkerInfo;
+    const nameInput = opts.name || preservedWorker?.displayName || preservedWorker?.slug ||
+      (workdir ? path.basename(workdir) : undefined);
+    const slug = preservedWorker?.slug || this.normalizeTaskWorkerName(nameInput || '');
+
+    if (managedWorkdir && !opts.name && !preservedWorker) {
+      throw new Error('Task worker name is required for --temp.');
+    }
+
+    if (!workdir) {
+      workdir = path.join(getHydraTasksRoot(), slug);
+    }
+
+    if (!preservedWorker) {
+      if (managedWorkdir && fs.existsSync(workdir)) {
+        throw new Error(`Task worker folder already exists: ${workdir}. Use a different --name or remove it first.`);
+      }
+      await this.assertDirectoryWorkerSessionAvailable(slug);
+    }
+
+    this.ensureDirectoryWorkdir(workdir);
+
+    const task = this.prepareTaskFile(workdir, opts.task, opts.taskFile, 'directory', 'complete').task;
+    const agentType = opts.agentType || getHydraGlobalDefaultAgent().agent;
+    const agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
+    const sessionName = preservedWorker?.sessionName || this.backend.buildSessionName(TASK_WORKER_SESSION_NAMESPACE, slug);
+
+    return this.launchPreparedWorker({
+      source: 'directory',
+      sessionName,
+      displayName: preservedWorker?.displayName || slug,
+      slug,
+      workdir,
+      repo: null,
+      repoRoot: null,
+      branch: null,
+      managedWorkdir,
+      agentType,
+      agentCommand,
+      task,
+      resumeSessionId: opts.resumeSessionId,
+      resumeSessionFile: opts.resumeSessionFile,
+      copilotSessionName: opts.copilotSessionName,
+      notifyCopilot: opts.notifyCopilot !== false,
+      preservedWorkerInfo: preservedWorker,
+    });
+  }
+
+  private async launchPreparedWorker(prepared: PreparedWorkerLaunch): Promise<CreateWorkerResult> {
+    let agentCommand = prepared.agentCommand;
+    const shouldNotifyCopilot = agentSupportsCompletionNotification(prepared.agentType) &&
+      prepared.notifyCopilot &&
+      !!prepared.copilotSessionName &&
+      !!prepared.task;
+
+    if (shouldNotifyCopilot && prepared.copilotSessionName) {
       const peekState = this.readSessionState();
-      const workerId = peekState.workers[sessionName]?.workerId ??
-        preservedWorker?.worker.workerId ??
+      const workerId = peekState.workers[prepared.sessionName]?.workerId ??
+        prepared.preservedWorkerInfo?.workerId ??
         peekState.nextWorkerId;
-      this.injectCompletionHook(worktreePath, agentType, {
-        copilotSessionName,
-        sessionName,
+      this.injectCompletionHook(prepared.workdir, prepared.agentType, {
+        copilotSessionName: prepared.copilotSessionName,
+        sessionName: prepared.sessionName,
         workerId,
-        displayName: finalSlug,
-        branch: branchName,
+        displayName: prepared.displayName,
+        source: prepared.source,
+        branch: prepared.branch,
+        workdir: prepared.workdir,
       });
-      if (agentType === 'codex') {
-        const scriptPath = path.join(getHydraHome(), 'hooks', `notify-${sessionName}.sh`);
-        agentCommand = this.withCodexCompletionHookOverrides(agentCommand, repoRoot, worktreePath, scriptPath);
+      if (prepared.agentType === 'codex') {
+        const scriptPath = path.join(getHydraHome(), 'hooks', `notify-${prepared.sessionName}.sh`);
+        const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
+        agentCommand = this.withCodexCompletionHookOverrides(agentCommand, trustRoots, scriptPath);
       }
     }
 
-    await this.backend.createSession(sessionName, worktreePath);
-    await this.backend.setSessionWorkdir(sessionName, worktreePath);
-    await this.backend.setSessionRole(sessionName, 'worker');
-    await this.backend.setSessionAgent(sessionName, agentType);
+    await this.backend.createSession(prepared.sessionName, prepared.workdir);
+    await this.backend.setSessionWorkdir(prepared.sessionName, prepared.workdir);
+    await this.backend.setSessionRole(prepared.sessionName, 'worker');
+    await this.backend.setSessionAgent(prepared.sessionName, prepared.agentType);
 
-    // ── Launch agent ──
-    //
-    // Two distinct paths — resume (from archive) vs fresh create:
-    //
-    // Resume: session ID already known, launch with --resume, skip Phase 1.
-    // Fresh: supported agents converge to sessionId stored in sessions.json:
-    //   - Claude: pre-assigned via --session-id flag (known immediately)
-    //   - Codex:  launch → wait for ready → send /status → parse session ID
-    //   - Gemini: launch → wait for ready → send /stats → parse session ID
-    //   - Sudo Code: launch → wait for ready → parse startup banner or /status
-    const isResume = !!opts.resumeSessionId;
+    const isResume = !!prepared.resumeSessionId;
     let sessionId: string | null;
     let launchStartedAt: number | undefined;
 
     if (isResume) {
-      sessionId = opts.resumeSessionId!;
-      await this.launchAgentResume(sessionName, agentType, agentCommand, sessionId, worktreePath, opts.resumeSessionFile);
+      sessionId = prepared.resumeSessionId!;
+      await this.launchAgentResume(
+        prepared.sessionName,
+        prepared.agentType,
+        agentCommand,
+        sessionId,
+        prepared.workdir,
+        prepared.resumeSessionFile,
+      );
     } else {
-      sessionId = agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined);
+      sessionId = prepared.agentType === 'claude' ? randomUUID() : null;
+      const launchCmd = buildAgentLaunchCommand(prepared.agentType, agentCommand, undefined, sessionId ?? undefined);
       launchStartedAt = Date.now();
-      await this.backend.sendKeys(sessionName, launchCmd);
+      await this.backend.sendKeys(prepared.sessionName, launchCmd);
     }
 
-    // Write initial state to sessions.json
-    // (sessionId may be null for Codex/Gemini until Phase 1 capture completes)
     const workerInfo = await this.updateSessionState((state) => {
       const now = new Date().toISOString();
-      if (preservedWorker?.stateKey && preservedWorker.stateKey !== sessionName) {
-        delete state.workers[preservedWorker.stateKey];
+      if (prepared.preservedStateKey && prepared.preservedStateKey !== prepared.sessionName) {
+        delete state.workers[prepared.preservedStateKey];
       }
 
-      const existingWorker = state.workers[sessionName] || preservedWorker?.worker;
+      const existingWorker = state.workers[prepared.sessionName] || prepared.preservedWorkerInfo;
       const workerId = existingWorker?.workerId ?? state.nextWorkerId++;
 
       const nextWorker: WorkerInfo = {
-        sessionName,
-        displayName: finalSlug,
+        source: prepared.source,
+        sessionName: prepared.sessionName,
+        displayName: prepared.displayName,
         workerId,
-        repo: coreGit.getRepoName(repoRoot),
-        repoRoot,
-        branch: branchName,
-        slug: finalSlug,
+        repo: prepared.repo,
+        repoRoot: prepared.repoRoot,
+        branch: prepared.branch,
+        slug: prepared.slug,
         status: 'running',
         attached: false,
-        agent: agentType,
-        workdir: worktreePath,
-        tmuxSession: sessionName,
+        agent: prepared.agentType,
+        workdir: prepared.workdir,
+        managedWorkdir: prepared.managedWorkdir,
+        tmuxSession: prepared.sessionName,
         createdAt: existingWorker?.createdAt ?? now,
         lastSeenAt: now,
         sessionId: sessionId ?? existingWorker?.sessionId ?? null,
-        agentSessionFile: opts.resumeSessionFile ?? existingWorker?.agentSessionFile ?? null,
-        copilotSessionName: opts.copilotSessionName ?? existingWorker?.copilotSessionName ?? null,
+        agentSessionFile: prepared.resumeSessionFile ?? existingWorker?.agentSessionFile ?? null,
+        copilotSessionName: prepared.copilotSessionName ?? existingWorker?.copilotSessionName ?? null,
       };
 
-      state.workers[sessionName] = nextWorker;
+      state.workers[prepared.sessionName] = nextWorker;
       state.updatedAt = now;
       return nextWorker;
     });
 
-    // Async post-create
     const postCreatePromise = this.withPostCreateTimeout((async () => {
       if (isResume) {
-        // Resume: skip Phase 1 (sessionId already known), just wait for readiness
-        await this.waitForAgentReady(sessionName, agentType);
+        await this.waitForAgentReady(prepared.sessionName, prepared.agentType);
       } else {
-        // Phase 1: Wait for readiness & capture session ID into sessions.json
-        await this.waitForReadyAndCaptureSessionId(sessionName, agentType, sessionId, worktreePath, launchStartedAt);
+        await this.waitForReadyAndCaptureSessionId(
+          prepared.sessionName,
+          prepared.agentType,
+          sessionId,
+          prepared.workdir,
+          launchStartedAt,
+        );
       }
-      // Phase 2: Send task prompt (only after sessions.json is up to date)
-      await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
-    })(), sessionName, 'worker startup');
+      await this.sendInitialPrompt(prepared.sessionName, prepared.task, shouldNotifyCopilot);
+    })(), prepared.sessionName, 'worker startup');
 
     return { workerInfo, postCreatePromise };
   }
 
-  async deleteWorker(sessionName: string): Promise<void> {
+  async deleteWorker(sessionName: string, opts: DeleteWorkerOpts = {}): Promise<void> {
+    const worker = this.readSessionState().workers[sessionName];
+    if (worker && isDirectoryWorker(worker) && opts.deleteFiles && !worker.managedWorkdir) {
+      throw new Error(`Worker "${sessionName}" uses a user-provided directory. --delete-files is only supported for Hydra-managed task workers.`);
+    }
+
     await this.killSessionOrConfirmAbsent(sessionName);
 
-    const worker = this.readSessionState().workers[sessionName];
     const archivedWorker = worker ? this.prepareArchivedSessionData(worker) as WorkerInfo : undefined;
 
-    if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
+    if (worker && isDirectoryWorker(worker)) {
+      if (opts.deleteFiles && worker.managedWorkdir && worker.workdir && fs.existsSync(worker.workdir)) {
+        try {
+          fs.rmSync(worker.workdir, { recursive: true, force: true });
+        } catch (error) {
+          await this.updateSessionState((state) => {
+            if (state.workers[sessionName]) {
+              state.workers[sessionName].status = 'stopped';
+              state.workers[sessionName].attached = false;
+              state.updatedAt = new Date().toISOString();
+            }
+          });
+          throw error;
+        }
+      }
+    } else if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
       try {
         await coreGit.removeWorktree(worker.repoRoot, worker.workdir);
       } catch (error) {
@@ -690,7 +868,7 @@ export class SessionManager {
     }
 
     if (!existingWorker.workdir || !fs.existsSync(existingWorker.workdir)) {
-      throw new Error(`Worktree "${existingWorker.workdir}" does not exist`);
+      throw new Error(`Workdir "${existingWorker.workdir}" does not exist`);
     }
 
     const agent = agentType || existingWorker.agent || getHydraGlobalDefaultAgent().agent;
@@ -976,6 +1154,10 @@ export class SessionManager {
       throw new Error(`Worker "${oldSessionName}" not found`);
     }
 
+    if (isDirectoryWorker(worker)) {
+      throw new Error(`Worker "${oldSessionName}" is a task worker. Branch rename is only available for code workers.`);
+    }
+
     if (!worker.repoRoot) {
       throw new Error(`Worker "${oldSessionName}" has no associated repository`);
     }
@@ -1234,6 +1416,28 @@ export class SessionManager {
     }
 
     const worker = entry.data as WorkerInfo;
+    if (isDirectoryWorker(worker)) {
+      const workdir = worker.workdir;
+      if (!workdir) {
+        throw new Error(`Archived task worker "${sessionName}" is missing a workdir`);
+      }
+      if (!fs.existsSync(workdir) && !worker.managedWorkdir) {
+        throw new Error(`Task worker workdir "${workdir}" does not exist`);
+      }
+      return this.createDirectoryWorker({
+        workdir,
+        name: worker.displayName || worker.slug,
+        managedWorkdir: worker.managedWorkdir === true,
+        agentType: worker.agent,
+        resumeSessionId: entry.agentSessionId || undefined,
+        resumeSessionFile: entry.agentSessionFile || worker.agentSessionFile || undefined,
+        preservedWorkerInfo: worker,
+      });
+    }
+
+    if (!worker.repoRoot || !worker.branch) {
+      throw new Error(`Archived worker "${sessionName}" is missing repository metadata`);
+    }
     return this.createWorker({
       repoRoot: worker.repoRoot,
       branchName: worker.branch,
@@ -1294,6 +1498,68 @@ export class SessionManager {
         },
       );
     });
+  }
+
+  private normalizeTaskWorkerName(name: string): string {
+    const slug = this.backend.sanitizeSessionName(name.trim());
+    if (!slug) {
+      throw new Error('Task worker name is required.');
+    }
+    return slug;
+  }
+
+  private async assertDirectoryWorkerSessionAvailable(slug: string): Promise<void> {
+    const sessionName = this.backend.buildSessionName(TASK_WORKER_SESSION_NAMESPACE, slug);
+    const state = this.readSessionState();
+    const liveExists = await this.backend.hasSession(sessionName);
+    if (state.workers[sessionName] || state.copilots[sessionName] || liveExists) {
+      throw new Error(`Task worker "${slug}" already exists. Use a different --name or start/delete the existing worker.`);
+    }
+  }
+
+  private ensureDirectoryWorkdir(workdir: string): void {
+    if (fs.existsSync(workdir)) {
+      if (!fs.statSync(workdir).isDirectory()) {
+        throw new Error(`Task worker path is not a directory: ${workdir}`);
+      }
+      return;
+    }
+    fs.mkdirSync(workdir, { recursive: true });
+  }
+
+  private prepareTaskFile(
+    workdir: string,
+    task: string | undefined,
+    taskFile: string | undefined,
+    source: WorkerSource,
+    defaultPromptVerb: 'implement' | 'complete',
+  ): { task?: string; taskFilename?: string } {
+    if (!taskFile) {
+      return { task };
+    }
+
+    const absTaskFile = path.isAbsolute(taskFile) ? taskFile : path.resolve(taskFile);
+    if (!fs.existsSync(absTaskFile)) {
+      if (source === 'directory') {
+        throw new Error(`Task file "${absTaskFile}" not found`);
+      }
+      return { task };
+    }
+
+    const taskFilename = path.basename(absTaskFile);
+    const targetTaskFile = path.join(workdir, taskFilename);
+    if (toCanonicalPath(absTaskFile) !== toCanonicalPath(targetTaskFile)) {
+      fs.copyFileSync(absTaskFile, targetTaskFile);
+    }
+
+    if (!task) {
+      return {
+        task: `Read the task in \`${taskFilename}\` and ${defaultPromptVerb} it.`,
+        taskFilename,
+      };
+    }
+
+    return { task, taskFilename };
   }
 
   private async killSessionOrConfirmAbsent(sessionName: string): Promise<void> {
@@ -1393,9 +1659,21 @@ export class SessionManager {
         };
         // Backward compat: ensure sessionId and displayName fields exist for legacy entries
         for (const w of Object.values(state.workers)) {
+          const source = getWorkerSource(w);
+          w.source ??= source;
           w.sessionId ??= null;
           w.agentSessionFile ??= null;
           w.displayName ??= w.slug || this.extractSlugFromSessionName(w.sessionName);
+          w.managedWorkdir ??= false;
+          if (source === 'directory') {
+            w.repo ??= null;
+            w.repoRoot ??= null;
+            w.branch ??= null;
+          } else {
+            w.repo ??= '';
+            w.repoRoot ??= '';
+            w.branch ??= '';
+          }
         }
         for (const c of Object.values(state.copilots)) {
           c.sessionId ??= null;
@@ -1626,13 +1904,7 @@ export class SessionManager {
   private injectCompletionHook(
     worktreePath: string,
     agentType: string,
-    info: {
-      copilotSessionName: string;
-      sessionName: string;
-      workerId: number;
-      displayName: string;
-      branch: string;
-    },
+    info: WorkerNotificationInfo,
   ): void {
     if (!agentSupportsCompletionNotification(agentType)) {
       return;
@@ -1774,12 +2046,11 @@ export class SessionManager {
 
   private withCodexCompletionHookOverrides(
     agentCommand: string,
-    repoRoot: string,
-    worktreePath: string,
+    trustRootPaths: string[],
     scriptPath: string,
   ): string {
-    const trustRoots = new Set([repoRoot, worktreePath]);
-    for (const trustPath of [repoRoot, worktreePath]) {
+    const trustRoots = new Set(trustRootPaths);
+    for (const trustPath of trustRootPaths) {
       try {
         trustRoots.add(fs.realpathSync(trustPath));
       } catch {
@@ -1809,15 +2080,12 @@ export class SessionManager {
     ].join(' ');
   }
 
-  private buildNotifyScript(info: {
-    copilotSessionName: string;
-    sessionName: string;
-    workerId: number;
-    displayName: string;
-    branch: string;
-  }): string {
+  private buildNotifyScript(info: WorkerNotificationInfo): string {
     const sq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
     const pendingPath = this.getNotifyPendingPath(info.sessionName);
+    const message = info.source === 'directory'
+      ? 'MSG="Task worker #${WORKER_ID} (${NAME}) has completed. Workdir: ${WORKDIR}. Use \\`hydra worker logs ${SESSION}\\` to review output."'
+      : 'MSG="Worker #${WORKER_ID} (${NAME}) has completed. Branch: ${BRANCH}. Use \\`hydra worker logs ${SESSION}\\` to review output."';
     return [
       '#!/bin/sh',
       '# Auto-generated by Hydra: parent copilot completion notification.',
@@ -1826,7 +2094,8 @@ export class SessionManager {
       `SESSION=${sq(info.sessionName)}`,
       `WORKER_ID=${sq(String(info.workerId))}`,
       `NAME=${sq(info.displayName)}`,
-      `BRANCH=${sq(info.branch)}`,
+      `BRANCH=${sq(info.branch || '')}`,
+      `WORKDIR=${sq(info.workdir)}`,
       `PENDING=${sq(pendingPath)}`,
       'LOCKDIR="${PENDING}.lock"',
       '',
@@ -1851,7 +2120,7 @@ export class SessionManager {
       '# Only notify if copilot session still exists',
       '$t has-session -t "$COPILOT" 2>/dev/null || exit 0',
       '',
-      'MSG="Worker #${WORKER_ID} (${NAME}) has completed. Branch: ${BRANCH}. Use \\`hydra worker logs ${SESSION}\\` to review output."',
+      message,
       '',
       '# Use load-buffer/paste-buffer to avoid the Enter-swallow issue (see PR #122)',
       'f=$(mktemp) || exit 0',
@@ -2348,10 +2617,13 @@ export class SessionManager {
     const repoSessionNamespace = coreGit.getRepoSessionNamespace(repoRoot, this.backend);
     return {
       ...worker,
+      source: 'repo',
       repoRoot: worker.repoRoot || repoRoot,
+      repo: worker.repo || coreGit.getRepoName(repoRoot),
       branch: worker.branch || branchName,
       slug,
       displayName: worker.displayName || slug,
+      managedWorkdir: false,
       sessionName: worker.sessionName || this.backend.buildSessionName(repoSessionNamespace, slug),
       tmuxSession: worker.tmuxSession || worker.sessionName || this.backend.buildSessionName(repoSessionNamespace, slug),
       sessionId: worker.sessionId ?? null,
@@ -2360,11 +2632,11 @@ export class SessionManager {
   }
 
   private workerMatchesRepoBranch(worker: WorkerInfo, repoRoot: string, branchName: string): boolean {
-    if (!worker || worker.branch !== branchName) return false;
+    if (!worker || !isRepoWorker(worker) || worker.branch !== branchName) return false;
     return this.samePath(worker.repoRoot, repoRoot);
   }
 
-  private samePath(left?: string, right?: string): boolean {
+  private samePath(left?: string | null, right?: string | null): boolean {
     const canonicalLeft = toCanonicalPath(left);
     const canonicalRight = toCanonicalPath(right);
     return !!canonicalLeft && !!canonicalRight && canonicalLeft === canonicalRight;
@@ -2469,6 +2741,7 @@ export class SessionManager {
         const existingWorker = state.workers[sessionName] || savedWorker;
         const workerId = existingWorker?.workerId ?? state.nextWorkerId++;
         const nextWorker: WorkerInfo = {
+          source: 'repo',
           sessionName,
           displayName: existingWorker?.displayName || slug,
           workerId,
@@ -2480,6 +2753,7 @@ export class SessionManager {
           attached: false,
           agent,
           workdir,
+          managedWorkdir: false,
           tmuxSession: sessionName,
           createdAt: existingWorker?.createdAt ?? now,
           lastSeenAt: now,
@@ -2580,6 +2854,7 @@ export class SessionManager {
         const currentWorker = state.workers[sessionName] || savedWorker;
         const workerId = currentWorker?.workerId ?? state.nextWorkerId++;
         const nextWorker: WorkerInfo = {
+          source: 'repo',
           sessionName,
           displayName: currentWorker?.displayName || slug,
           workerId,
@@ -2591,6 +2866,7 @@ export class SessionManager {
           attached: false,
           agent: agentType,
           workdir: worktreePath,
+          managedWorkdir: false,
           tmuxSession: sessionName,
           createdAt: currentWorker?.createdAt ?? now,
           lastSeenAt: now,

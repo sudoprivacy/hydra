@@ -3,9 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from '../utils/exec';
 import { getRepoRoot, getBaseBranch } from '../utils/git';
+import { getRepoIdentifier } from '../core/git';
 import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multiplexer';
 import { toCanonicalPath } from '../utils/path';
-import { SessionManager, WorkerInfo } from '../core/sessionManager';
+import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '../core/sessionManager';
 import { CopilotMode, Worktree } from '../core/types';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
@@ -356,13 +357,32 @@ export class RepoGroupItem extends TmuxItem {
     baseBranch?: string
   ) {
     super(repoName, vscode.TreeItemCollapsibleState.Expanded, repoName);
-    this.id = repoRoot;
+    this.id = `repo:${getRepoIdentifier(repoRoot)}`;
     this.contextValue = 'repoGroup';
     this.iconPath = new vscode.ThemeIcon('repo');
     if (baseBranch) {
       const shortName = baseBranch.replace(/^origin\//, '');
       this.description = `[base: ${shortName}]`;
     }
+  }
+
+  updateBaseBranch(baseBranch?: string): void {
+    if (baseBranch) {
+      const shortName = baseBranch.replace(/^origin\//, '');
+      this.description = `[base: ${shortName}]`;
+    } else {
+      this.description = undefined;
+    }
+  }
+}
+
+export class TaskGroupItem extends TmuxItem {
+  constructor() {
+    super('Local Tasks', vscode.TreeItemCollapsibleState.Expanded, 'Local Tasks');
+    this.id = 'hydra-local-tasks';
+    this.contextValue = 'taskGroup';
+    this.iconPath = new vscode.ThemeIcon('folder');
+    this.description = 'folder workers';
   }
 }
 
@@ -391,9 +411,12 @@ export class WorktreeItem extends TmuxItem {
     hasGit: boolean;
     hasTmux: boolean;
     isMainWorktree?: boolean;
+    isTaskWorker?: boolean;
   }) {
     const displayLabel = opts.displayName || opts.branchLabel;
-    const description = opts.isCurrentWorkspace ? 'This project' : undefined;
+    const description = opts.isCurrentWorkspace
+      ? (opts.isTaskWorker ? 'This folder' : 'This project')
+      : undefined;
     super(displayLabel, vscode.TreeItemCollapsibleState.Expanded, opts.repoName, opts.sessionName);
 
     this.isCurrentWorkspace = opts.isCurrentWorkspace;
@@ -405,14 +428,18 @@ export class WorktreeItem extends TmuxItem {
     this.id = opts.sessionName;
     this.description = description;
 
-    this.contextValue = 'workerItem';
+    this.contextValue = opts.isTaskWorker ? 'taskWorkerItem' : 'workerItem';
     this.command = {
       command: 'tmux.attachCreate',
       title: 'Open Session',
       arguments: [this]
     };
 
-    if (!opts.hasGit) {
+    if (opts.isTaskWorker) {
+      this.iconPath = opts.hasTmux
+        ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+        : new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.green'));
+    } else if (!opts.hasGit) {
       this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
     } else if (opts.hasTmux) {
       this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
@@ -556,7 +583,8 @@ export class TmuxSessionItem extends WorktreeItem {
     agentType?: string,
     repoRoot?: string,
     workerId?: number,
-    displayName?: string
+    displayName?: string,
+    isTaskWorker?: boolean
   ) {
     const isRoot = Boolean(worktree?.isMain);
     const branchLabel = branchLabelOverride || worktree?.branch || (isRoot ? 'main' : session.slug);
@@ -571,7 +599,8 @@ export class TmuxSessionItem extends WorktreeItem {
       isCurrentWorkspace,
       hasGit,
       hasTmux: session.status.classification !== 'stopped',
-      isMainWorktree: isRoot
+      isMainWorktree: isRoot,
+      isTaskWorker
     });
 
     this.session = session;
@@ -607,7 +636,8 @@ export class InactiveWorktreeItem extends WorktreeItem {
     branchLabelOverride?: string,
     gitStatusOverride?: SessionStatus,
     repoRoot?: string,
-    displayName?: string
+    displayName?: string,
+    isTaskWorker?: boolean
   ) {
     const branchLabel = branchLabelOverride || worktree.branch || (worktree.isMain ? 'main' : path.basename(worktree.path));
 
@@ -621,10 +651,11 @@ export class InactiveWorktreeItem extends WorktreeItem {
       isCurrentWorkspace,
       hasGit,
       hasTmux: false,
-      isMainWorktree: worktree.isMain
+      isMainWorktree: worktree.isMain,
+      isTaskWorker
     });
 
-    this.contextValue = 'inactiveWorkerItem';
+    this.contextValue = isTaskWorker ? 'inactiveTaskWorkerItem' : 'inactiveWorkerItem';
     this.worktree = worktree;
     this.targetSessionName = targetSessionName;
     this.detailItem = new InactiveDetailItem(worktree, repoName, targetSessionName, extensionUri);
@@ -718,7 +749,6 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
 
   async refreshAndGetCopilotItems(): Promise<CopilotItem[]> {
     await this.getChildren(undefined);
-    this._onDidChangeTreeData.fire(undefined);
     return this._copilotItems;
   }
 
@@ -795,18 +825,29 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private _extensionUri: vscode.Uri | undefined;
   private _repoGroups: RepoGroupItem[] = [];
+  private _repoGroupByRoot = new Map<string, RepoGroupItem>();
+  private _taskGroup: TaskGroupItem | undefined;
   private _workerItemsByRepo = new Map<string, TmuxItem[]>();
+  private _taskWorkerItems: TmuxItem[] = [];
 
   setExtensionUri(uri: vscode.Uri): void { this._extensionUri = uri; }
   refresh(): void {
     this._workerItemsByRepo.clear();
+    this._taskWorkerItems = [];
     this._onDidChangeTreeData.fire(undefined);
   }
   getTreeItem(element: TmuxItem): vscode.TreeItem { return element; }
   getParent(element: TmuxItem): TmuxItem | undefined {
     if (element instanceof RepoGroupItem) return undefined;
+    if (element instanceof TaskGroupItem) return undefined;
     // WorktreeItem/TmuxSessionItem/InactiveWorktreeItem are children of a RepoGroupItem
     if (element instanceof WorktreeItem || element instanceof InactiveWorktreeItem) {
+      if (element.contextValue === 'taskWorkerItem' || element.contextValue === 'inactiveTaskWorkerItem') {
+        return this._taskGroup;
+      }
+      if (element.repoRoot) {
+        return this._repoGroupByRoot.get(element.repoRoot);
+      }
       return this._repoGroups.find(g => g.repoName === element.repoName);
     }
     // Detail items (TmuxDetailItem, GitStatusItem) are children of a WorktreeItem
@@ -820,15 +861,23 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         }
       }
     }
+    for (const item of this._taskWorkerItems) {
+      if (item instanceof TmuxSessionItem) {
+        if (item.detailItem === element || item.gitStatusItem === element) return item;
+      }
+      if (item instanceof InactiveWorktreeItem) {
+        if (item.detailItem === element || item.gitStatusItem === element) return item;
+      }
+    }
     return undefined;
   }
 
   async refreshAndGetWorkerItems(): Promise<TmuxItem[]> {
     const groups = await this.getChildren(undefined);
     await Promise.all(groups.map(g => this.getChildren(g)));
-    this._onDidChangeTreeData.fire(undefined);
     const all: TmuxItem[] = [];
     for (const items of this._workerItemsByRepo.values()) all.push(...items);
+    all.push(...this._taskWorkerItems);
     return all;
   }
 
@@ -840,16 +889,21 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
     if (missingGroups.length > 0) {
       await Promise.all(missingGroups.map(g => this.getRepoGroupChildren(g)));
     }
+    if (this._taskGroup && this._taskWorkerItems.length === 0) {
+      await this.getTaskGroupChildren();
+    }
     const all: TmuxItem[] = [];
     for (const items of this._workerItemsByRepo.values()) {
       all.push(...items);
     }
+    all.push(...this._taskWorkerItems);
     return all;
   }
 
   async getChildren(element?: TmuxItem): Promise<TmuxItem[]> {
     if (!element) return this.getRootItems();
     if (element instanceof RepoGroupItem) return this.getRepoGroupChildren(element);
+    if (element instanceof TaskGroupItem) return this.getTaskGroupChildren();
     if (element instanceof TmuxSessionItem) {
       const children: TmuxItem[] = [element.detailItem];
       if (element.gitStatusItem) children.push(element.gitStatusItem);
@@ -871,17 +925,24 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
 
       if (workers.length === 0) {
         this._repoGroups = [];
+        this._repoGroupByRoot.clear();
+        this._taskGroup = undefined;
         this._workerItemsByRepo.clear();
+        this._taskWorkerItems = [];
         const hint = new TmuxItem('No workers', vscode.TreeItemCollapsibleState.None);
         hint.iconPath = new vscode.ThemeIcon('info');
         hint.description = 'Ask your copilot to create a worker';
         return [hint];
       }
 
+      const repoWorkers = workers.filter(isRepoWorker);
+      const taskWorkers = workers.filter(isDirectoryWorker);
+
       // Group by repo
       const byRepo = new Map<string, { repoRoot: string; repoName: string; workers: WorkerInfo[] }>();
-      for (const w of workers) {
-        const key = w.repoRoot || 'unknown';
+      for (const w of repoWorkers) {
+        if (!w.repoRoot) continue;
+        const key = w.repoRoot;
         let group = byRepo.get(key);
         if (!group) {
           group = { repoRoot: w.repoRoot, repoName: w.repo || 'unknown', workers: [] };
@@ -891,17 +952,38 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       }
 
       // Always show RepoGroupItem per repo
-      const items: RepoGroupItem[] = [];
+      const items: TmuxItem[] = [];
+      const repoGroupItems: RepoGroupItem[] = [];
       for (const group of byRepo.values()) {
         let baseBranch: string | undefined;
         try { baseBranch = await getBaseBranch(group.repoRoot); } catch { /* */ }
-        items.push(new RepoGroupItem(group.repoName, group.repoRoot, baseBranch));
+        const item = this._repoGroupByRoot.get(group.repoRoot) ||
+          new RepoGroupItem(group.repoName, group.repoRoot, baseBranch);
+        item.updateBaseBranch(baseBranch);
+        this._repoGroupByRoot.set(group.repoRoot, item);
+        repoGroupItems.push(item);
+        items.push(item);
       }
-      this._repoGroups = items;
+      for (const key of this._repoGroupByRoot.keys()) {
+        if (!byRepo.has(key)) {
+          this._repoGroupByRoot.delete(key);
+        }
+      }
+      this._repoGroups = repoGroupItems;
+      this._taskGroup = taskWorkers.length > 0
+        ? (this._taskGroup || new TaskGroupItem())
+        : undefined;
+      this._taskWorkerItems = [];
+      if (this._taskGroup) {
+        items.push(this._taskGroup);
+      }
       return items;
     } catch {
       this._repoGroups = [];
+      this._repoGroupByRoot.clear();
+      this._taskGroup = undefined;
       this._workerItemsByRepo.clear();
+      this._taskWorkerItems = [];
       return [];
     }
   }
@@ -913,6 +995,19 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       const workers = await sm.listWorkers(group.repoRoot);
       const items = await this.buildWorkerItems(workers, group.repoName, group.repoRoot);
       this._workerItemsByRepo.set(group.repoRoot, items);
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  private async getTaskGroupChildren(): Promise<TmuxItem[]> {
+    try {
+      const backend = getActiveBackend();
+      const sm = new SessionManager(backend);
+      const workers = (await sm.listWorkers()).filter(isDirectoryWorker);
+      const items = await this.buildTaskWorkerItems(workers);
+      this._taskWorkerItems = items;
       return items;
     } catch {
       return [];
@@ -932,6 +1027,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       const branchLabel = hasGit && w.workdir
         ? await getWorktreeBranchLabel(w.workdir, w.branch || w.slug)
         : (w.branch || w.slug);
+      const worktreeBranch = w.branch || branchLabel;
 
       const pr = prMap.get(branchLabel);
 
@@ -951,13 +1047,13 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           hydraRole: 'worker',
           hydraAgent: w.agent,
         };
-        const worktree: Worktree = { path: w.workdir, branch: w.branch, isMain: false };
+        const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
         items.push(new TmuxSessionItem(
           session, repoName, worktree, isCurrentWs, hasGit,
           this._extensionUri, branchLabel, w.agent, repoRoot, w.workerId, w.displayName
         ));
       } else {
-        const worktree: Worktree = { path: w.workdir, branch: w.branch, isMain: false };
+        const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
         const gitStatus = hasGit && w.workdir ? await getWorktreeGitStatus(w.workdir) : undefined;
         let stoppedStatus: SessionStatus | undefined = gitStatus ? {
           attached: false, panes: 0, lastActive: 0, classification: 'stopped', cpuUsage: 0,
@@ -976,6 +1072,58 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         items.push(new InactiveWorktreeItem(
           worktree, repoName, w.sessionName, isCurrentWs, hasGit,
           this._extensionUri, branchLabel, stoppedStatus, repoRoot, w.displayName
+        ));
+      }
+    }
+
+    return sortItems(items);
+  }
+
+  private async buildTaskWorkerItems(workers: WorkerInfo[]): Promise<TmuxItem[]> {
+    const activePath = getActiveWorkspacePath();
+    const repoName = 'Local Tasks';
+    const items: TmuxItem[] = [];
+
+    for (const w of workers) {
+      const isCurrentWs = activePath
+        ? isCurrentWorkspacePath(w.workdir, activePath)
+        : false;
+      const label = w.displayName || w.slug || path.basename(w.workdir);
+      const worktree: Worktree = { path: w.workdir, branch: label, isMain: false };
+
+      if (w.status === 'running') {
+        const status = await getSessionStatus(w.sessionName);
+        const session: SessionWithStatus = {
+          name: w.sessionName,
+          windows: 1,
+          attached: w.attached,
+          status,
+          worktreePath: w.workdir,
+          slug: w.slug,
+          hydraRole: 'worker',
+          hydraAgent: w.agent,
+        };
+        items.push(new TmuxSessionItem(
+          session, repoName, worktree, isCurrentWs, false,
+          this._extensionUri, label, w.agent, undefined, w.workerId, w.displayName, true
+        ));
+      } else {
+        const stoppedStatus: SessionStatus = {
+          attached: false,
+          panes: 0,
+          lastActive: 0,
+          classification: 'stopped',
+          cpuUsage: 0,
+          gitDirty: 0,
+          gitModified: 0,
+          gitAdded: 0,
+          gitDeleted: 0,
+          gitUntracked: 0,
+          commitsAhead: 0,
+        };
+        items.push(new InactiveWorktreeItem(
+          worktree, repoName, w.sessionName, isCurrentWs, false,
+          this._extensionUri, label, stoppedStatus, undefined, w.displayName, true
         ));
       }
     }

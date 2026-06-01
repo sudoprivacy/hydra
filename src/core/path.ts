@@ -11,11 +11,15 @@ function expandHomeDir(targetPath: string): string {
   return targetPath;
 }
 
-export function toCanonicalPath(targetPath?: string): string | undefined {
+export function toCanonicalPath(targetPath?: string | null): string | undefined {
   if (!targetPath) return undefined;
 
   const expanded = expandHomeDir(targetPath.trim());
   return path.normalize(path.resolve(expanded));
+}
+
+export function expandAndResolvePath(targetPath: string): string {
+  return path.normalize(path.resolve(expandHomeDir(targetPath.trim())));
 }
 
 /**
@@ -293,6 +297,7 @@ export interface HydraResolvedPaths {
   hydraArchiveFile: string;
   hydraWorktreesRoot: string;
   hydraReposRoot: string;
+  hydraTasksRoot: string;
 }
 
 export function getDefaultHydraHome(): string {
@@ -366,6 +371,7 @@ export function getHydraPaths(): HydraResolvedPaths {
     hydraArchiveFile: path.join(hydraHome, 'archive.json'),
     hydraWorktreesRoot: path.join(hydraHome, 'worktrees'),
     hydraReposRoot: path.join(hydraHome, 'repos'),
+    hydraTasksRoot: path.join(hydraHome, 'tasks'),
   };
 }
 
@@ -405,6 +411,10 @@ export function getHydraWorktreesRoot(): string {
 
 export function getHydraReposRoot(): string {
   return getHydraPaths().hydraReposRoot;
+}
+
+export function getHydraTasksRoot(): string {
+  return getHydraPaths().hydraTasksRoot;
 }
 
 export function getIsolatedEnv(): Record<string, string | undefined> {
