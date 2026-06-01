@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026060100] - 2026-06-01
+
+### Added
+- Add first-class Task Workers for folder-based AI work without a git repo, including CLI create/delete flows, VS Code create-worker UX, Local Tasks sidebar grouping, archive restore, docs, and smoke/e2e coverage
+
 ## [0.3.2026052800] - 2026-05-28
 
 ### Added
