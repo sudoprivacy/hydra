@@ -12,6 +12,7 @@ import type {
 type ExecFailure = Error & {
   stderr?: string;
   stdout?: string;
+  code?: number | string;
 };
 
 type WorkerRecord = {
@@ -148,10 +149,13 @@ class DeleteWorkerBackend implements MultiplexerBackendCore {
   }
 }
 
-function makeExecError(message: string, stderr?: string, stdout?: string): ExecFailure {
+function makeExecError(message: string, stderr?: string, stdout?: string, code?: number | string): ExecFailure {
   const error = new Error(message) as ExecFailure;
   error.stderr = stderr;
   error.stdout = stdout;
+  if (code !== undefined) {
+    error.code = code;
+  }
   return error;
 }
 
@@ -401,6 +405,29 @@ async function main(): Promise<void> {
           return true;
         },
       );
+    } finally {
+      restoreExec();
+    }
+  }
+
+  // Regression for issue #195: psmux on Windows exits non-zero with empty
+  // stderr when has-session finds no match. The keyword detectors don't
+  // recognize that, so the silent-exit branch must treat it as "missing".
+  {
+    const restoreExec = patchModule(coreExec, {
+      exec: async () => {
+        throw makeExecError(
+          'Command failed: psmux has-session -t "hydra-copilot-codex"',
+          '',
+          '',
+          1,
+        );
+      },
+    });
+
+    try {
+      const backend = new TmuxBackendCore();
+      assert.equal(await backend.hasSession('hydra-copilot-codex'), false);
     } finally {
       restoreExec();
     }

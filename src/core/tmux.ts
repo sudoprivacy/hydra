@@ -10,6 +10,7 @@ import { MultiplexerBackendCore, MultiplexerSession, SessionStatusInfo, HydraRol
 interface ExecFailure extends Error {
   stderr?: string;
   stdout?: string;
+  code?: number | string;
 }
 
 const TMUX_ENV_KEYS_TO_STRIP = [
@@ -140,6 +141,21 @@ function isTmuxMissingSessionError(error: unknown): boolean {
     || text.includes('session not found');
 }
 
+// psmux (the Windows tmux port) exits non-zero with empty stderr when
+// `has-session` finds no match, so the keyword-based detectors above can't
+// recognize the "missing session" signal there. Silent non-zero exits with no
+// diagnostic output are reserved by tmux/psmux for "the command ran, the
+// answer is no" — real failures (binary not found, socket errors, permission
+// issues) always produce stderr, so they still bubble up as TmuxUnavailableError.
+function isSilentExecFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const failure = error as ExecFailure;
+  if (typeof failure.code !== 'number' || failure.code === 0) return false;
+  const stderr = (failure.stderr ?? '').trim();
+  const stdout = (failure.stdout ?? '').trim();
+  return stderr === '' && stdout === '';
+}
+
 export class TmuxUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -205,7 +221,11 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
       await exec(`${tmuxCommand} has-session -t ${shellQuote(sessionName)}`);
       return true;
     } catch (error) {
-      if (isTmuxNoServerError(error) || isTmuxMissingSessionError(error)) {
+      if (
+        isTmuxNoServerError(error)
+        || isTmuxMissingSessionError(error)
+        || isSilentExecFailure(error)
+      ) {
         return false;
       }
       throw new TmuxUnavailableError(`Unable to inspect tmux session "${sessionName}": ${getExecFailureText(error)}`);
