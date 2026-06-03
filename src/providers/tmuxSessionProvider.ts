@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { exec } from '../utils/exec';
 import { getRepoRoot, getBaseBranch } from '../utils/git';
@@ -8,6 +9,7 @@ import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multip
 import { toCanonicalPath } from '../utils/path';
 import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '../core/sessionManager';
 import { CopilotMode, Worktree } from '../core/types';
+import { CreateCopilotButtonItem, CreateWorkerButtonItem } from './buttonItem';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
 
@@ -42,6 +44,47 @@ function isCurrentWorkspacePath(targetPath: string | undefined, activeWorkspaceP
 }
 
 // ─── Utility ──────────────────────────────────────────────
+
+/**
+ * Shorten a path for display, showing more context.
+ * Examples:
+ *   /Users/bgd/projects/hydra → ~/projects/hydra
+ *   /Users/bgd → ~
+ *   /Users/bgd/.hydra/worktrees/xxx/branch → ~/.hydra/.../branch
+ */
+export function shortenPath(fullPath: string): string {
+  const homeDir = os.homedir();
+  let shortPath = fullPath;
+
+  // Replace home directory with ~
+  if (shortPath.startsWith(homeDir)) {
+    shortPath = '~' + shortPath.slice(homeDir.length);
+  }
+
+  // For hydra worktrees, show abbreviated form
+  if (shortPath.includes('.hydra/worktrees/')) {
+    const parts = shortPath.split('/');
+    const worktreesIdx = parts.findIndex(p => p === '.hydra' && parts[parts.indexOf(p) + 1] === 'worktrees');
+    if (worktreesIdx !== -1 && parts.length > worktreesIdx + 3) {
+      // Show ~/.hydra/.../repo-identifier/branch
+      const repoId = parts[worktreesIdx + 2];
+      const branch = parts[parts.length - 1];
+      shortPath = `~/.hydra/.../${repoId}/${branch}`;
+    }
+  }
+
+  // For hydra tasks, show abbreviated form
+  if (shortPath.includes('.hydra/tasks/')) {
+    const parts = shortPath.split('/');
+    const tasksIdx = parts.findIndex(p => p === '.hydra' && parts[parts.indexOf(p) + 1] === 'tasks');
+    if (tasksIdx !== -1 && parts.length > tasksIdx + 2) {
+      const taskSlug = parts[tasksIdx + 2];
+      shortPath = `~/.hydra/tasks/${taskSlug}`;
+    }
+  }
+
+  return shortPath;
+}
 
 export function formatLastActive(sessionActivity: number): string {
   if (sessionActivity === 0) return '-';
@@ -319,9 +362,12 @@ export class CopilotItem extends TmuxItem {
   }) {
     const label = opts.displayName || opts.sessionName;
     const copilotMode = opts.copilotMode || 'normal';
-    const description = copilotMode === 'plan'
-      ? `[${opts.agentType}] [planner]`
-      : `[${opts.agentType}]`;
+    const modeLabel = copilotMode === 'plan' ? 'planner' : 'copilot';
+    const descParts = [opts.agentType, modeLabel];
+    if (opts.worktreePath) {
+      descParts.push(shortenPath(opts.worktreePath));
+    }
+    const description = `[${descParts.join(' | ')}]`;
     super(label, vscode.TreeItemCollapsibleState.Expanded, undefined, opts.sessionName);
 
     this.worktreePath = opts.worktreePath;
@@ -336,6 +382,18 @@ export class CopilotItem extends TmuxItem {
       title: 'Open Session',
       arguments: [this]
     };
+
+    // Build detailed tooltip
+    const tooltipParts = [
+      `Session: ${opts.sessionName}`,
+      `Agent: ${opts.agentType}`,
+      `Mode: ${modeLabel}`,
+    ];
+    if (opts.worktreePath) {
+      tooltipParts.push(`Working directory: ${opts.worktreePath}`);
+    }
+    tooltipParts.push(`Status: ${opts.classification}`);
+    this.tooltip = tooltipParts.join('\n');
 
     // Blue circle: filled=attached, outline=idle
     if (opts.classification === 'attached') {
@@ -414,9 +472,13 @@ export class WorktreeItem extends TmuxItem {
     isTaskWorker?: boolean;
   }) {
     const displayLabel = opts.displayName || opts.branchLabel;
-    const description = opts.isCurrentWorkspace
-      ? (opts.isTaskWorker ? 'This folder' : 'This project')
-      : undefined;
+    // Build description: show workdir for non-current workspace items
+    let description: string | undefined;
+    if (opts.isCurrentWorkspace) {
+      description = opts.isTaskWorker ? 'This folder' : 'This project';
+    } else if (opts.worktreePath) {
+      description = shortenPath(opts.worktreePath);
+    }
     super(displayLabel, vscode.TreeItemCollapsibleState.Expanded, opts.repoName, opts.sessionName);
 
     this.isCurrentWorkspace = opts.isCurrentWorkspace;
@@ -434,6 +496,18 @@ export class WorktreeItem extends TmuxItem {
       title: 'Open Session',
       arguments: [this]
     };
+
+    // Build detailed tooltip
+    const tooltipParts: string[] = [];
+    tooltipParts.push(`Branch: ${opts.branchLabel}`);
+    if (opts.worktreePath) {
+      tooltipParts.push(`Working directory: ${opts.worktreePath}`);
+    }
+    if (opts.repoRoot) {
+      tooltipParts.push(`Repository: ${opts.repoRoot}`);
+    }
+    tooltipParts.push(`Status: ${opts.hasTmux ? 'running' : 'stopped'}`);
+    this.tooltip = tooltipParts.join('\n');
 
     if (opts.isTaskWorker) {
       this.iconPath = opts.hasTmux
@@ -790,7 +864,10 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
       }
 
       this._copilotItems = items;
-      return items;
+
+      // Add fixed button item when there are existing copilots
+      const buttonItem = new CreateCopilotButtonItem();
+      return [...items, buttonItem];
     } catch {
       this._copilotItems = [];
       return [];
@@ -977,6 +1054,9 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       if (this._taskGroup) {
         items.push(this._taskGroup);
       }
+      // Add fixed button item when there are existing workers
+      const buttonItem = new CreateWorkerButtonItem();
+      items.push(buttonItem);
       return items;
     } catch {
       this._repoGroups = [];

@@ -77,6 +77,81 @@ function agentSupportsPlanner(agentType: AgentType): boolean {
   return agentType === 'claude' || agentType === 'codex';
 }
 
+/**
+ * Get the default working directory for a copilot.
+ * Priority: workspace folder (if git repo) > home directory
+ */
+function getDefaultWorkdir(): string {
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders && folders.length > 0) {
+    // Return workspace folder (may or may not be a git repo)
+    return folders[0].uri.fsPath;
+  }
+  return os.homedir();
+}
+
+interface WorkdirOption {
+  label: string;
+  description: string;
+  detail?: string;
+  value: string;
+}
+
+/**
+ * Prompt user to select working directory for copilot.
+ * Returns undefined if user cancels.
+ */
+async function pickWorkdir(defaultDir: string): Promise<string | undefined> {
+  const homeDir = os.homedir();
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  const options: WorkdirOption[] = [
+    {
+      label: '$(folder) Default',
+      description: defaultDir === homeDir ? 'Home directory' : 'Current workspace',
+      detail: defaultDir,
+      value: defaultDir,
+    },
+  ];
+
+  if (workspaceFolder && workspaceFolder !== defaultDir) {
+    options.push({
+      label: '$(home) Home',
+      description: 'Home directory',
+      detail: homeDir,
+      value: homeDir,
+    });
+  }
+
+  options.push({
+    label: '$(file-directory) Browse...',
+    description: 'Choose a custom directory',
+    detail: 'Open folder picker to select a different working directory',
+    value: '__browse__',
+  });
+
+  const picked = await vscode.window.showQuickPick(options, {
+    placeHolder: 'Select working directory for copilot',
+  });
+
+  if (!picked) {
+    return undefined;
+  }
+
+  if (picked.value === '__browse__') {
+    const uri = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      defaultUri: vscode.Uri.file(defaultDir),
+      openLabel: 'Select Working Directory',
+    });
+    return uri?.[0]?.fsPath;
+  }
+
+  return picked.value;
+}
+
 async function pickModeForAgent(agentType: AgentType): Promise<CopilotMode | undefined> {
   if (!agentSupportsPlanner(agentType)) {
     return 'normal';
@@ -132,10 +207,15 @@ export async function createCopilotWithAgent(agentType: AgentType, copilotMode?:
     return;
   }
 
+  // Prompt for working directory
+  const defaultWorkdir = getDefaultWorkdir();
+  const workdir = await pickWorkdir(defaultWorkdir);
+  if (!workdir) return;
+
   try {
     const sm = new SessionManager(new TmuxBackendCore());
     const copilotInfo = await sm.createCopilotAndFinalize({
-      workdir: os.homedir(),
+      workdir,
       agentType,
       copilotMode: resolvedMode,
       sessionName,
@@ -197,10 +277,15 @@ export async function createCopilot(): Promise<void> {
     return;
   }
 
+  // Prompt for working directory
+  const defaultWorkdir = getDefaultWorkdir();
+  const workdir = await pickWorkdir(defaultWorkdir);
+  if (!workdir) return;
+
   try {
     const sm = new SessionManager(new TmuxBackendCore());
     const copilotInfo = await sm.createCopilotAndFinalize({
-      workdir: os.homedir(),
+      workdir,
       agentType,
       copilotMode,
       sessionName,

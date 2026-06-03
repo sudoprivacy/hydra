@@ -81,28 +81,36 @@
       },
       {
         "view": "hydraCopilots",
-        "contents": "[Start Copilot (Claude)](command:hydra.startCopilotClaude)",
+        "contents": "[Create Copilot (Claude)](command:hydra.startCopilotClaude)",
         "when": "hydra.claudeAvailable"
       },
       {
         "view": "hydraCopilots",
-        "contents": "[Start Copilot (Codex)](command:hydra.startCopilotCodex)",
+        "contents": "[Create Copilot (Codex)](command:hydra.startCopilotCodex)",
         "when": "hydra.codexAvailable"
       },
       {
         "view": "hydraCopilots",
-        "contents": "[Start Copilot (Gemini)](command:hydra.startCopilotGemini)",
+        "contents": "[Create Copilot (Gemini)](command:hydra.startCopilotGemini)",
         "when": "hydra.geminiAvailable"
       },
       {
         "view": "hydraCopilots",
-        "contents": "[Start Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
+        "contents": "[Create Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
         "when": "hydra.sudocodeAvailable"
       },
       {
         "view": "hydraCopilots",
         "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or Sudo Code.",
         "when": "hydra.noAgentsAvailable"
+      },
+      {
+        "view": "hydraWorkers",
+        "contents": "No workers running."
+      },
+      {
+        "view": "hydraWorkers",
+        "contents": "Ask a copilot to create workers with `hydra worker create`."
       }
     ],
     "commands": [
@@ -171,7 +179,7 @@
       {
         "command": "hydra.createCopilot",
         "title": "Hydra: Create Copilot",
-        "icon": "$(hubot)"
+        "icon": "$(add)"
       },
       {
         "command": "hydra.startPlanCopilot",
