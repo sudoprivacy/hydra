@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026060300] - 2026-06-03
+
+### Fixed
+- Treat silent psmux `has-session` failures as missing sessions so Hydra can recover cleanly when checking tmux session state
+
 ## [0.3.2026060100] - 2026-06-01
 
 ### Added
