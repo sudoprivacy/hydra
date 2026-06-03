@@ -8,6 +8,7 @@ import { pickAgentType } from '../utils/agentConfig';
 import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { detectIdentity, getWorkerCreationBlockedMessage } from '../core/sessionIdentity';
+import { buildWorkerPrompt, shouldInjectOnWorkerCreate } from '../core/contextPrompt';
 
 function getBaseBranchOverride(): string | undefined {
   const hydraOverride = vscode.workspace.getConfiguration('hydra').get<string>('baseBranch');
@@ -33,6 +34,29 @@ function defaultNameForFolder(folderPath: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Send project-level context to a newly created worker.
+ */
+function sendWorkerContext(backend: ReturnType<typeof getActiveBackend>, sessionName: string, workdir: string): void {
+  if (!shouldInjectOnWorkerCreate()) {
+    return;
+  }
+
+  (async () => {
+    try {
+      // Wait for the agent to be ready (same delay as copilot onboarding)
+      await delay(8000);
+
+      const contextPrompt = buildWorkerPrompt(workdir);
+      if (contextPrompt.trim()) {
+        await backend.sendMessage(sessionName, contextPrompt);
+      }
+    } catch {
+      // Best-effort — agent may not be ready yet
+    }
+  })();
 }
 
 async function refreshHydraViewsBeforeAttach(): Promise<void> {
@@ -89,7 +113,12 @@ async function createCodeWorker(repoRoot: string): Promise<void> {
   });
 
   await refreshHydraViewsBeforeAttach();
-  getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
+  const backend = getActiveBackend();
+  backend.attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
+
+  // Send project-level context to the worker
+  sendWorkerContext(backend, workerInfo.sessionName, workerInfo.workdir);
+
   void postCreatePromise.catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(
@@ -207,7 +236,12 @@ async function createTaskWorker(workspacePath: string, workspaceIsGitRepo: boole
   });
 
   await refreshHydraViewsBeforeAttach();
-  getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
+  const backend = getActiveBackend();
+  backend.attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
+
+  // Send project-level context to the worker
+  sendWorkerContext(backend, workerInfo.sessionName, workerInfo.workdir);
+
   void postCreatePromise.catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(

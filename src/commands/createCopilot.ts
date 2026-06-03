@@ -6,6 +6,7 @@ import { CopilotMode } from '../core/types';
 import { TmuxBackendCore } from '../core/tmux';
 import { SessionManager } from '../core/sessionManager';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
+import { buildCopilotPrompt, shouldInjectOnCopilotCreate } from '../core/contextPrompt';
 
 const ONBOARDING_PROMPT = `You are a Hydra copilot — an AI orchestrator that manages parallel AI workers to complete complex tasks.
 
@@ -54,7 +55,19 @@ export function sendCopilotOnboarding(backend: MultiplexerBackend, sessionName: 
   (async () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 8000));
-      await backend.sendMessage(sessionName, getOnboardingPrompt(copilotMode));
+
+      // Build the complete onboarding prompt
+      const parts: string[] = [getOnboardingPrompt(copilotMode)];
+
+      // Add global context if enabled
+      if (shouldInjectOnCopilotCreate()) {
+        const globalContext = buildCopilotPrompt();
+        if (globalContext.trim()) {
+          parts.push('', '---', '', globalContext);
+        }
+      }
+
+      await backend.sendMessage(sessionName, parts.join('\n'));
     } catch {
       // Best-effort — agent may not be ready yet
     }

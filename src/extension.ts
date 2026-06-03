@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CopilotProvider, WorkerProvider, TmuxItem } from './providers/tmuxSessionProvider';
+import { ProjectsProvider } from './providers/projectsProvider';
+import { PreferencesProvider } from './providers/preferencesProvider';
 import { attachCreate } from './commands/attachCreate';
 import { newTask } from './commands/newTask';
 import { removeTask } from './commands/removeTask';
@@ -19,6 +21,9 @@ import {
 import { terminalSmartPaste, pasteImageForce, cleanupTempImages } from './commands/pasteImage';
 import { createWorktreeFromBranch } from './commands/createWorktreeFromBranch';
 import { createCopilot, createCopilotWithAgent, createPlanCopilot } from './commands/createCopilot';
+import { addProject, editProject, removeProject } from './commands/addProject';
+import { editGlobalPrompt, toggleInjectOnCopilotCreate, toggleInjectOnWorkerCreate } from './commands/editGlobalPrompt';
+import { previewGeneratedPrompt } from './commands/previewPrompt';
 import { ensureHydraGlobalConfig } from './utils/hydraGlobalConfig';
 import { installCli, ensurePathInShellProfile } from './core/cliInstaller';
 import {
@@ -46,9 +51,13 @@ export function activate(context: vscode.ExtensionContext) {
   copilotProvider.setExtensionUri(context.extensionUri);
   const workerProvider = new WorkerProvider();
   workerProvider.setExtensionUri(context.extensionUri);
+  const projectsProvider = new ProjectsProvider();
+  const preferencesProvider = new PreferencesProvider();
 
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
   const workerView = vscode.window.createTreeView('hydraWorkers', { treeDataProvider: workerProvider });
+  const projectsView = vscode.window.createTreeView('hydraProjects', { treeDataProvider: projectsProvider });
+  const preferencesView = vscode.window.createTreeView('hydraPreferences', { treeDataProvider: preferencesProvider });
   let selectedHydraItem: TmuxItem | undefined;
   let selectedHydraItemAt = 0;
   const rememberHydraSelection = (event: vscode.TreeViewSelectionChangeEvent<TmuxItem>) => {
@@ -126,10 +135,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     copilotView,
     workerView,
+    projectsView,
+    preferencesView,
     vscode.commands.registerCommand('tmux.attachCreate', attachCreate),
     vscode.commands.registerCommand('hydra.createWorker', newTask),
     vscode.commands.registerCommand('tmux.removeTask', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], removeTask, ...args)),
-    vscode.commands.registerCommand('tmux.refresh', () => { copilotProvider.refresh(); workerProvider.refresh(); }),
+    vscode.commands.registerCommand('tmux.refresh', () => { copilotProvider.refresh(); workerProvider.refresh(); projectsProvider.refresh(); preferencesProvider.refresh(); }),
     vscode.commands.registerCommand('tmux.attach', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attach, ...args)),
     vscode.commands.registerCommand('tmux.attachInEditor', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attachInEditor, ...args)),
     vscode.commands.registerCommand('tmux.openWorktree', async (...args: unknown[]) => runWithHydraItem(['worker'], openWorktree, ...args)),
@@ -147,6 +158,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hydra.startCopilotCodex', () => createCopilotWithAgent('codex')),
     vscode.commands.registerCommand('hydra.startCopilotGemini', () => createCopilotWithAgent('gemini')),
     vscode.commands.registerCommand('hydra.startCopilotSudoCode', () => createCopilotWithAgent('sudocode')),
+    // Project management commands
+    vscode.commands.registerCommand('hydra.addProject', addProject),
+    vscode.commands.registerCommand('hydra.editProject', editProject),
+    vscode.commands.registerCommand('hydra.removeProject', removeProject),
+    // Global prompt commands
+    vscode.commands.registerCommand('hydra.editGlobalPrompt', editGlobalPrompt),
+    vscode.commands.registerCommand('hydra.previewPrompt', previewGeneratedPrompt),
+    vscode.commands.registerCommand('hydra.toggleInjectOnCopilotCreate', toggleInjectOnCopilotCreate),
+    vscode.commands.registerCommand('hydra.toggleInjectOnWorkerCreate', toggleInjectOnWorkerCreate),
     copilotView.onDidChangeSelection(rememberHydraSelection),
     workerView.onDidChangeSelection(rememberHydraSelection),
   );
@@ -158,7 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
   autoAttachOnStartup();
   detectAndSetAgentContext();
 
-  const refreshAll = () => { copilotProvider.refresh(); workerProvider.refresh(); };
+  const refreshAll = () => { copilotProvider.refresh(); workerProvider.refresh(); projectsProvider.refresh(); preferencesProvider.refresh(); };
   registerSessionFileRefreshWatcher(context, refreshAll);
 
   context.subscriptions.push(

@@ -71,6 +71,14 @@
         {
           "id": "hydraWorkers",
           "name": "Workers"
+        },
+        {
+          "id": "hydraProjects",
+          "name": "Projects"
+        },
+        {
+          "id": "hydraPreferences",
+          "name": "Preferences"
         }
       ]
     },
@@ -192,6 +200,26 @@
       {
         "command": "hydra.startCopilotSudoCode",
         "title": "Hydra: Start Copilot (Sudo Code)"
+      },
+      {
+        "command": "hydra.addProject",
+        "title": "Hydra: Add Project"
+      },
+      {
+        "command": "hydra.editProject",
+        "title": "Hydra: Edit Project"
+      },
+      {
+        "command": "hydra.removeProject",
+        "title": "Hydra: Remove Project"
+      },
+      {
+        "command": "hydra.editGlobalPrompt",
+        "title": "Hydra: Edit Global Prompt"
+      },
+      {
+        "command": "hydra.previewPrompt",
+        "title": "Hydra: Preview Generated Prompt"
       }
     ],
     "keybindings": [
@@ -250,6 +278,62 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Automatically notify the parent copilot when a worker finishes its task. The notification is sent as a message to the copilot's tmux session."
+        },
+        "hydra.globalPrompt": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Global prompt injected into all new copilots and workers. Use this to define coding standards, preferred libraries, or project-wide conventions."
+        },
+        "hydra.projects": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Project name"
+              },
+              "path": {
+                "type": "string",
+                "description": "Absolute path to the project directory"
+              },
+              "description": {
+                "type": "string",
+                "description": "Project description or purpose"
+              },
+              "techStack": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of technologies used in this project"
+              },
+              "related": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names of related projects"
+              },
+              "notes": {
+                "type": "string",
+                "description": "Additional notes or context"
+              }
+            },
+            "required": ["name", "path"]
+          },
+          "markdownDescription": "List of projects with metadata. Each project can have a name, path, description, tech stack, related projects, and notes."
+        },
+        "hydra.injectOnCopilotCreate": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically inject the global prompt when creating a new copilot."
+        },
+        "hydra.injectOnWorkerCreate": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically inject project-level context when creating a new worker."
         }
       }
     },
@@ -264,9 +348,24 @@
           "command": "hydra.createCopilot",
           "when": "view == hydraCopilots",
           "group": "navigation"
+        },
+        {
+          "command": "hydra.addProject",
+          "when": "view == hydraProjects",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
+        {
+          "command": "hydra.editProject",
+          "when": "view == hydraProjects && viewItem == 'projectItem'",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "hydra.removeProject",
+          "when": "view == hydraProjects && viewItem == 'projectItem'",
+          "group": "9_danger"
+        },
         {
           "command": "tmux.reviewChanges",
           "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
@@ -297,6 +396,9 @@
   },
   "activationEvents": [
     "onView:hydraCopilots",
+    "onView:hydraWorkers",
+    "onView:hydraProjects",
+    "onView:hydraPreferences",
     "onCommand:tmux.attachCreate",
     "onCommand:hydra.createWorker",
     "onCommand:tmux.removeTask",
@@ -317,7 +419,12 @@
     "onCommand:hydra.startCopilotClaude",
     "onCommand:hydra.startCopilotCodex",
     "onCommand:hydra.startCopilotGemini",
-    "onCommand:hydra.startCopilotSudoCode"
+    "onCommand:hydra.startCopilotSudoCode",
+    "onCommand:hydra.addProject",
+    "onCommand:hydra.editProject",
+    "onCommand:hydra.removeProject",
+    "onCommand:hydra.editGlobalPrompt",
+    "onCommand:hydra.previewPrompt"
   ],
   "scripts": {
     "compile": "tsc -p ./ && node scripts/postcompile.js",
