@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2026060400] - 2026-06-04
+
+### Added
+- Add Hydra diagnostic logging across CLI and VS Code, including JSONL log files with rotation/redaction, log discovery commands, doctor output, and session lifecycle diagnostics
+
+### Changed
+- Clarify that a Hydra copilot is a cross-repo orchestrator rather than a per-repo worker
+
 ## [0.3.2026060300] - 2026-06-03
 
 ### Fixed
