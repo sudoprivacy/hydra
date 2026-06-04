@@ -192,6 +192,18 @@
       {
         "command": "hydra.startCopilotSudoCode",
         "title": "Hydra: Start Copilot (Sudo Code)"
+      },
+      {
+        "command": "hydra.showLogs",
+        "title": "Hydra: Show Logs"
+      },
+      {
+        "command": "hydra.openLogsFolder",
+        "title": "Hydra: Open Logs Folder"
+      },
+      {
+        "command": "hydra.copyDiagnosticInfo",
+        "title": "Hydra: Copy Diagnostic Info"
       }
     ],
     "keybindings": [
@@ -250,6 +262,29 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Automatically notify the parent copilot when a worker finishes its task. The notification is sent as a message to the copilot's tmux session."
+        },
+        "hydra.logging.level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info",
+          "markdownDescription": "Minimum level written to the Hydra diagnostic log file. Debug logging is more verbose and may include command start/success entries."
+        },
+        "hydra.logging.maxFileSizeMB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "markdownDescription": "Maximum size in MB of the active Hydra diagnostic log before rotation."
+        },
+        "hydra.logging.maxFiles": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "markdownDescription": "Maximum number of Hydra diagnostic log files to retain, including the active hydra.log."
         }
       }
     },
@@ -317,7 +352,10 @@
     "onCommand:hydra.startCopilotClaude",
     "onCommand:hydra.startCopilotCodex",
     "onCommand:hydra.startCopilotGemini",
-    "onCommand:hydra.startCopilotSudoCode"
+    "onCommand:hydra.startCopilotSudoCode",
+    "onCommand:hydra.showLogs",
+    "onCommand:hydra.openLogsFolder",
+    "onCommand:hydra.copyDiagnosticInfo"
   ],
   "scripts": {
     "compile": "tsc -p ./ && node scripts/postcompile.js",
@@ -337,13 +375,15 @@
     "smoke:telemetry": "node out/smoke/telemetrySmoke.js",
     "smoke:telemetry-e2e": "node out/smoke/telemetryE2eSmoke.js",
     "smoke:telemetry-posthog-real": "node out/smoke/telemetryPostHogRealSmoke.js",
+    "smoke:logging": "node out/smoke/loggingSmoke.js",
+    "smoke:logging-cli-e2e": "node out/smoke/loggingCliE2eSmoke.js",
     "smoke:session-file-resolve": "node out/smoke/sessionFileResolveSmoke.js",
     "smoke:sudocode-agent": "node out/smoke/sudocodeAgentSmoke.js",
     "smoke:cli-session-fields": "node out/smoke/cliSessionFieldsSmoke.js",
     "smoke:cli-config": "node out/smoke/cliConfigSmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

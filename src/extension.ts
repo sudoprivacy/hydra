@@ -31,6 +31,7 @@ import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } fro
 import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
+import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogCommands } from './commands/logs';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
@@ -42,6 +43,11 @@ function delay(ms: number): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  configureLoggerFromVSCode();
+  const hydraOutputChannel = vscode.window.createOutputChannel('Hydra');
+  registerHydraLogCommands(context, hydraOutputChannel);
+  logExtensionActivated(context);
+
   const copilotProvider = new CopilotProvider();
   copilotProvider.setExtensionUri(context.extensionUri);
   const workerProvider = new WorkerProvider();
@@ -169,6 +175,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
       if (e.affectsConfiguration('hydra.defaultAgent')) {
         syncDefaultAgentToHydraConfig();
+      }
+      if (e.affectsConfiguration('hydra.logging')) {
+        configureLoggerFromVSCode();
       }
     })
   );

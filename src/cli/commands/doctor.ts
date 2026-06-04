@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, constants, accessSync } from 'fs';
 import { join, delimiter } from 'path';
-import { getHydraBinDir, getHydraConfigPath, getHydraHome } from '../../core/path';
+import { getHydraBinDir, getHydraConfigPath, getHydraHome, getHydraLogFile, getHydraLogsDir } from '../../core/path';
 import { type OutputOpts } from '../output';
 
 interface CheckResult {
@@ -54,6 +54,8 @@ export function registerDoctorCommand(program: Command): void {
       const hydraDir = getHydraHome();
       const hydraConfigPath = getHydraConfigPath();
       const hydraBinDir = getHydraBinDir();
+      const hydraLogsDir = getHydraLogsDir();
+      const hydraLogFile = getHydraLogFile();
       const hydraBin = join(hydraBinDir, process.platform === 'win32' ? 'hydra.cmd' : 'hydra');
 
       // 1. git
@@ -61,8 +63,12 @@ export function registerDoctorCommand(program: Command): void {
         ? { name: 'git', status: 'pass', message: 'git is installed' }
         : { name: 'git', status: 'fail', message: 'git not found — install from https://git-scm.com' });
 
-      // 2. tmux (not available on Windows)
-      if (process.platform !== 'win32') {
+      // 2. Multiplexer backend
+      if (process.platform === 'win32') {
+        checks.push(checkOnPath('psmux')
+          ? { name: 'psmux', status: 'pass', message: 'psmux is installed' }
+          : { name: 'psmux', status: 'fail', message: 'psmux not found — install with: winget install psmux' });
+      } else {
         checks.push(checkOnPath('tmux')
           ? { name: 'tmux', status: 'pass', message: 'tmux is installed' }
           : { name: 'tmux', status: 'fail', message: 'tmux not found — install with: brew install tmux' });
@@ -88,7 +94,17 @@ export function registerDoctorCommand(program: Command): void {
         checks.push({ name: 'hydra-config', status: 'warn', message: `Hydra config not found yet: ${hydraConfigPath}` });
       }
 
-      // 6. Hydra CLI binary
+      // 6. Hydra log directory
+      try {
+        mkdirSync(hydraLogsDir, { recursive: true });
+        accessSync(hydraLogsDir, constants.W_OK);
+        checks.push({ name: 'hydra-logs', status: 'pass', message: `Hydra log path is writable: ${hydraLogFile}` });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        checks.push({ name: 'hydra-logs', status: 'fail', message: `Hydra log path is not writable: ${hydraLogFile} (${message})` });
+      }
+
+      // 7. Hydra CLI binary
       if (existsSync(hydraBin) && isExecutable(hydraBin)) {
         checks.push({ name: 'hydra-cli', status: 'pass', message: `Hydra CLI is installed at ${hydraBin}` });
       } else {
@@ -98,7 +114,7 @@ export function registerDoctorCommand(program: Command): void {
         checks.push({ name: 'hydra-cli', status: 'fail', message: `Hydra CLI not found at ${hydraBin} — open VS Code with the Hydra extension installed to auto-install` });
       }
 
-      // 7. Hydra bin in PATH
+      // 8. Hydra bin in PATH
       const pathDirs = (process.env.PATH || '').split(delimiter);
       const binInPath = pathDirs.some(d => d === hydraBinDir);
       if (binInPath) {
@@ -110,12 +126,12 @@ export function registerDoctorCommand(program: Command): void {
         checks.push({ name: 'hydra-path', status: 'warn', message: `${hydraBinDir} is not in PATH — add to your shell profile:\n    ${pathHint}` });
       }
 
-      // 8. GitHub CLI
+      // 9. GitHub CLI
       checks.push(checkOnPath('gh')
         ? { name: 'gh', status: 'pass', message: 'GitHub CLI is installed' }
         : { name: 'gh', status: 'fail', message: 'gh not found — install from https://cli.github.com' });
 
-      // 9. GitHub CLI authenticated
+      // 10. GitHub CLI authenticated
       if (checkOnPath('gh')) {
         checks.push(ghAuthenticated()
           ? { name: 'gh-auth', status: 'pass', message: 'GitHub CLI is authenticated' }
@@ -124,7 +140,7 @@ export function registerDoctorCommand(program: Command): void {
         checks.push({ name: 'gh-auth', status: 'fail', message: 'gh is not authenticated (gh not installed)' });
       }
 
-      // 10. AI agent CLIs
+      // 11. AI agent CLIs
       const agents = ['claude', 'codex', 'gemini', 'scode'];
       const foundAgents = agents.filter(a => checkOnPath(a));
       if (foundAgents.length > 0) {
@@ -141,7 +157,7 @@ export function registerDoctorCommand(program: Command): void {
 
       // Output
       if (globalOpts.json) {
-        console.log(JSON.stringify({ checks, passed, failed, warned }));
+        console.log(JSON.stringify({ checks, passed, failed, warned, hydraLogFile }));
       } else if (!globalOpts.quiet) {
         console.log('\nHydra Doctor\n');
         for (const check of checks) {

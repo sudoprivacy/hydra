@@ -295,6 +295,8 @@ export interface HydraResolvedPaths {
   hydraBinDir: string;
   hydraSessionsFile: string;
   hydraArchiveFile: string;
+  hydraLogsDir: string;
+  hydraLogFile: string;
   hydraWorktreesRoot: string;
   hydraReposRoot: string;
   hydraTasksRoot: string;
@@ -369,6 +371,8 @@ export function getHydraPaths(): HydraResolvedPaths {
     hydraBinDir: path.join(hydraHome, 'bin'),
     hydraSessionsFile: path.join(hydraHome, 'sessions.json'),
     hydraArchiveFile: path.join(hydraHome, 'archive.json'),
+    hydraLogsDir: path.join(hydraHome, 'logs'),
+    hydraLogFile: path.join(hydraHome, 'logs', 'hydra.log'),
     hydraWorktreesRoot: path.join(hydraHome, 'worktrees'),
     hydraReposRoot: path.join(hydraHome, 'repos'),
     hydraTasksRoot: path.join(hydraHome, 'tasks'),
@@ -403,6 +407,14 @@ export function getHydraSessionsFile(): string {
 
 export function getHydraArchiveFile(): string {
   return getHydraPaths().hydraArchiveFile;
+}
+
+export function getHydraLogsDir(): string {
+  return getHydraPaths().hydraLogsDir;
+}
+
+export function getHydraLogFile(): string {
+  return getHydraPaths().hydraLogFile;
 }
 
 export function getHydraWorktreesRoot(): string {

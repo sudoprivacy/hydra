@@ -111,14 +111,14 @@ function parseGitPorcelainStatus(lines: string[]): Pick<
 
 async function getWorktreeBranchLabel(worktreePath: string, fallbackLabel: string): Promise<string> {
   try {
-    const branch = (await exec('git symbolic-ref --short HEAD', { cwd: worktreePath })).trim();
+    const branch = (await exec('git symbolic-ref --short HEAD', { cwd: worktreePath, logFailure: false })).trim();
     if (branch) return branch;
   } catch {
     void 0;
   }
 
   try {
-    const head = (await exec('git rev-parse --short HEAD', { cwd: worktreePath })).trim();
+    const head = (await exec('git rev-parse --short HEAD', { cwd: worktreePath, logFailure: false })).trim();
     if (head) return head;
   } catch {
     void 0;
@@ -134,12 +134,12 @@ async function getWorktreeGitStatus(worktreePath: string): Promise<Pick<
   let commitsAhead = 0;
   let parsed = { gitDirty: 0, gitModified: 0, gitAdded: 0, gitDeleted: 0, gitUntracked: 0 };
 
-  if (!fs.existsSync(worktreePath)) {
+  if (!fs.existsSync(worktreePath) || !(await isGitInitialized(worktreePath))) {
     return { ...parsed, commitsAhead };
   }
 
   try {
-    const gitStatusOutput = await exec('git status --porcelain', { cwd: worktreePath });
+    const gitStatusOutput = await exec('git status --porcelain', { cwd: worktreePath, logFailure: false });
     const lines = gitStatusOutput.split('\n');
     parsed = parseGitPorcelainStatus(lines);
   } catch {
@@ -147,7 +147,7 @@ async function getWorktreeGitStatus(worktreePath: string): Promise<Pick<
   }
 
   try {
-    const aheadOutput = await exec('git rev-list --count @{upstream}..HEAD', { cwd: worktreePath });
+    const aheadOutput = await exec('git rev-list --count @{upstream}..HEAD', { cwd: worktreePath, logFailure: false });
     commitsAhead = parseInt(aheadOutput.trim(), 10) || 0;
   } catch {
     void 0;
@@ -196,9 +196,12 @@ async function getSessionStatus(sessionName: string, worktreePath?: string): Pro
     void 0;
   }
 
-  if (worktreePath && fs.existsSync(worktreePath)) {
+  const canReadGitStatus = worktreePath
+    && fs.existsSync(worktreePath)
+    && await isGitInitialized(worktreePath);
+  if (canReadGitStatus) {
     try {
-      const gitStatusOutput = await exec('git status --porcelain', { cwd: worktreePath });
+      const gitStatusOutput = await exec('git status --porcelain', { cwd: worktreePath, logFailure: false });
       const parsed = parseGitPorcelainStatus(gitStatusOutput.split('\n'));
       gitDirty = parsed.gitDirty;
       gitModified = parsed.gitModified;
@@ -210,7 +213,7 @@ async function getSessionStatus(sessionName: string, worktreePath?: string): Pro
     }
 
     try {
-      const aheadOutput = await exec('git rev-list --count @{upstream}..HEAD', { cwd: worktreePath });
+      const aheadOutput = await exec('git rev-list --count @{upstream}..HEAD', { cwd: worktreePath, logFailure: false });
       commitsAhead = parseInt(aheadOutput.trim(), 10) || 0;
     } catch {
       void 0;
@@ -233,7 +236,7 @@ async function getSessionStatus(sessionName: string, worktreePath?: string): Pro
 
 async function isGitInitialized(dirPath: string): Promise<boolean> {
   try {
-    await exec('git rev-parse --git-dir', { cwd: dirPath });
+    await exec('git rev-parse --git-dir', { cwd: dirPath, logFailure: false });
     return true;
   } catch {
     return false;
@@ -260,7 +263,7 @@ async function fetchRepoPrStatuses(repoRoot: string): Promise<Map<string, PrInfo
     const json = await Promise.race([
       exec(
         'gh pr list --state all --json headRefName,number,state --limit 100',
-        { cwd: repoRoot }
+        { cwd: repoRoot, logFailure: false }
       ),
       new Promise<string>((_, reject) =>
         setTimeout(() => reject(new Error('gh pr list timeout')), PR_STATUS_FETCH_TIMEOUT_MS)

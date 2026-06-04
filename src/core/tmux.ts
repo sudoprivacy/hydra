@@ -6,6 +6,7 @@ import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { getHydraConfigPath, getHydraHome, getTmuxCommand, toCanonicalPath } from './path';
 import { shellQuote, pwshQuote } from './shell';
 import { MultiplexerBackendCore, MultiplexerSession, SessionStatusInfo, HydraRole } from './types';
+import { logger } from './logger';
 
 interface ExecFailure extends Error {
   stderr?: string;
@@ -174,8 +175,14 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     try {
       const cmd = process.platform === 'win32' ? 'where psmux' : 'which tmux';
       await exec(cmd);
+      logger.debug('tmux.isInstalled', 'Multiplexer command found', {
+        binary: process.platform === 'win32' ? 'psmux' : 'tmux',
+      });
       return true;
     } catch {
+      logger.warn('tmux.isInstalled', 'Multiplexer command not found', {
+        binary: process.platform === 'win32' ? 'psmux' : 'tmux',
+      });
       return false;
     }
   }
@@ -184,7 +191,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     try {
       const tmuxCommand = getTmuxCommand();
       const output = await exec(`${tmuxCommand} list-sessions -F '#{session_name}|||#{session_windows}|||#{session_attached}'`);
-      return output.split('\n').filter(l => l.trim()).map(line => {
+      const sessions = output.split('\n').filter(l => l.trim()).map(line => {
         const [name, windows, attached] = line.split('|||');
         return {
           name,
@@ -192,22 +199,44 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
           attached: attached === '1'
         };
       });
+      logger.debug('tmux.listSessions', 'Listed multiplexer sessions', { count: sessions.length });
+      return sessions;
     } catch (error) {
       if (isTmuxNoServerError(error)) {
+        logger.debug('tmux.listSessions', 'No multiplexer server is running');
         return [];
       }
+      logger.error('tmux.listSessions', 'Unable to list multiplexer sessions', { error });
       throw new TmuxUnavailableError(`Unable to access tmux sessions: ${getExecFailureText(error)}`);
     }
   }
 
   async createSession(sessionName: string, cwd: string): Promise<void> {
-    await scrubStoredTmuxEnvironment(sessionName);
-    await exec(buildSanitizedTmuxCommand(`new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`));
+    logger.info('tmux.createSession', 'Creating multiplexer session', {
+      sessionName,
+      cwd,
+      tmuxCommand: getTmuxCommand(),
+    });
+    try {
+      await scrubStoredTmuxEnvironment(sessionName);
+      await exec(buildSanitizedTmuxCommand(`new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`));
+      logger.info('tmux.createSession', 'Created multiplexer session', { sessionName, cwd });
+    } catch (error) {
+      logger.error('tmux.createSession', 'Failed to create multiplexer session', { sessionName, cwd, error });
+      throw error;
+    }
   }
 
   async killSession(sessionName: string): Promise<void> {
     const tmuxCommand = getTmuxCommand();
-    await exec(`${tmuxCommand} kill-session -t ${shellQuote(sessionName)}`);
+    logger.info('tmux.killSession', 'Killing multiplexer session', { sessionName });
+    try {
+      await exec(`${tmuxCommand} kill-session -t ${shellQuote(sessionName)}`);
+      logger.info('tmux.killSession', 'Killed multiplexer session', { sessionName });
+    } catch (error) {
+      logger.error('tmux.killSession', 'Failed to kill multiplexer session', { sessionName, error });
+      throw error;
+    }
   }
 
   async renameSession(oldName: string, newName: string): Promise<void> {
@@ -218,7 +247,8 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async hasSession(sessionName: string): Promise<boolean> {
     try {
       const tmuxCommand = getTmuxCommand();
-      await exec(`${tmuxCommand} has-session -t ${shellQuote(sessionName)}`);
+      await exec(`${tmuxCommand} has-session -t ${shellQuote(sessionName)}`, { logFailure: false });
+      logger.debug('tmux.hasSession', 'Multiplexer session exists', { sessionName });
       return true;
     } catch (error) {
       if (
@@ -226,8 +256,10 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
         || isTmuxMissingSessionError(error)
         || isSilentExecFailure(error)
       ) {
+        logger.debug('tmux.hasSession', 'Multiplexer session does not exist', { sessionName });
         return false;
       }
+      logger.error('tmux.hasSession', 'Unable to inspect multiplexer session', { sessionName, error });
       throw new TmuxUnavailableError(`Unable to inspect tmux session "${sessionName}": ${getExecFailureText(error)}`);
     }
   }
@@ -294,13 +326,23 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async sendKeys(sessionName: string, keys: string): Promise<void> {
     const tmuxCommand = getTmuxCommand();
+    logger.debug('tmux.sendKeys', 'Sending keys to multiplexer session', {
+      sessionName,
+      keyLength: keys.length,
+    });
     await exec(`${tmuxCommand} send-keys -t ${shellQuote(sessionName)} ${shellQuote(keys)} Enter`);
   }
 
   async capturePane(sessionName: string, lines?: number): Promise<string> {
     const tmuxCommand = getTmuxCommand();
     const startArg = lines ? `-S -${lines}` : '';
-    return exec(`${tmuxCommand} capture-pane -t ${shellQuote(sessionName)} -p ${startArg}`.trim());
+    const output = await exec(`${tmuxCommand} capture-pane -t ${shellQuote(sessionName)} -p ${startArg}`.trim());
+    logger.debug('tmux.capturePane', 'Captured multiplexer pane', {
+      sessionName,
+      lines,
+      outputLength: output.length,
+    });
+    return output;
   }
 
   async sendMessage(sessionName: string, message: string): Promise<void> {
