@@ -865,12 +865,14 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
     try {
       const backend = getActiveBackend();
       const sm = new SessionManager(backend);
-      const copilots = await sm.listCopilots();
+      const [copilots, workers] = await Promise.all([sm.listCopilots(), sm.listWorkers()]);
 
       if (copilots.length === 0) {
         this._copilotItems = [];
         return [];  // triggers viewsWelcome
       }
+
+      const summariesByCopilot = buildCopilotWorkerSummaries(workers);
 
       const items: CopilotItem[] = [];
       for (const c of copilots) {
@@ -889,6 +891,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
           copilotMode: c.copilotMode,
           worktreePath: c.workdir,
           classification,
+          workerSummary: summariesByCopilot.get(c.sessionName),
         }));
       }
 
