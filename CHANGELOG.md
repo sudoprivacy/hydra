@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2026060401] - 2026-06-04
+
+### Added
+- Add Hydra diagnostic logging across CLI and VS Code, including JSONL log files with rotation/redaction, log discovery commands, doctor output, and session lifecycle diagnostics
+
+### Fixed
+- Avoid a VSIX package secret-scan false positive in the logging smoke test so the extension publish workflow can complete
+
 ## [0.3.2026060400] - 2026-06-04
 
 ### Added
