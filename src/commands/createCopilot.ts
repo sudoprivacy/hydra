@@ -6,6 +6,7 @@ import { CopilotMode } from '../core/types';
 import { TmuxBackendCore } from '../core/tmux';
 import { SessionManager } from '../core/sessionManager';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
+import { showHydraCommandError } from './logs';
 
 const ONBOARDING_PROMPT = `You are a Hydra copilot — an AI orchestrator that manages parallel AI workers to complete complex tasks.
 
@@ -148,8 +149,11 @@ export async function createCopilotWithAgent(agentType: AgentType, copilotMode?:
     vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, resolvedMode));
     vscode.commands.executeCommand('tmux.refresh');
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Failed to create copilot: ${message}`);
+    void showHydraCommandError('Failed to create copilot', 'command.createCopilotWithAgent', error, {
+      agent: agentType,
+      copilotMode: resolvedMode,
+      sessionName,
+    });
   }
 }
 
@@ -214,7 +218,11 @@ export async function createCopilot(): Promise<void> {
     vscode.window.showInformationMessage(getCreatedMessage(sessionName, agentType, copilotMode));
     vscode.commands.executeCommand('tmux.refresh');
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Failed to create copilot: ${message}`);
+    void showHydraCommandError('Failed to create copilot', 'command.createCopilot', error, {
+      agent: agentType,
+      copilotMode,
+      sessionName,
+      requestedName: nameInput.trim(),
+    });
   }
 }

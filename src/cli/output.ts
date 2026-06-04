@@ -1,3 +1,5 @@
+import { logger } from '../core/logger';
+
 // Exit codes following agent-friendly CLI conventions
 export const EXIT_OK = 0;
 export const EXIT_INTERNAL = 1;
@@ -40,6 +42,11 @@ export function outputError(error: unknown, opts: OutputOpts): never {
   const message = error instanceof Error ? error.message : String(error);
   const code = classifyError(message);
   const retryable = code === EXIT_INTERNAL;
+  logger.error('cli.error', 'Hydra CLI command failed', {
+    exitCode: code,
+    retryable,
+    error,
+  });
 
   if (opts.json) {
     const errorObj: Record<string, unknown> = { error: { code, message, retryable } };
@@ -52,6 +59,7 @@ export function outputError(error: unknown, opts: OutputOpts): never {
     console.error(`Error: ${message}`);
   }
 
+  logger.flushSync();
   process.exit(code);
 }
 

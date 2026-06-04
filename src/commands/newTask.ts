@@ -8,6 +8,7 @@ import { pickAgentType } from '../utils/agentConfig';
 import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { detectIdentity, getWorkerCreationBlockedMessage } from '../core/sessionIdentity';
+import { showHydraCommandError } from './logs';
 
 function getBaseBranchOverride(): string | undefined {
   const hydraOverride = vscode.workspace.getConfiguration('hydra').get<string>('baseBranch');
@@ -225,8 +226,8 @@ export async function newTask(): Promise<void> {
     return;
   }
 
-  let workspacePath: string;
-  let repoRoot: string | null;
+  let workspacePath = '';
+  let repoRoot: string | null = null;
   try {
     workspacePath = getRepoRoot();
     repoRoot = await tryGetWorkspaceGitRoot(workspacePath);
@@ -236,8 +237,7 @@ export async function newTask(): Promise<void> {
       return;
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Failed to create worker: ${message}`);
+    void showHydraCommandError('Failed to create worker', 'command.createWorker.preflight', error);
     return;
   }
 
@@ -271,7 +271,9 @@ export async function newTask(): Promise<void> {
       await createTaskWorker(workspacePath, false);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Failed to create worker: ${message}`);
+    void showHydraCommandError('Failed to create worker', 'command.createWorker', error, {
+      workspacePath,
+      repoRoot,
+    });
   }
 }

@@ -3,12 +3,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'util';
 import { getIsolatedEnv } from './path';
+import { logger } from './logger';
 
 const execPromise = promisify(execCallback);
 const execFilePromise = promisify(execFileCallback);
 
 export interface ExecOptions {
   cwd?: string;
+  logFailure?: boolean;
 }
 
 // VS Code is a GUI app and doesn't inherit shell PATH.
@@ -63,11 +65,49 @@ function getExecEnv(): Record<string, string | undefined> {
 }
 
 export async function exec(command: string, options?: ExecOptions): Promise<string> {
-  const { stdout } = await execPromise(command, {
-    cwd: options?.cwd,
-    env: getExecEnv(),
-  });
-  return stdout.trim();
+  const startedAt = Date.now();
+  const cwd = options?.cwd;
+  logger.debug('exec.start', 'Running shell command', { command, cwd });
+  try {
+    const { stdout } = await execPromise(command, {
+      cwd,
+      env: getExecEnv(),
+    });
+    logger.debug('exec.success', 'Shell command completed', {
+      command,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      stdoutLength: stdout.length,
+    });
+    return stdout.trim();
+  } catch (error) {
+    const failure = error as Error & {
+      code?: unknown;
+      stdout?: unknown;
+      stderr?: unknown;
+    };
+    if (options?.logFailure === false) {
+      logger.debug('exec.probeFailure', 'Shell probe command failed', {
+        command,
+        cwd,
+        durationMs: Date.now() - startedAt,
+        exitCode: failure.code,
+        stdoutLength: typeof failure.stdout === 'string' ? failure.stdout.length : undefined,
+        stderrLength: typeof failure.stderr === 'string' ? failure.stderr.length : undefined,
+      });
+    } else {
+      logger.error('exec.failure', 'Shell command failed', {
+        command,
+        cwd,
+        durationMs: Date.now() - startedAt,
+        exitCode: failure.code,
+        stdout: failure.stdout,
+        stderr: failure.stderr,
+        error,
+      });
+    }
+    throw error;
+  }
 }
 
 function posixShellQuote(value: string): string {

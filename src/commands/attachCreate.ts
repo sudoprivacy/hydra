@@ -7,6 +7,7 @@ import { SessionManager } from '../core/sessionManager';
 import { TmuxBackendCore } from '../core/tmux';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { sendCopilotOnboarding } from './createCopilot';
+import { showHydraCommandError } from './logs';
 
 async function findSessionsForWorkspace(repoRoot: string): Promise<string[]> {
   const backend = getActiveBackend();
@@ -119,7 +120,6 @@ export async function attachCreate(item?: TmuxItem | string): Promise<void> {
         await handleCommandExecution();
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Failed to attach/create: ${message}`);
+    void showHydraCommandError('Failed to attach/create', 'command.attachCreate', error);
   }
 }

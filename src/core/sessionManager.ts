@@ -9,6 +9,8 @@ import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
 import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
+import { logger } from './logger';
+import { hashText } from './logRedaction';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -524,6 +526,15 @@ export class SessionManager {
     let { task, taskFile } = opts;
     const agentType = opts.agentType || getHydraGlobalDefaultAgent().agent;
     let agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
+    logger.info('session.createRepoWorker', 'Creating code worker', {
+      repoRoot,
+      branchName,
+      agent: agentType,
+      taskLength: task?.length ?? 0,
+      taskHash: task ? hashText(task) : undefined,
+      hasTaskFile: !!taskFile,
+      fetchMode: opts.fetchMode,
+    });
 
     const validationError = coreGit.validateBranchName(branchName);
     if (validationError) {
@@ -658,6 +669,16 @@ export class SessionManager {
     const agentType = opts.agentType || getHydraGlobalDefaultAgent().agent;
     const agentCommand = await this.resolveAgentCommand(opts.agentCommand || this.getDefaultAgentCommand(agentType));
     const sessionName = preservedWorker?.sessionName || this.backend.buildSessionName(TASK_WORKER_SESSION_NAMESPACE, slug);
+    logger.info('session.createDirectoryWorker', 'Creating task worker', {
+      sessionName,
+      workdir,
+      slug,
+      agent: agentType,
+      managedWorkdir,
+      taskLength: task?.length ?? 0,
+      taskHash: task ? hashText(task) : undefined,
+      hasTaskFile: !!opts.taskFile,
+    });
 
     return this.launchPreparedWorker({
       source: 'directory',
@@ -686,6 +707,18 @@ export class SessionManager {
       prepared.notifyCopilot &&
       !!prepared.copilotSessionName &&
       !!prepared.task;
+    logger.info('session.launchWorker', 'Launching worker session', {
+      source: prepared.source,
+      sessionName: prepared.sessionName,
+      workdir: prepared.workdir,
+      repoRoot: prepared.repoRoot,
+      branch: prepared.branch,
+      agent: prepared.agentType,
+      isResume: !!prepared.resumeSessionId,
+      taskLength: prepared.task?.length ?? 0,
+      taskHash: prepared.task ? hashText(prepared.task) : undefined,
+      notifyCopilot: shouldNotifyCopilot,
+    });
 
     if (shouldNotifyCopilot && prepared.copilotSessionName) {
       const peekState = this.readSessionState();
@@ -769,6 +802,15 @@ export class SessionManager {
       state.updatedAt = now;
       return nextWorker;
     });
+    logger.info('session.launchWorker', 'Worker session persisted', {
+      source: workerInfo.source,
+      sessionName: workerInfo.sessionName,
+      workdir: workerInfo.workdir,
+      branch: workerInfo.branch,
+      agent: workerInfo.agent,
+      workerId: workerInfo.workerId,
+      sessionId: workerInfo.sessionId,
+    });
 
     const postCreatePromise = this.withPostCreateTimeout((async () => {
       if (isResume) {
@@ -790,18 +832,78 @@ export class SessionManager {
 
   async deleteWorker(sessionName: string, opts: DeleteWorkerOpts = {}): Promise<void> {
     const worker = this.readSessionState().workers[sessionName];
-    if (worker && isDirectoryWorker(worker) && opts.deleteFiles && !worker.managedWorkdir) {
-      throw new Error(`Worker "${sessionName}" uses a user-provided directory. --delete-files is only supported for Hydra-managed task workers.`);
-    }
+    const context = {
+      type: 'worker',
+      sessionName,
+      found: !!worker,
+      source: worker?.source,
+      agent: worker?.agent,
+      workdir: worker?.workdir,
+      branch: worker?.branch,
+      managedWorkdir: worker?.managedWorkdir,
+      deleteFiles: opts.deleteFiles === true,
+    };
+    logger.info('session.delete', 'Deleting worker session', { ...context, phase: 'start' });
 
-    await this.killSessionOrConfirmAbsent(sessionName);
+    try {
+      if (worker && isDirectoryWorker(worker) && opts.deleteFiles && !worker.managedWorkdir) {
+        throw new Error(`Worker "${sessionName}" uses a user-provided directory. --delete-files is only supported for Hydra-managed task workers.`);
+      }
 
-    const archivedWorker = worker ? this.prepareArchivedSessionData(worker) as WorkerInfo : undefined;
+      await this.killSessionOrConfirmAbsent(sessionName);
+      logger.info('session.delete', 'Worker multiplexer session removed or absent', {
+        ...context,
+        phase: 'killSession',
+      });
 
-    if (worker && isDirectoryWorker(worker)) {
-      if (opts.deleteFiles && worker.managedWorkdir && worker.workdir && fs.existsSync(worker.workdir)) {
+      const archivedWorker = worker ? this.prepareArchivedSessionData(worker) as WorkerInfo : undefined;
+      let deletedFiles = false;
+      let removedWorktree = false;
+      let deletedBranch = false;
+
+      if (worker && isDirectoryWorker(worker)) {
+        if (opts.deleteFiles && worker.managedWorkdir && worker.workdir && fs.existsSync(worker.workdir)) {
+          logger.info('session.delete', 'Deleting managed task worker files', {
+            ...context,
+            phase: 'deleteFiles',
+          });
+          try {
+            fs.rmSync(worker.workdir, { recursive: true, force: true });
+            deletedFiles = true;
+            logger.info('session.delete', 'Deleted managed task worker files', {
+              ...context,
+              phase: 'deleteFiles',
+            });
+          } catch (error) {
+            await this.updateSessionState((state) => {
+              if (state.workers[sessionName]) {
+                state.workers[sessionName].status = 'stopped';
+                state.workers[sessionName].attached = false;
+                state.updatedAt = new Date().toISOString();
+              }
+            });
+            logger.error('session.delete', 'Failed to delete managed task worker files', {
+              ...context,
+              phase: 'deleteFiles',
+              error,
+            });
+            throw error;
+          }
+        }
+      } else if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
+        logger.info('session.delete', 'Removing worker worktree', {
+          ...context,
+          phase: 'removeWorktree',
+          repoRoot: worker.repoRoot,
+        });
         try {
-          fs.rmSync(worker.workdir, { recursive: true, force: true });
+          await coreGit.removeWorktree(worker.repoRoot, worker.workdir);
+          removedWorktree = true;
+          logger.info('session.delete', 'Removed worker worktree', {
+            ...context,
+            phase: 'removeWorktree',
+            repoRoot: worker.repoRoot,
+          });
         } catch (error) {
           await this.updateSessionState((state) => {
             if (state.workers[sessionName]) {
@@ -810,41 +912,74 @@ export class SessionManager {
               state.updatedAt = new Date().toISOString();
             }
           });
+          logger.error('session.delete', 'Failed to remove worker worktree', {
+            ...context,
+            phase: 'removeWorktree',
+            repoRoot: worker.repoRoot,
+            error,
+          });
           throw error;
         }
-      }
-    } else if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
-      try {
-        await coreGit.removeWorktree(worker.repoRoot, worker.workdir);
-      } catch (error) {
-        await this.updateSessionState((state) => {
-          if (state.workers[sessionName]) {
-            state.workers[sessionName].status = 'stopped';
-            state.workers[sessionName].attached = false;
-            state.updatedAt = new Date().toISOString();
+
+        if (worker.branch) {
+          logger.info('session.delete', 'Deleting worker branch', {
+            ...context,
+            phase: 'deleteBranch',
+            repoRoot: worker.repoRoot,
+          });
+          try {
+            await exec(`git branch -D ${shellQuote(worker.branch)}`, {
+              cwd: worker.repoRoot,
+              logFailure: false,
+            });
+            deletedBranch = true;
+            logger.info('session.delete', 'Deleted worker branch', {
+              ...context,
+              phase: 'deleteBranch',
+              repoRoot: worker.repoRoot,
+            });
+          } catch {
+            logger.debug('session.delete', 'Worker branch was not deleted', {
+              ...context,
+              phase: 'deleteBranch',
+              repoRoot: worker.repoRoot,
+            });
           }
+        }
+      }
+
+      // Archive only after destructive cleanup has succeeded, so failed deletes remain retryable.
+      if (archivedWorker) {
+        logger.info('session.delete', 'Archiving worker metadata', {
+          ...context,
+          phase: 'archive',
+          agentSessionId: archivedWorker.sessionId,
         });
-        throw error;
+        this.archiveEntry('worker', archivedWorker.sessionName, archivedWorker.sessionId, archivedWorker);
       }
 
-      if (worker.branch) {
-        try {
-          await exec(`git branch -D ${shellQuote(worker.branch)}`, { cwd: worker.repoRoot });
-        } catch { /* Branch may not exist */ }
-      }
+      await this.updateSessionState((state) => {
+        if (state.workers[sessionName]) {
+          delete state.workers[sessionName];
+          state.updatedAt = new Date().toISOString();
+        }
+      });
+      logger.info('session.delete', 'Deleted worker session', {
+        ...context,
+        phase: 'complete',
+        archived: !!archivedWorker,
+        deletedFiles,
+        removedWorktree,
+        deletedBranch,
+      });
+    } catch (error) {
+      logger.error('session.delete', 'Failed to delete worker session', {
+        ...context,
+        phase: 'failed',
+        error,
+      });
+      throw error;
     }
-
-    // Archive only after destructive cleanup has succeeded, so failed deletes remain retryable.
-    if (archivedWorker) {
-      this.archiveEntry('worker', archivedWorker.sessionName, archivedWorker.sessionId, archivedWorker);
-    }
-
-    await this.updateSessionState((state) => {
-      if (state.workers[sessionName]) {
-        delete state.workers[sessionName];
-        state.updatedAt = new Date().toISOString();
-      }
-    });
   }
 
   async stopWorker(sessionName: string): Promise<void> {
@@ -873,6 +1008,13 @@ export class SessionManager {
 
     const agent = agentType || existingWorker.agent || getHydraGlobalDefaultAgent().agent;
     const command = await this.resolveAgentCommand(agentCommand || this.getDefaultAgentCommand(agent));
+    logger.info('session.startWorker', 'Starting worker session', {
+      sessionName,
+      workdir: existingWorker.workdir,
+      agent,
+      source: getWorkerSource(existingWorker),
+      hasStoredSessionId: !!existingWorker.sessionId,
+    });
 
     await this.backend.createSession(sessionName, existingWorker.workdir);
     await this.backend.setSessionWorkdir(sessionName, existingWorker.workdir);
@@ -1055,6 +1197,14 @@ export class SessionManager {
     const displayName = opts.name || opts.sessionName || defaultSessionName;
     const sessionName = opts.sessionName || this.backend.sanitizeSessionName(defaultSessionName);
     const agentOptions: AgentCommandOptions = { copilotMode };
+    logger.info('session.createCopilot', 'Creating copilot session', {
+      sessionName,
+      displayName,
+      workdir: opts.workdir,
+      agent: agentType,
+      copilotMode,
+      isResume: !!opts.resumeSessionId,
+    });
 
     const exists = await this.backend.hasSession(sessionName);
     if (exists) {
@@ -1126,6 +1276,13 @@ export class SessionManager {
       state.copilots[sessionName] = nextCopilot;
       state.updatedAt = now;
       return nextCopilot;
+    });
+    logger.info('session.createCopilot', 'Copilot session persisted', {
+      sessionName: persistedCopilotInfo.sessionName,
+      workdir: persistedCopilotInfo.workdir,
+      agent: persistedCopilotInfo.agent,
+      copilotMode: persistedCopilotInfo.copilotMode,
+      sessionId: persistedCopilotInfo.sessionId,
     });
 
     // Match worker lifecycle semantics: wait for readiness and persist any deferred
@@ -1315,24 +1472,57 @@ export class SessionManager {
   }
 
   async deleteCopilot(sessionName: string): Promise<void> {
-    try {
-      await this.backend.killSession(sessionName);
-    } catch { /* Already dead */ }
-
     const copilot = this.readSessionState().copilots[sessionName];
-    const archivedCopilot = copilot ? this.prepareArchivedSessionData(copilot) as CopilotInfo : undefined;
+    const context = {
+      type: 'copilot',
+      sessionName,
+      found: !!copilot,
+      agent: copilot?.agent,
+      copilotMode: copilot?.copilotMode,
+      workdir: copilot?.workdir,
+    };
+    logger.info('session.delete', 'Deleting copilot session', { ...context, phase: 'start' });
 
-    // Archive before removing
-    if (archivedCopilot) {
-      this.archiveEntry('copilot', archivedCopilot.sessionName, archivedCopilot.sessionId, archivedCopilot);
-    }
+    try {
+      try {
+        await this.backend.killSession(sessionName);
+      } catch { /* Already dead */ }
+      logger.info('session.delete', 'Copilot multiplexer session removed or absent', {
+        ...context,
+        phase: 'killSession',
+      });
 
-    await this.updateSessionState((state) => {
-      if (state.copilots[sessionName]) {
-        delete state.copilots[sessionName];
-        state.updatedAt = new Date().toISOString();
+      const archivedCopilot = copilot ? this.prepareArchivedSessionData(copilot) as CopilotInfo : undefined;
+
+      // Archive before removing
+      if (archivedCopilot) {
+        logger.info('session.delete', 'Archiving copilot metadata', {
+          ...context,
+          phase: 'archive',
+          agentSessionId: archivedCopilot.sessionId,
+        });
+        this.archiveEntry('copilot', archivedCopilot.sessionName, archivedCopilot.sessionId, archivedCopilot);
       }
-    });
+
+      await this.updateSessionState((state) => {
+        if (state.copilots[sessionName]) {
+          delete state.copilots[sessionName];
+          state.updatedAt = new Date().toISOString();
+        }
+      });
+      logger.info('session.delete', 'Deleted copilot session', {
+        ...context,
+        phase: 'complete',
+        archived: !!archivedCopilot,
+      });
+    } catch (error) {
+      logger.error('session.delete', 'Failed to delete copilot session', {
+        ...context,
+        phase: 'failed',
+        error,
+      });
+      throw error;
+    }
   }
 
   // ── Public helpers for VS Code extension ──
@@ -1598,6 +1788,14 @@ export class SessionManager {
       data: { ...data },
     });
     this.writeArchiveState(archive);
+    logger.info('session.archive', 'Archived session metadata', {
+      type,
+      sessionName,
+      agent: data.agent,
+      workdir: data.workdir,
+      agentSessionId,
+      agentSessionFile: data.agentSessionFile ?? null,
+    });
   }
 
   private prepareArchivedSessionData(data: WorkerInfo | CopilotInfo): WorkerInfo | CopilotInfo {
@@ -1864,6 +2062,12 @@ export class SessionManager {
     workdir: string,
     launchStartedAt?: number,
   ): Promise<void> {
+    logger.info('session.waitForReady', 'Waiting for agent readiness', {
+      sessionName,
+      agent: agentType,
+      workdir,
+      hasPreAssignedSessionId: !!preAssignedSessionId,
+    });
     if (preAssignedSessionId) {
       // Claude (or resume): sessionId already known — just wait for TUI readiness
       await this.waitForAgentReady(sessionName, agentType);
@@ -1888,6 +2092,12 @@ export class SessionManager {
     notifyCopilot = false,
   ): Promise<void> {
     if (task) {
+      logger.info('session.sendInitialPrompt', 'Sending initial worker prompt', {
+        sessionName,
+        promptLength: task.length,
+        promptHash: hashText(task),
+        notifyCopilot,
+      });
       if (notifyCopilot) {
         this.armCompletionNotification(sessionName);
       }
@@ -2366,8 +2576,22 @@ export class SessionManager {
   ): Promise<{ sessionId: string | null; agentSessionFile: string | null }> {
     const config = AGENT_SESSION_CAPTURE[agentType];
     if (!config) return { sessionId: null, agentSessionFile: null };
+    const logCaptured = (result: { sessionId: string | null; agentSessionFile: string | null }, source: string) => {
+      logger.info('session.captureAgentSessionInfo', 'Captured agent session info', {
+        sessionName,
+        agent: agentType,
+        source,
+        hasSessionId: !!result.sessionId,
+        hasAgentSessionFile: !!result.agentSessionFile,
+      });
+    };
 
     try {
+      logger.info('session.captureAgentSessionInfo', 'Capturing agent session info', {
+        sessionName,
+        agent: agentType,
+        workdir,
+      });
       // For REPL TUIs, wait for the prompt before sending status. Starting
       // with Codex 0.129, the trust prompt and first paint can take long enough
       // that fixed sleeps race the input handler and lose the status command.
@@ -2380,11 +2604,13 @@ export class SessionManager {
       const existingOutput = await this.backend.capturePane(sessionName, 400);
       const existing = this.parseAgentSessionInfo(agentType, workdir, existingOutput);
       if (existing.sessionId) {
+        logCaptured(existing, 'existing-output');
         return existing;
       }
       if (agentType === 'sudocode') {
         const latest = this.findLatestSudoCodeSessionInfo(workdir, launchStartedAt);
         if (latest.sessionId) {
+          logCaptured(latest, 'sudocode-session-file');
           return latest;
         }
       }
@@ -2400,11 +2626,13 @@ export class SessionManager {
         const output = await this.backend.capturePane(sessionName, 400);
         const parsed = this.parseAgentSessionInfo(agentType, workdir, output);
         if (parsed.sessionId) {
+          logCaptured(parsed, 'status-command');
           return parsed;
         }
         if (agentType === 'sudocode') {
           const latest = this.findLatestSudoCodeSessionInfo(workdir, launchStartedAt);
           if (latest.sessionId) {
+            logCaptured(latest, 'sudocode-session-file');
             return latest;
           }
         }
@@ -2413,9 +2641,18 @@ export class SessionManager {
       console.warn(
         `[hydra] Could not parse session ID for ${agentType} in ${sessionName}`,
       );
+      logger.warn('session.captureAgentSessionInfo', 'Could not parse agent session ID', {
+        sessionName,
+        agent: agentType,
+      });
       return { sessionId: null, agentSessionFile: null };
     } catch (error) {
       console.warn(`[hydra] Session ID capture failed for ${sessionName}:`, error);
+      logger.warn('session.captureAgentSessionInfo', 'Agent session capture failed', {
+        sessionName,
+        agent: agentType,
+        error,
+      });
       return { sessionId: null, agentSessionFile: null };
     }
   }
@@ -2722,12 +2959,7 @@ export class SessionManager {
         }
       }
 
-      if (task) {
-        if (shouldNotifyCopilot) {
-          this.armCompletionNotification(sessionName);
-        }
-        await this.backend.sendKeys(sessionName, task);
-      }
+      await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
 
       const workdir = sessionWorkdir || savedWorker?.workdir || '';
       const agent = await this.backend.getSessionAgent(sessionName) || agentType;

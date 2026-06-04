@@ -13,8 +13,19 @@ import { registerTestCommand } from './commands/test';
 import { registerShareCommands } from './commands/share';
 import { registerConfigCommands } from './commands/config';
 import { peekTelemetry } from '../core/telemetry';
+import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '../core/path';
+import { getHostSummary, logger } from '../core/logger';
 
 const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
+logger.debug('cli.start', 'Hydra CLI started', {
+  version: pkg.version,
+  command: process.argv[2],
+  subcommand: process.argv[3],
+  hydraHome: getHydraHome(),
+  hydraConfigPath: getHydraConfigPath(),
+  hydraLogFile: getHydraLogFile(),
+  ...getHostSummary(),
+});
 
 const program = new Command();
 program
@@ -49,7 +60,20 @@ process.on('beforeExit', async () => {
   } catch {
     // never let telemetry crash the CLI
   }
+  await logger.flush();
 });
+
+process.on('exit', () => {
+  logger.flushSync();
+});
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    logger.warn('cli.signal', 'Hydra CLI received signal', { signal });
+    logger.flushSync();
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  });
+}
 
 registerListCommand(program);
 registerWorkerCommands(program);
