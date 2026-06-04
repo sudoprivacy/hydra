@@ -133,6 +133,18 @@ hydra archive --help
 
 Prefer `--json` when scripting or when another agent will parse the output.
 
+## Copilot vs repos
+
+A Copilot is **not bound to a single repo**. It is a cross-repo command center: one Copilot can create workers in many different repos and orchestrate them from one place. Its own `workdir` is just the shell starting directory for the Copilot's own terminal — not its "scope" of work. By default a new Copilot starts in `$HOME` precisely to avoid the impression that it belongs to whatever repo happens to be open in VS Code.
+
+Implications:
+
+- A Copilot can spawn `hydra worker create --repo <owner>/<name> --branch <name>` workers across any number of registered repos.
+- The "current VS Code workspace" is not the Copilot's working set — its workers are.
+- UI surfaces about a Copilot should describe its **managed workers and the repos they touch**, not the Copilot's own `workdir`.
+
+If you want a per-repo assistant rather than a cross-repo orchestrator, create a worker instead — workers *are* repo-scoped (code workers) or folder-scoped (task workers).
+
 ## Copilot workflow
 
 When orchestrating multiple workers, follow this loop:
