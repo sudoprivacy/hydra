@@ -306,11 +306,62 @@ export class TmuxItem extends vscode.TreeItem {
 
 // ─── Copilot Item (Level 2) ──────────────────────────────
 
+/**
+ * Per-repo grouping of workers managed by a single Copilot.
+ * `repoName` is null for task workers (directory-scoped, no repo).
+ */
+export interface CopilotWorkerGroup {
+  repoName: string | null;
+  workers: WorkerInfo[];
+}
+
+export interface CopilotWorkerSummary {
+  workerCount: number;
+  repoCount: number;
+  groups: CopilotWorkerGroup[];
+}
+
+function buildCopilotTooltip(
+  displayName: string,
+  agentType: string,
+  copilotMode: CopilotMode,
+  summary: CopilotWorkerSummary,
+): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.isTrusted = false;
+  md.supportThemeIcons = true;
+  const modeSuffix = copilotMode === 'plan' ? ' · planner' : '';
+  md.appendMarkdown(`**${displayName}** — ${agentType} copilot${modeSuffix}\n\n`);
+  if (summary.workerCount === 0) {
+    md.appendMarkdown('_No managed workers yet._');
+    return md;
+  }
+  md.appendMarkdown(`${summary.workerCount} worker${summary.workerCount === 1 ? '' : 's'} · ${summary.repoCount} repo${summary.repoCount === 1 ? '' : 's'}\n`);
+  for (const group of summary.groups) {
+    const heading = group.repoName ?? 'Local tasks';
+    md.appendMarkdown(`\n**${heading}**\n`);
+    for (const w of group.workers) {
+      let glyph: string;
+      if (w.status === 'stopped') glyph = '○';
+      else if (w.attached) glyph = '●';
+      else glyph = '◐';
+      const label = w.displayName || w.slug || w.sessionName;
+      const stateBits: string[] = [];
+      if (w.status === 'stopped') stateBits.push('stopped');
+      else if (w.attached) stateBits.push('attached');
+      else stateBits.push('idle');
+      md.appendMarkdown(`- ${glyph} ${label} _(${stateBits.join(', ')})_\n`);
+    }
+  }
+  return md;
+}
+
 export class CopilotItem extends TmuxItem {
   public readonly worktreePath?: string;
   public readonly agentType: string;
   public readonly copilotMode: CopilotMode;
   public readonly classification: Classification;
+  public readonly workerSummary: CopilotWorkerSummary;
 
   constructor(opts: {
     sessionName: string;
@@ -319,20 +370,31 @@ export class CopilotItem extends TmuxItem {
     copilotMode?: CopilotMode;
     worktreePath?: string;
     classification: Classification;
+    workerSummary?: CopilotWorkerSummary;
   }) {
     const label = opts.displayName || opts.sessionName;
     const copilotMode = opts.copilotMode || 'normal';
-    const description = copilotMode === 'plan'
-      ? `[${opts.agentType}] [planner]`
-      : `[${opts.agentType}]`;
+    const workerSummary: CopilotWorkerSummary = opts.workerSummary ?? { workerCount: 0, repoCount: 0, groups: [] };
+    const parts: string[] = [`[${opts.agentType}]`];
+    if (copilotMode === 'plan') parts.push('[planner]');
+    if (workerSummary.workerCount > 0) {
+      const w = workerSummary.workerCount;
+      const r = workerSummary.repoCount;
+      const wTxt = `${w} worker${w === 1 ? '' : 's'}`;
+      const rTxt = `${r} repo${r === 1 ? '' : 's'}`;
+      parts.push(r > 0 ? `[${wTxt} · ${rTxt}]` : `[${wTxt}]`);
+    }
+    const description = parts.join(' ');
     super(label, vscode.TreeItemCollapsibleState.Expanded, undefined, opts.sessionName);
 
     this.worktreePath = opts.worktreePath;
     this.agentType = opts.agentType;
     this.copilotMode = copilotMode;
     this.classification = opts.classification;
+    this.workerSummary = workerSummary;
     this.id = opts.sessionName;
     this.description = description;
+    this.tooltip = buildCopilotTooltip(label, opts.agentType, copilotMode, workerSummary);
     this.contextValue = 'copilotItem';
     this.command = {
       command: 'tmux.attachCreate',
@@ -731,6 +793,44 @@ function getItemScore(item: TmuxItem): number {
   return 10;
 }
 
+/**
+ * Group all workers by their parent copilot session, then by repo within each
+ * copilot. Workers with no copilotSessionName (manually-created workers) are
+ * skipped. Task workers (no repoRoot/repo) go into a single null-repo bucket.
+ *
+ * Ordering: repos appear in first-seen order from the worker list; task
+ * workers (null-repo bucket) are pushed last so they don't fragment the
+ * repo-grouped view.
+ */
+export function buildCopilotWorkerSummaries(workers: WorkerInfo[]): Map<string, CopilotWorkerSummary> {
+  const result = new Map<string, CopilotWorkerSummary>();
+  for (const w of workers) {
+    if (!w.copilotSessionName) continue;
+    let summary = result.get(w.copilotSessionName);
+    if (!summary) {
+      summary = { workerCount: 0, repoCount: 0, groups: [] };
+      result.set(w.copilotSessionName, summary);
+    }
+    const repoName = w.repo ?? null;
+    let group = summary.groups.find(g => g.repoName === repoName);
+    if (!group) {
+      group = { repoName, workers: [] };
+      summary.groups.push(group);
+    }
+    group.workers.push(w);
+  }
+  for (const summary of result.values()) {
+    summary.workerCount = summary.groups.reduce((n, g) => n + g.workers.length, 0);
+    summary.repoCount = summary.groups.filter(g => g.repoName !== null).length;
+    summary.groups.sort((a, b) => {
+      if (a.repoName === null) return 1;
+      if (b.repoName === null) return -1;
+      return 0;
+    });
+  }
+  return result;
+}
+
 // ─── Copilot Provider ─────────────────────────────────────
 
 export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
@@ -765,12 +865,14 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
     try {
       const backend = getActiveBackend();
       const sm = new SessionManager(backend);
-      const copilots = await sm.listCopilots();
+      const [copilots, workers] = await Promise.all([sm.listCopilots(), sm.listWorkers()]);
 
       if (copilots.length === 0) {
         this._copilotItems = [];
         return [];  // triggers viewsWelcome
       }
+
+      const summariesByCopilot = buildCopilotWorkerSummaries(workers);
 
       const items: CopilotItem[] = [];
       for (const c of copilots) {
@@ -789,6 +891,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
           copilotMode: c.copilotMode,
           worktreePath: c.workdir,
           classification,
+          workerSummary: summariesByCopilot.get(c.sessionName),
         }));
       }
 
