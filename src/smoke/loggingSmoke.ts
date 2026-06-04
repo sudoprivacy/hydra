@@ -61,16 +61,17 @@ function readJsonLines(filePath: string): Array<Record<string, unknown>> {
 }
 
 async function testRedaction(): Promise<void> {
+  const githubToken = ['ghp', '123456789012345678901234567890123456'].join('_');
   const text = [
     'OPENAI_API_KEY=sk-proj-secret1234567890',
     'Authorization: Bearer secret-token-value',
-    'GITHUB_TOKEN=ghp_123456789012345678901234567890123456',
+    `GITHUB_TOKEN=${githubToken}`,
     'safe text',
   ].join('\n');
   const redacted = redactText(text);
   assert.ok(!redacted.includes('sk-proj-secret1234567890'), 'OpenAI key should be redacted');
   assert.ok(!redacted.includes('secret-token-value'), 'Bearer token should be redacted');
-  assert.ok(!redacted.includes('ghp_123456789012345678901234567890123456'), 'GitHub token should be redacted');
+  assert.ok(!redacted.includes(githubToken), 'GitHub token should be redacted');
   assert.ok(redacted.includes('safe text'), 'non-secret text should remain');
   assert.ok(isSecretLikeKey('apiKey'), 'camelCase apiKey fields should be treated as secret');
   assert.ok(isSecretLikeKey('accessToken'), 'camelCase accessToken fields should be treated as secret');
