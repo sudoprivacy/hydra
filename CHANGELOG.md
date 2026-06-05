@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026060500] - 2026-06-05
+
+### Added
+- Show managed workers and repositories directly on Copilot tree items so orchestrator state is easier to scan in the sidebar
+
 ## [0.3.2026060401] - 2026-06-04
 
 ### Added
