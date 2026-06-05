@@ -169,11 +169,28 @@ export async function exec(command: string, options?: ExecOptions): Promise<stri
       // `encoding: 'buffer'` is set. Decode them in place so downstream
       // log lines, error messages, and any caller that reads .stdout /
       // .stderr off the error see readable text rather than mojibake.
-      if (failure.stdout !== undefined) {
-        failure.stdout = decodeChildOutput(failure.stdout, codec);
-      }
-      if (failure.stderr !== undefined) {
-        failure.stderr = decodeChildOutput(failure.stderr, codec);
+      const decodedStdout = failure.stdout !== undefined
+        ? decodeChildOutput(failure.stdout, codec)
+        : undefined;
+      const decodedStderr = failure.stderr !== undefined
+        ? decodeChildOutput(failure.stderr, codec)
+        : undefined;
+      if (decodedStdout !== undefined) failure.stdout = decodedStdout;
+      if (decodedStderr !== undefined) failure.stderr = decodedStderr;
+      // Node builds .message from the raw stderr Buffer via Buffer.toString()
+      // (UTF-8), so on a non-UTF-8 Windows console the message itself is
+      // still mojibake even after we fix .stdout / .stderr. Most callers log
+      // error.message (including the JSON log line in the user report that
+      // started this fix). Rebuild it from the iconv-decoded stderr, but
+      // only when the message has Node's "Command failed:" prefix, so we
+      // don't clobber errors thrown from elsewhere.
+      if (
+        typeof failure.message === 'string'
+        && failure.message.startsWith('Command failed:')
+      ) {
+        failure.message = decodedStderr
+          ? `Command failed: ${command}\n${decodedStderr}`
+          : `Command failed: ${command}`;
       }
     }
     if (options?.logFailure === false) {
