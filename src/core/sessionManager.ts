@@ -705,8 +705,7 @@ export class SessionManager {
     let agentCommand = prepared.agentCommand;
     const shouldNotifyCopilot = agentSupportsCompletionNotification(prepared.agentType) &&
       prepared.notifyCopilot &&
-      !!prepared.copilotSessionName &&
-      !!prepared.task;
+      !!prepared.copilotSessionName;
     logger.info('session.launchWorker', 'Launching worker session', {
       source: prepared.source,
       sessionName: prepared.sessionName,
