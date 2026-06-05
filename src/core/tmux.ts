@@ -27,7 +27,11 @@ function isTmuxIntegrationEnvKey(key: string): boolean {
   return key.startsWith('VSCODE_') || TMUX_ENV_KEYS_TO_STRIP.includes(key);
 }
 
-function getTmuxSanitizedEnvKeys(): string[] {
+// The list of env vars that must NOT leak into the tmux/psmux process. Strip
+// these from the child process environment in exec(), not via an `env -u`
+// wrapper — Windows cmd.exe/PowerShell have no `env` binary, so the wrapper
+// approach fails before psmux even runs.
+export function getTmuxSanitizedEnvKeys(): string[] {
   return Array.from(new Set([
     ...TMUX_ENV_KEYS_TO_STRIP,
     ...Object.keys(process.env).filter(isTmuxIntegrationEnvKey),
@@ -35,13 +39,8 @@ function getTmuxSanitizedEnvKeys(): string[] {
 }
 
 export function buildSanitizedTmuxCommand(command: string): string {
-  const envKeys = getTmuxSanitizedEnvKeys();
   const tmuxCommand = getTmuxCommand();
-  if (envKeys.length === 0) {
-    return `${tmuxCommand} ${command}`;
-  }
-  const unsetArgs = envKeys.map((key) => `-u ${shellQuote(key)}`).join(' ');
-  return `env ${unsetArgs} ${tmuxCommand} ${command}`;
+  return `${tmuxCommand} ${command}`;
 }
 
 function buildStoredTmuxEnvScrubCommandPowerShell(sessionName?: string): string {
@@ -219,7 +218,10 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     });
     try {
       await scrubStoredTmuxEnvironment(sessionName);
-      await exec(buildSanitizedTmuxCommand(`new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`));
+      await exec(
+        buildSanitizedTmuxCommand(`new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`),
+        { unsetEnv: getTmuxSanitizedEnvKeys() },
+      );
       logger.info('tmux.createSession', 'Created multiplexer session', { sessionName, cwd });
     } catch (error) {
       logger.error('tmux.createSession', 'Failed to create multiplexer session', { sessionName, cwd, error });

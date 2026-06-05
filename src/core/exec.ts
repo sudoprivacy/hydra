@@ -11,6 +11,10 @@ const execFilePromise = promisify(execFileCallback);
 export interface ExecOptions {
   cwd?: string;
   logFailure?: boolean;
+  // Keys to remove from the child process environment. Used in place of a
+  // platform-specific `env -u` wrapper so the same call works on Windows,
+  // which has no `env` binary in cmd.exe/PowerShell.
+  unsetEnv?: string[];
 }
 
 // VS Code is a GUI app and doesn't inherit shell PATH.
@@ -51,7 +55,7 @@ function getEnhancedPath(): string {
     : currentPath;
 }
 
-function getExecEnv(): Record<string, string | undefined> {
+function getExecEnv(unsetKeys?: readonly string[]): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...getIsolatedEnv(),
     PATH: getEnhancedPath(),
@@ -59,6 +63,12 @@ function getExecEnv(): Record<string, string | undefined> {
 
   if (process.platform === 'win32') {
     delete env.Path;
+  }
+
+  if (unsetKeys) {
+    for (const key of unsetKeys) {
+      delete env[key];
+    }
   }
 
   return env;
@@ -71,7 +81,7 @@ export async function exec(command: string, options?: ExecOptions): Promise<stri
   try {
     const { stdout } = await execPromise(command, {
       cwd,
-      env: getExecEnv(),
+      env: getExecEnv(options?.unsetEnv),
     });
     logger.debug('exec.success', 'Shell command completed', {
       command,
