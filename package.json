@@ -171,7 +171,7 @@
       {
         "command": "hydra.createCopilot",
         "title": "Hydra: Create Copilot",
-        "icon": "$(hubot)"
+        "icon": "$(add)"
       },
       {
         "command": "hydra.startPlanCopilot",
