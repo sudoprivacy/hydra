@@ -396,6 +396,7 @@
   },
   "dependencies": {
     "commander": "^14.0.3",
+    "iconv-lite": "^0.7.2",
     "posthog-node": "^5.33.3"
   }
 }
