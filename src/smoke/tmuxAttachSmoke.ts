@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { HYDRA_COPILOT_SESSION_ENV } from '../core/env';
-import { buildSanitizedTmuxCommand, buildStoredTmuxEnvScrubCommand } from '../core/tmux';
+import {
+  buildSanitizedTmuxCommand,
+  buildStoredTmuxEnvScrubCommand,
+  getTmuxSanitizedEnvKeys,
+} from '../core/tmux';
 import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
 
 function main(): void {
@@ -29,10 +33,18 @@ function main(): void {
       );
     }
 
+    // Sanitization is no longer baked into the command string (env -u doesn't
+    // exist on Windows). Callers pass the keys to exec via unsetEnv instead.
+    delete process.env.HYDRA_TMUX_SOCKET;
     process.env[HYDRA_COPILOT_SESSION_ENV] = 'hydra-copilot-codex';
-    assert.match(
+    const expectedBinary = process.platform === 'win32' ? 'psmux' : 'tmux';
+    assert.equal(
       buildSanitizedTmuxCommand('new-session -d -s worker'),
-      new RegExp(HYDRA_COPILOT_SESSION_ENV),
+      `${expectedBinary} new-session -d -s worker`,
+    );
+    assert.ok(
+      getTmuxSanitizedEnvKeys().includes(HYDRA_COPILOT_SESSION_ENV),
+      `getTmuxSanitizedEnvKeys() should include ${HYDRA_COPILOT_SESSION_ENV}`,
     );
     assert.match(
       buildStoredTmuxEnvScrubCommand('worker'),
