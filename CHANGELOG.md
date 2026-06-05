@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2026060501] - 2026-06-05
+
+### Changed
+- Use a clearer add icon for the Create Copilot sidebar action
+
+### Fixed
+- Improve Windows command execution by decoding console output with the active code page and avoiding Unix-only environment wrappers when launching tmux/psmux
+- Install worker completion hooks even when workers are created without a task prompt
+
 ## [0.3.2026060500] - 2026-06-05
 
 ### Added
