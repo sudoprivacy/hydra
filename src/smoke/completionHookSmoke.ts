@@ -231,6 +231,98 @@ async function main(): Promise<void> {
 
   console.log('  Part 1b (trust prompt handling): ok');
 
+  // ── Part 1c: Two-step worker creation (no --task) still installs hook ──
+  // Drives the real launchPreparedWorker path with task=undefined to make
+  // sure the gate fix sticks. Notification firing is covered in Part 2.
+
+  const noTaskBackend = new PromptBackend(['⏵']);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const noTaskSm = new SessionManager(noTaskBackend as never) as any;
+
+  const noTaskWorktree = path.join(tempHome, 'no-task-worktree');
+  fs.mkdirSync(noTaskWorktree, { recursive: true });
+
+  const noTaskSession = 'repo_no-task-worker';
+  const noTaskResult = await noTaskSm['launchPreparedWorker']({
+    source: 'directory',
+    sessionName: noTaskSession,
+    displayName: 'no-task-worker',
+    slug: 'no-task-worker',
+    workdir: noTaskWorktree,
+    repo: null,
+    repoRoot: null,
+    branch: null,
+    managedWorkdir: false,
+    agentType: 'claude',
+    agentCommand: 'claude',
+    task: undefined,
+    copilotSessionName: 'repo_copilot',
+    notifyCopilot: true,
+  });
+  await noTaskResult.postCreatePromise;
+
+  const noTaskScriptPath = path.join(hydraDir, 'hooks', `notify-${noTaskSession}.sh`);
+  assert.ok(
+    fs.existsSync(noTaskScriptPath),
+    'Two-step worker: notify script should be written even without --task',
+  );
+  const noTaskClaudeConfig = JSON.parse(
+    fs.readFileSync(path.join(noTaskWorktree, '.claude', 'settings.json'), 'utf-8'),
+  );
+  assert.ok(
+    Array.isArray(noTaskClaudeConfig.hooks?.Stop) && noTaskClaudeConfig.hooks.Stop.length >= 1,
+    'Two-step worker: .claude/settings.json should have Stop hook',
+  );
+
+  const noTaskPending = path.join(hydraDir, 'hooks', `notify-${noTaskSession}.pending`);
+  assert.ok(
+    !fs.existsSync(noTaskPending),
+    'Two-step worker: no .pending should exist before any worker send',
+  );
+
+  // Simulate `hydra worker send`: arming creates the pending marker.
+  noTaskSm['armCompletionNotification'](noTaskSession);
+  assert.ok(
+    fs.existsSync(noTaskPending),
+    'Two-step worker: .pending should exist after armCompletionNotification',
+  );
+  fs.rmSync(noTaskPending);
+
+  // Verify the gate still blocks workers with no copilot (real-CLI worker case).
+  const noCopilotBackend = new PromptBackend(['⏵']);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const noCopilotSm = new SessionManager(noCopilotBackend as never) as any;
+  const noCopilotWorktree = path.join(tempHome, 'no-copilot-worktree');
+  fs.mkdirSync(noCopilotWorktree, { recursive: true });
+  const noCopilotSession = 'repo_no-copilot-worker';
+  const noCopilotResult = await noCopilotSm['launchPreparedWorker']({
+    source: 'directory',
+    sessionName: noCopilotSession,
+    displayName: 'no-copilot-worker',
+    slug: 'no-copilot-worker',
+    workdir: noCopilotWorktree,
+    repo: null,
+    repoRoot: null,
+    branch: null,
+    managedWorkdir: false,
+    agentType: 'claude',
+    agentCommand: 'claude',
+    task: undefined,
+    copilotSessionName: undefined,
+    notifyCopilot: true,
+  });
+  await noCopilotResult.postCreatePromise;
+  assert.ok(
+    !fs.existsSync(path.join(noCopilotWorktree, '.claude', 'settings.json')),
+    'No-copilot worker: hook config must not be installed when there is no parent copilot',
+  );
+  assert.ok(
+    !fs.existsSync(path.join(hydraDir, 'hooks', `notify-${noCopilotSession}.sh`)),
+    'No-copilot worker: notify script must not be written when there is no parent copilot',
+  );
+
+  console.log('  Part 1c (two-step worker creation hook install): ok');
+
   // ── Part 2: Run the notification script against real tmux ──
 
   try {
@@ -400,6 +492,101 @@ async function main(): Promise<void> {
     }
 
     console.log('  Part 2 (live tmux arm/consume notification): ok');
+
+    // ── Part 2b: Two-step worker (no --task) → arm later → notification fires ──
+    // Drives launchPreparedWorker with task=undefined, then mimics the CLI's
+    // worker-send path (arm + run the agent-configured hook) and checks the
+    // copilot pane receives one paste-buffer message.
+
+    const twoStepBackend = new PromptBackend(['⏵']);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const twoStepSm = new SessionManager(twoStepBackend as never) as any;
+    const twoStepWorktree = path.join(tempHome, 'two-step-runtime-worktree');
+    fs.mkdirSync(twoStepWorktree, { recursive: true });
+    const twoStepSession = 'repo_two-step-claude';
+    const twoStepWorkerId = 99;
+
+    const twoStepResult = await twoStepSm['launchPreparedWorker']({
+      source: 'directory',
+      sessionName: twoStepSession,
+      displayName: 'two-step-claude',
+      slug: 'two-step-claude',
+      workdir: twoStepWorktree,
+      repo: null,
+      repoRoot: null,
+      branch: null,
+      managedWorkdir: false,
+      agentType: 'claude',
+      agentCommand: 'claude',
+      task: undefined,
+      copilotSessionName: COPILOT_SESSION,
+      notifyCopilot: true,
+      preservedWorkerInfo: {
+        source: 'directory',
+        sessionName: twoStepSession,
+        displayName: 'two-step-claude',
+        workerId: twoStepWorkerId,
+        repo: null,
+        repoRoot: null,
+        branch: null,
+        slug: 'two-step-claude',
+        status: 'running',
+        attached: false,
+        agent: 'claude',
+        workdir: twoStepWorktree,
+        managedWorkdir: false,
+        tmuxSession: twoStepSession,
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        sessionId: null,
+        agentSessionFile: null,
+        copilotSessionName: COPILOT_SESSION,
+      },
+    });
+    await twoStepResult.postCreatePromise;
+
+    const twoStepClaudeConfig = JSON.parse(
+      fs.readFileSync(path.join(twoStepWorktree, '.claude', 'settings.json'), 'utf-8'),
+    );
+    const twoStepHookCommand: string = twoStepClaudeConfig.hooks.Stop[0].hooks[0].command;
+    const twoStepPending = path.join(hydraDir, 'hooks', `notify-${twoStepSession}.pending`);
+    assert.ok(
+      !fs.existsSync(twoStepPending),
+      'Two-step E2E: no .pending before any worker send',
+    );
+
+    twoStepSm['armCompletionNotification'](twoStepSession);
+    assert.ok(
+      fs.existsSync(twoStepPending),
+      'Two-step E2E: .pending exists after armCompletionNotification',
+    );
+
+    // Directory-source notification reads "Task worker #N" (lowercase 'worker').
+    const twoStepMarker = `worker #${twoStepWorkerId}`;
+    const paneBefore = captureSession(COPILOT_SESSION);
+    const noticesBefore = countOccurrences(paneBefore, twoStepMarker);
+
+    execSync(twoStepHookCommand, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: { ...process.env, HOME: tempHome },
+    });
+
+    await sleep(1000);
+    assert.ok(
+      !fs.existsSync(twoStepPending),
+      'Two-step E2E: hook should consume .pending after firing',
+    );
+
+    const paneAfter = captureSession(COPILOT_SESSION);
+    const noticesAfter = countOccurrences(paneAfter, twoStepMarker);
+    assert.equal(
+      noticesAfter - noticesBefore,
+      CAT_VISIBLE_COPIES_PER_NOTIFICATION,
+      `Two-step E2E: copilot pane should gain one notification, got:\n${paneAfter}`,
+    );
+
+    console.log('  Part 2b (two-step worker end-to-end notification): ok');
   } finally {
     killSession(COPILOT_SESSION);
   }
