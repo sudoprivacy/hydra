@@ -6,6 +6,7 @@ import { getRepoRoot, getBaseBranch } from '../utils/git';
 import { getRepoIdentifier } from '../core/git';
 import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multiplexer';
 import { toCanonicalPath } from '../utils/path';
+import { parseCpuPercentSum } from '../utils/cpuPercent';
 import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '../core/sessionManager';
 import { CopilotMode, Worktree } from '../core/types';
 
@@ -183,17 +184,24 @@ async function getSessionStatus(sessionName: string, worktreePath?: string): Pro
     void 0;
   }
 
-  try {
-    const pids = await backend.getSessionPanePids(sessionName);
-    const numericPids = pids.filter(pid => /^\d+$/.test(pid));
-    if (numericPids.length > 0) {
-      const pidList = numericPids.join(',');
-      const cpuOutput = await exec(`ps -o %cpu= -p ${pidList}`);
-      const cpuValues = cpuOutput.split('\n').filter(l => l.trim()).map(v => parseFloat(v.trim()) || 0);
-      cpuUsage = cpuValues.reduce((a, b) => a + b, 0);
+  // `ps -o %cpu=` is POSIX-only; on Windows it errors out (no `ps` binary),
+  // the catch below swallowed the failure, and every TreeView session
+  // rendered as 0% CPU while still spawning a doomed child process per
+  // refresh. Gate the probe on platform and leave cpuUsage = 0 on Windows
+  // for now; a real Windows CPU probe would need Get-Process + sampling.
+  // See issue #225 §4.
+  if (process.platform !== 'win32') {
+    try {
+      const pids = await backend.getSessionPanePids(sessionName);
+      const numericPids = pids.filter(pid => /^\d+$/.test(pid));
+      if (numericPids.length > 0) {
+        const pidList = numericPids.join(',');
+        const cpuOutput = await exec(`ps -o %cpu= -p ${pidList}`);
+        cpuUsage = parseCpuPercentSum(cpuOutput);
+      }
+    } catch {
+      void 0;
     }
-  } catch {
-    void 0;
   }
 
   const canReadGitStatus = worktreePath
