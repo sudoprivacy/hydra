@@ -1,1 +1,1 @@
-export { exec, ExecOptions } from '../core/exec';
+export { exec, execPowerShell, ExecOptions } from '../core/exec';

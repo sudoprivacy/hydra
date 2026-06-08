@@ -221,6 +221,80 @@ function posixShellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Run a PowerShell script body via `powershell.exe -NoProfile -Command`.
+ *
+ * Use this for command bodies that contain PowerShell-only syntax
+ * (`*>$null`, `foreach`, `ForEach-Object`, `$env:`, `$_.Split(...)`, …)
+ * which would error immediately under cmd.exe. The default `exec()` on
+ * Windows dispatches via cmd.exe, so PowerShell bodies must be routed here
+ * explicitly. See issue #225 §2.
+ *
+ * Throws on non-Windows platforms — callers should pick the executor
+ * based on `process.platform`.
+ */
+export async function execPowerShell(command: string, options?: ExecOptions): Promise<string> {
+  if (!IS_WINDOWS) {
+    throw new Error('execPowerShell is only supported on win32');
+  }
+  const startedAt = Date.now();
+  const cwd = options?.cwd;
+  const codec = getWindowsConsoleCodec();
+  logger.debug('exec.start', 'Running PowerShell command', { command, cwd });
+  try {
+    const { stdout } = await execFilePromise(
+      'powershell.exe',
+      ['-NoProfile', '-Command', command],
+      {
+        cwd,
+        env: getExecEnv(options?.unsetEnv),
+        encoding: 'buffer',
+      },
+    );
+    const decodedStdout = decodeChildOutput(stdout, codec);
+    logger.debug('exec.success', 'PowerShell command completed', {
+      command,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      stdoutLength: decodedStdout.length,
+    });
+    return decodedStdout.trim();
+  } catch (error) {
+    const failure = error as Error & {
+      code?: unknown;
+      stdout?: unknown;
+      stderr?: unknown;
+    };
+    const decodedStdout = failure.stdout !== undefined
+      ? decodeChildOutput(failure.stdout, codec)
+      : undefined;
+    const decodedStderr = failure.stderr !== undefined
+      ? decodeChildOutput(failure.stderr, codec)
+      : undefined;
+    if (decodedStdout !== undefined) failure.stdout = decodedStdout;
+    if (decodedStderr !== undefined) failure.stderr = decodedStderr;
+    if (options?.logFailure === false) {
+      logger.debug('exec.probeFailure', 'PowerShell probe command failed', {
+        command,
+        cwd,
+        durationMs: Date.now() - startedAt,
+        exitCode: failure.code,
+      });
+    } else {
+      logger.error('exec.failure', 'PowerShell command failed', {
+        command,
+        cwd,
+        durationMs: Date.now() - startedAt,
+        exitCode: failure.code,
+        stdout: failure.stdout,
+        stderr: failure.stderr,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
 export async function resolveCommandPath(command: string): Promise<string | null> {
   const trimmed = command.trim();
   if (!trimmed) return null;

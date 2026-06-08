@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { exec } from './exec';
+import { exec, execPowerShell } from './exec';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { getHydraConfigPath, getHydraHome, getTmuxCommand, toCanonicalPath } from './path';
 import { shellQuote, pwshQuote } from './shell';
@@ -126,9 +126,15 @@ export function buildStoredTmuxEnvScrubCommand(sessionName?: string): string {
   ].join('\n');
 }
 
+// On Windows the scrub command body is PowerShell, so it MUST be routed
+// through powershell.exe — the default `exec()` uses cmd.exe, which can't
+// parse `*>$null` / `foreach` / `ForEach-Object` and would silently skip
+// the entire env-scrub step. See issue #225 §2.
 async function scrubStoredTmuxEnvironment(sessionName?: string): Promise<void> {
+  const command = buildStoredTmuxEnvScrubCommand(sessionName);
+  const runner = process.platform === 'win32' ? execPowerShell : exec;
   try {
-    await exec(buildStoredTmuxEnvScrubCommand(sessionName));
+    await runner(command);
   } catch {
     // No tmux server yet is fine; createSession will start one with a sanitized env.
   }
