@@ -134,6 +134,36 @@ async function main(): Promise<void> {
       `injectCompletionHook must write notify-*.${expectedExt} on platform ${process.platform}`,
     );
 
+    // ── getNotifyScriptPath is the single source of truth ──
+    // Both the file written by injectCompletionHook AND the path embedded in
+    // Codex's inline hook override must come from the same helper. Otherwise
+    // Windows codex workers reference a non-existent .sh while the .ps1 lives
+    // on disk. See issue #225 §3 (codex review round 1).
+    const helperPath = sm['getNotifyScriptPath'](repoInfo.sessionName);
+    assert.equal(helperPath, writtenPath, 'getNotifyScriptPath must match injectCompletionHook output');
+    assert.ok(
+      helperPath.endsWith(`.${expectedExt}`),
+      `getNotifyScriptPath must end with .${expectedExt} on ${process.platform}`,
+    );
+
+    // ── Codex inline override embeds the helper path ──
+    const codexOverride: string = sm['withCodexCompletionHookOverrides'](
+      'codex',
+      ['/tmp/repo'],
+      helperPath,
+    );
+    assert.ok(
+      codexOverride.includes(helperPath.replace(/\\/g, '\\\\'))
+        || codexOverride.includes(helperPath),
+      `Codex override must embed the platform-correct script path: ${codexOverride}`,
+    );
+    if (process.platform === 'win32') {
+      assert.ok(
+        !codexOverride.includes(`notify-${repoInfo.sessionName}.sh`),
+        `Codex override must NOT reference .sh on Windows: ${codexOverride}`,
+      );
+    }
+
     console.log('notifyHookWindowsSmoke: ok');
   } finally {
     if (origHome) process.env.HOME = origHome;

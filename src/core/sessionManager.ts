@@ -735,7 +735,7 @@ export class SessionManager {
         workdir: prepared.workdir,
       });
       if (prepared.agentType === 'codex') {
-        const scriptPath = path.join(getHydraHome(), 'hooks', `notify-${prepared.sessionName}.sh`);
+        const scriptPath = this.getNotifyScriptPath(prepared.sessionName);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
         agentCommand = this.withCodexCompletionHookOverrides(agentCommand, trustRoots, scriptPath);
       }
@@ -2139,10 +2139,7 @@ export class SessionManager {
       fs.mkdirSync(hooksDir, { recursive: true });
 
       const isWindows = process.platform === 'win32';
-      const scriptPath = path.join(
-        hooksDir,
-        `notify-${info.sessionName}.${isWindows ? 'ps1' : 'sh'}`,
-      );
+      const scriptPath = this.getNotifyScriptPath(info.sessionName);
       const scriptContent = isWindows
         ? this.buildNotifyScriptPowerShell(info)
         : this.buildNotifyScript(info);
@@ -2467,6 +2464,16 @@ export class SessionManager {
 
   private getNotifyPendingPath(sessionName: string): string {
     return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
+  }
+
+  // Resolve the on-disk path of the completion-notification script for a
+  // session. Single source of truth so the file actually written by
+  // injectCompletionHook (.ps1 on Windows, .sh elsewhere) and the path
+  // embedded in Codex's inline hook override always agree. See issue #225 §3
+  // (codex review round 1).
+  private getNotifyScriptPath(sessionName: string): string {
+    const ext = process.platform === 'win32' ? 'ps1' : 'sh';
+    return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.${ext}`);
   }
 
   // Prefix a command with an inline `HYDRA_COPILOT_SESSION=<value>` assignment
