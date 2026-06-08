@@ -383,7 +383,8 @@
     "smoke:cli-config": "node out/smoke/cliConfigSmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry"
+    "smoke:windows-format-quoting": "node out/smoke/windowsFormatQuotingSmoke.js",
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

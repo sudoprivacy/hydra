@@ -43,6 +43,23 @@ export function buildSanitizedTmuxCommand(command: string): string {
   return `${tmuxCommand} ${command}`;
 }
 
+// Format-spec builders. Use double quotes around tmux `-F` / `-p` arguments,
+// not single. cmd.exe on Windows does not strip single quotes, so they would
+// be passed through to tmux/psmux verbatim and every emitted line would be
+// wrapped in literal '…' — silently breaking listSessions / getSessionInfo /
+// getSessionPanePids parsers. See issue #225 §1.
+export function buildListSessionsCommand(): string {
+  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}"`;
+}
+
+export function buildSessionInfoCommand(sessionName: string): string {
+  return `${getTmuxCommand()} display-message -p -t ${shellQuote(sessionName)} "#{session_attached}|||#{session_activity}"`;
+}
+
+export function buildSessionPanePidsCommand(sessionName: string): string {
+  return `${getTmuxCommand()} list-panes -t ${shellQuote(sessionName)} -F "#{pane_pid}"`;
+}
+
 function buildStoredTmuxEnvScrubCommandPowerShell(sessionName?: string): string {
   const tmuxCommand = getTmuxCommand();
   const sessionTarget = sessionName ? ` -t ${pwshQuote(sessionName)}` : '';
@@ -188,8 +205,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async listSessions(): Promise<MultiplexerSession[]> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} list-sessions -F '#{session_name}|||#{session_windows}|||#{session_attached}'`);
+      const output = await exec(buildListSessionsCommand());
       const sessions = output.split('\n').filter(l => l.trim()).map(line => {
         const [name, windows, attached] = line.split('|||');
         return {
@@ -370,8 +386,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async getSessionInfo(sessionName: string): Promise<SessionStatusInfo> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} display-message -p -t ${shellQuote(sessionName)} '#{session_attached}|||#{session_activity}'`);
+      const output = await exec(buildSessionInfoCommand(sessionName));
       const [attachedStr, activityStr] = output.split('|||');
       return {
         attached: attachedStr === '1',
@@ -394,8 +409,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async getSessionPanePids(sessionName: string): Promise<string[]> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} list-panes -t ${shellQuote(sessionName)} -F '#{pane_pid}'`);
+      const output = await exec(buildSessionPanePidsCommand(sessionName));
       return output.split('\n').filter(l => l.trim());
     } catch {
       return [];
