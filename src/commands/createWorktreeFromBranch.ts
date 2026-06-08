@@ -12,6 +12,7 @@ import {
   validateBranchName
 } from '../utils/git';
 import { exec } from '../utils/exec';
+import { shellQuote } from '../core/shell';
 import { getActiveBackend } from '../utils/multiplexer';
 import { WorktreeItem } from '../providers/tmuxSessionProvider';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
@@ -142,7 +143,10 @@ export async function createWorktreeFromBranch(item: WorktreeItem | undefined): 
       const tmpFile = path.join(os.tmpdir(), `tmux-wt-staged-${Date.now()}.patch`);
       fs.writeFileSync(tmpFile, stagedDiff);
       try {
-        await exec(`git apply "${tmpFile}"`, { cwd: worktreePath });
+        // shellQuote (not naked "…") so tmp paths from TMP/TEMP overrides
+        // that happen to contain a `"` don't break the command, and so the
+        // surrounding code style stays consistent. See issue #225 §10.
+        await exec(`git apply ${shellQuote(tmpFile)}`, { cwd: worktreePath });
         await exec('git add -A', { cwd: worktreePath });
       } catch (err) {
         vscode.window.showWarningMessage(`Staged changes could not be applied cleanly: ${err instanceof Error ? err.message : String(err)}`);
@@ -154,7 +158,7 @@ export async function createWorktreeFromBranch(item: WorktreeItem | undefined): 
       const tmpFile = path.join(os.tmpdir(), `tmux-wt-unstaged-${Date.now()}.patch`);
       fs.writeFileSync(tmpFile, unstagedDiff);
       try {
-        await exec(`git apply "${tmpFile}"`, { cwd: worktreePath });
+        await exec(`git apply ${shellQuote(tmpFile)}`, { cwd: worktreePath });
       } catch (err) {
         vscode.window.showWarningMessage(`Unstaged changes could not be applied cleanly: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
