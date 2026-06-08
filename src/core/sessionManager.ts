@@ -7,8 +7,9 @@ import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefa
 import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
-import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, resolveAgentSessionFile, toCanonicalPath } from './path';
+import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, getTmuxCommand, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
+import { buildWindowsCopilotSessionEnvPrefix, classifyWindowsShell } from './copilotSessionEnv';
 import { logger } from './logger';
 import { hashText } from './logRedaction';
 
@@ -1151,7 +1152,7 @@ export class SessionManager {
       postCreatePromise = this.waitForAgentReady(sessionName, agent);
     } else {
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
-      const launchCmd = this.withCopilotSessionEnv(
+      const launchCmd = await this.withCopilotSessionEnv(
         buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions),
         sessionName,
       );
@@ -1237,7 +1238,7 @@ export class SessionManager {
       );
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = this.withCopilotSessionEnv(
+      const launchCmd = await this.withCopilotSessionEnv(
         buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions),
         sessionName,
       );
@@ -2458,12 +2459,37 @@ export class SessionManager {
     return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
   }
 
-  private withCopilotSessionEnv(command: string, sessionName?: string): string {
+  // Prefix a command with an inline `HYDRA_COPILOT_SESSION=<value>` assignment
+  // so the agent process the shell spawns next inherits the env var. On
+  // Windows the syntax depends on the pane's shell — `$env:` works in
+  // PowerShell, `set ""` works in cmd.exe — so we detect once via
+  // psmux's default-shell option and emit the matching form. See issue #225 §6.
+  private async withCopilotSessionEnv(command: string, sessionName?: string): Promise<string> {
     if (!sessionName) return command;
-    if (process.platform === 'win32') {
-      return `$env:${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)}; ${command}`;
+    if (process.platform !== 'win32') {
+      return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
     }
-    return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
+    return buildWindowsCopilotSessionEnvPrefix(
+      await this.detectPaneShell(sessionName),
+      sessionName,
+      command,
+    );
+  }
+
+  // Probe the psmux session's default-shell. Falls back to PowerShell if the
+  // option is unset or unreadable — that's the common Hydra-on-Windows config
+  // and preserves the pre-fix behavior. See issue #225 §6.
+  private async detectPaneShell(sessionName: string): Promise<'cmd' | 'pwsh'> {
+    try {
+      const tmuxCommand = getTmuxCommand();
+      const out = await exec(
+        `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -gqv default-shell`,
+        { logFailure: false },
+      );
+      return classifyWindowsShell(out.trim());
+    } catch {
+      return 'pwsh';
+    }
   }
 
   private async launchAgentResume(
@@ -2481,7 +2507,7 @@ export class SessionManager {
       throw new Error(`Agent "${agentType}" does not support session resume`);
     }
 
-    await this.backend.sendKeys(sessionName, this.withCopilotSessionEnv(resumePlan.command, copilotSessionName));
+    await this.backend.sendKeys(sessionName, await this.withCopilotSessionEnv(resumePlan.command, copilotSessionName));
     if (resumePlan.strategy === 'replSlashCommand') {
       await this.waitForAgentReady(sessionName, agentType);
       const beforeResume = await this.captureCleanPane(sessionName, 400);
