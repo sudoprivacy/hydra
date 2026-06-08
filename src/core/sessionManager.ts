@@ -4,12 +4,12 @@ import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions, type ShellTarget } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
 import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, getTmuxCommand, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
-import { buildWindowsCopilotSessionEnvPrefix, classifyWindowsShell } from './copilotSessionEnv';
+import { buildWindowsCopilotSessionEnvPrefix, classifyWindowsShell, type WindowsPaneShell } from './copilotSessionEnv';
 import { logger } from './logger';
 import { hashText } from './logRedaction';
 
@@ -1152,9 +1152,14 @@ export class SessionManager {
       postCreatePromise = this.waitForAgentReady(sessionName, agent);
     } else {
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
+      // Detect the pane shell once and feed it to both the command builder
+      // (so its embedded quoting matches the shell) and the env prefix.
+      // See issue #225 §6 §7.
+      const shellTarget = await this.detectShellTarget(sessionName);
       const launchCmd = await this.withCopilotSessionEnv(
-        buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions),
+        buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, { ...agentOptions, shellTarget }),
         sessionName,
+        shellTarget,
       );
       const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
@@ -1238,9 +1243,14 @@ export class SessionManager {
       );
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
+      // Detect the pane shell once and feed it to both the command builder
+      // (so its embedded quoting matches the shell) and the env prefix.
+      // See issue #225 §6 §7.
+      const shellTarget = await this.detectShellTarget(sessionName);
       const launchCmd = await this.withCopilotSessionEnv(
-        buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions),
+        buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, { ...agentOptions, shellTarget }),
         sessionName,
+        shellTarget,
       );
       launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
@@ -2464,22 +2474,36 @@ export class SessionManager {
   // Windows the syntax depends on the pane's shell — `$env:` works in
   // PowerShell, `set ""` works in cmd.exe — so we detect once via
   // psmux's default-shell option and emit the matching form. See issue #225 §6.
-  private async withCopilotSessionEnv(command: string, sessionName?: string): Promise<string> {
+  // Callers that have already detected the shell (e.g. to pick a shellTarget
+  // for buildAgentLaunchCommand, see issue #225 §7) can pass it explicitly to
+  // avoid a redundant probe.
+  private async withCopilotSessionEnv(
+    command: string,
+    sessionName?: string,
+    shellTarget?: ShellTarget,
+  ): Promise<string> {
     if (!sessionName) return command;
     if (process.platform !== 'win32') {
       return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
     }
-    return buildWindowsCopilotSessionEnvPrefix(
-      await this.detectPaneShell(sessionName),
-      sessionName,
-      command,
-    );
+    const winShell: WindowsPaneShell = shellTarget === 'cmd' || shellTarget === 'pwsh'
+      ? shellTarget
+      : await this.detectPaneShell(sessionName);
+    return buildWindowsCopilotSessionEnvPrefix(winShell, sessionName, command);
+  }
+
+  // Resolve the shell that will execute commands send-keyed into the pane.
+  // On non-Windows the shell is POSIX `sh`; on Windows we probe psmux's
+  // default-shell. See issue #225 §6 §7.
+  private async detectShellTarget(sessionName: string): Promise<ShellTarget> {
+    if (process.platform !== 'win32') return 'posix';
+    return this.detectPaneShell(sessionName);
   }
 
   // Probe the psmux session's default-shell. Falls back to PowerShell if the
   // option is unset or unreadable — that's the common Hydra-on-Windows config
   // and preserves the pre-fix behavior. See issue #225 §6.
-  private async detectPaneShell(sessionName: string): Promise<'cmd' | 'pwsh'> {
+  private async detectPaneShell(sessionName: string): Promise<WindowsPaneShell> {
     try {
       const tmuxCommand = getTmuxCommand();
       const out = await exec(
@@ -2502,12 +2526,22 @@ export class SessionManager {
     agentOptions?: AgentCommandOptions,
     copilotSessionName?: string,
   ): Promise<void> {
-    const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile, agentOptions);
+    // Detect the pane shell once and feed it to both the resume-plan builder
+    // (so its embedded quoting matches the shell) and the env prefix.
+    // See issue #225 §6 §7.
+    const shellTarget = await this.detectShellTarget(sessionName);
+    const resumePlan = buildAgentResumePlan(
+      agentType, agentCommand, sessionId, workdir, agentSessionFile,
+      { ...agentOptions, shellTarget },
+    );
     if (!resumePlan) {
       throw new Error(`Agent "${agentType}" does not support session resume`);
     }
 
-    await this.backend.sendKeys(sessionName, await this.withCopilotSessionEnv(resumePlan.command, copilotSessionName));
+    await this.backend.sendKeys(
+      sessionName,
+      await this.withCopilotSessionEnv(resumePlan.command, copilotSessionName, shellTarget),
+    );
     if (resumePlan.strategy === 'replSlashCommand') {
       await this.waitForAgentReady(sessionName, agentType);
       const beforeResume = await this.captureCleanPane(sessionName, 400);
