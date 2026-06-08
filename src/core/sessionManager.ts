@@ -9,7 +9,7 @@ import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
 import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, getTmuxCommand, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
-import { buildWindowsCopilotSessionEnvPrefix, classifyWindowsShell, type WindowsPaneShell } from './copilotSessionEnv';
+import { buildWindowsCopilotSessionEnvPrefix, probePaneShellWithRetry, type WindowsPaneShell } from './copilotSessionEnv';
 import { logger } from './logger';
 import { hashText } from './logRedaction';
 
@@ -2524,20 +2524,26 @@ export class SessionManager {
     return this.detectPaneShell(sessionName);
   }
 
-  // Probe the psmux session's default-shell. Falls back to PowerShell if the
-  // option is unset or unreadable — that's the common Hydra-on-Windows config
-  // and preserves the pre-fix behavior. See issue #225 §6.
+  // Probe the psmux session's default-shell. Retries a few times to ride out
+  // transient probe failures right after createSession (socket race / server
+  // restart), then falls back to PowerShell — the common Hydra-on-Windows
+  // config — and logs a warning so users who actually picked cmd.exe can see
+  // why their pane is getting PowerShell syntax. See issue #225 §6 (codex
+  // review round 1).
   private async detectPaneShell(sessionName: string): Promise<WindowsPaneShell> {
-    try {
-      const tmuxCommand = getTmuxCommand();
-      const out = await exec(
-        `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -gqv default-shell`,
-        { logFailure: false },
+    const tmuxCommand = getTmuxCommand();
+    const command = `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -gqv default-shell`;
+    const result = await probePaneShellWithRetry(
+      () => exec(command, { logFailure: false }),
+    );
+    if (result.usedFallback) {
+      logger.warn(
+        'session.detectPaneShell',
+        'psmux default-shell probe failed after retries; defaulting to PowerShell. If your pane is cmd.exe, set psmux default-shell to pwsh.exe / powershell.exe or report the probe failure.',
+        { sessionName, attempts: result.attempts },
       );
-      return classifyWindowsShell(out.trim());
-    } catch {
-      return 'pwsh';
     }
+    return result.shell;
   }
 
   private async launchAgentResume(

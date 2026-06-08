@@ -18,6 +18,49 @@ export function classifyWindowsShell(rawShell: string): WindowsPaneShell {
   return 'pwsh';
 }
 
+// Probe wrapper with bounded retry + explicit fallback signal. If the psmux
+// `show-options default-shell` probe failed (transient socket race right after
+// createSession, server restart, etc.), the caller used to fall back silently
+// to PowerShell — re-opening the original cmd.exe parse bug for users who'd
+// configured cmd as default-shell. Now we retry a few times, then surface
+// usedFallback so the caller can log a warning. See issue #225 §6 (codex
+// review round 1).
+export type PaneShellProbe = () => Promise<string>;
+
+export interface PaneShellProbeResult {
+  shell: WindowsPaneShell;
+  usedFallback: boolean;
+  attempts: number;
+}
+
+export interface PaneShellProbeOptions {
+  maxAttempts?: number;
+  delayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export async function probePaneShellWithRetry(
+  probe: PaneShellProbe,
+  options: PaneShellProbeOptions = {},
+): Promise<PaneShellProbeResult> {
+  const maxAttempts = options.maxAttempts ?? 3;
+  const delayMs = options.delayMs ?? 50;
+  const sleep = options.sleep ?? defaultSleep;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const raw = await probe();
+      return { shell: classifyWindowsShell(raw), usedFallback: false, attempts: attempt };
+    } catch {
+      if (attempt < maxAttempts) await sleep(delayMs);
+    }
+  }
+  return { shell: 'pwsh', usedFallback: true, attempts: maxAttempts };
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Build the env-prefix that wraps the agent launch command on Windows. The
 // caller has already detected the pane shell. Session names are sanitized to
 // alphanumerics+hyphens, but the cmd branch also doubles any embedded `"` so
