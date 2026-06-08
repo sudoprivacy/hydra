@@ -762,7 +762,17 @@ export class SessionManager {
       );
     } else {
       sessionId = prepared.agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(prepared.agentType, agentCommand, undefined, sessionId ?? undefined);
+      // Detect the pane shell once so launch-arg quoting matches the shell
+      // that will execute the send-keyed command. See issue #225 §7 (codex
+      // review round 1).
+      const shellTarget = await this.detectShellTarget(prepared.sessionName);
+      const launchCmd = buildAgentLaunchCommand(
+        prepared.agentType,
+        agentCommand,
+        undefined,
+        sessionId ?? undefined,
+        { shellTarget },
+      );
       launchStartedAt = Date.now();
       await this.backend.sendKeys(prepared.sessionName, launchCmd);
     }
@@ -1071,7 +1081,14 @@ export class SessionManager {
       // ── Fresh start: Phase 1 (capture sessionId) ──
       // No stored session ID — launch fresh agent and capture new session ID.
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined);
+      // Detect the pane shell once so launch-arg quoting matches the shell
+      // that will execute the send-keyed command. See issue #225 §7 (codex
+      // review round 1).
+      const shellTarget = await this.detectShellTarget(sessionName);
+      const launchCmd = buildAgentLaunchCommand(
+        agent, command, undefined, preAssignedSessionId ?? undefined,
+        { shellTarget },
+      );
       const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
 
@@ -3237,7 +3254,14 @@ export class SessionManager {
       } else {
         // ── Fresh start: Phase 1 (capture sessionId) → Phase 2 (send task) ──
         const preAssignedSessionId = agentType === 'claude' ? randomUUID() : null;
-        const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, preAssignedSessionId ?? undefined);
+        // Detect the pane shell once so launch-arg quoting matches the shell
+        // that will execute the send-keyed command. See issue #225 §7 (codex
+        // review round 1).
+        const shellTarget = await this.detectShellTarget(sessionName);
+        const launchCmd = buildAgentLaunchCommand(
+          agentType, agentCommand, undefined, preAssignedSessionId ?? undefined,
+          { shellTarget },
+        );
         const launchStartedAt = Date.now();
         await this.backend.sendKeys(sessionName, launchCmd);
         sessionId = preAssignedSessionId;
