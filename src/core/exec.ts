@@ -79,10 +79,26 @@ function getCurrentPath(): string {
   return process.env.PATH || process.env.Path || '';
 }
 
-function getEnhancedPath(): string {
+// Resolve %SystemRoot% (typically C:\Windows). VS Code in an isolated env
+// might not surface SystemRoot via process.env, so fall back to the standard
+// install path. The string is only used to prepend to PATH; if the directory
+// happens not to exist on a particular machine it just becomes a no-op entry.
+function getWindowsSystemRoot(): string {
+  return process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+}
+
+export function getEnhancedPath(): string {
   const currentPath = getCurrentPath();
   const additionalPaths = process.platform === 'win32'
     ? [
+        // Built-in Windows PowerShell 5.1 — execPowerShell relies on this
+        // being resolvable even when VS Code's stripped subprocess PATH
+        // omits the system directories. Hard-pin the well-known location so
+        // the env-scrub / mouse-on probes don't silently no-op. See issue
+        // #225 §2 (codex review round 1).
+        path.join(getWindowsSystemRoot(), 'System32', 'WindowsPowerShell', 'v1.0'),
+        // PowerShell 7+ if installed (Microsoft's recommended location).
+        'C:\\Program Files\\PowerShell\\7',
         path.join(os.homedir(), 'AppData', 'Roaming', 'npm'),
         path.join(os.homedir(), 'AppData', 'Local', 'pnpm'),
         path.join(os.homedir(), 'scoop', 'shims'),
