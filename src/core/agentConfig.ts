@@ -190,8 +190,19 @@ function ensureStandaloneCommandFlags(command: string, flags: string): string {
     .reduce((current, flag) => ensureCommandFlag(current, flag), command.trim());
 }
 
+// Which shell will execute the launch/resume command string we build below.
+// `posix` is POSIX `sh`-family (default on macOS/Linux). On Windows the value
+// depends on the psmux pane's default-shell — `cmd` (cmd.exe) or `pwsh`
+// (powershell.exe / pwsh.exe). See issue #225 §7.
+export type ShellTarget = 'posix' | 'cmd' | 'pwsh';
+
+export function defaultShellTarget(): ShellTarget {
+  return process.platform === 'win32' ? 'pwsh' : 'posix';
+}
+
 export interface AgentCommandOptions {
   copilotMode?: CopilotMode;
+  shellTarget?: ShellTarget;
 }
 
 const PLAN_UNSAFE_FLAGS = [
@@ -270,7 +281,8 @@ export function buildAgentResumePlan(
   sessionFile?: string | null,
   options?: AgentCommandOptions,
 ): AgentResumePlan | null {
-  const quotedSessionId = shellQuoteForDisplay(sessionId);
+  const target = options?.shellTarget;
+  const quotedSessionId = shellQuoteForDisplay(sessionId, target);
   switch (agentType) {
     case 'claude': {
       const command = isPlanCopilot(options)
@@ -280,7 +292,7 @@ export function buildAgentResumePlan(
     }
     case 'codex': {
       const command = buildAgentBaseCommand(agentType, agentBinary, options);
-      const cdArgs = workdir ? ['-C', shellQuoteForDisplay(workdir)] : [];
+      const cdArgs = workdir ? ['-C', shellQuoteForDisplay(workdir, target)] : [];
       return { strategy: 'command', command: appendCommandArgs(command, 'resume', ...cdArgs, quotedSessionId) };
     }
     case 'gemini':
@@ -314,6 +326,7 @@ export function buildAgentLaunchCommand(
   options?: AgentCommandOptions,
 ): string {
   const command = buildAgentBaseCommand(agentType, agentBinary, options);
+  const target = options?.shellTarget;
 
   switch (agentType) {
     case 'claude': {
@@ -321,18 +334,18 @@ export function buildAgentLaunchCommand(
       if (sessionId) {
         launchCommand = appendCommandArgs(
           launchCommand,
-          `--session-id ${shellQuoteForDisplay(sessionId)}`,
+          `--session-id ${shellQuoteForDisplay(sessionId, target)}`,
         );
       }
-      return task ? `${launchCommand} -- ${shellQuoteForDisplay(task)}` : launchCommand;
+      return task ? `${launchCommand} -- ${shellQuoteForDisplay(task, target)}` : launchCommand;
     }
     case 'codex':
       return task
-        ? appendCommandArgs(command, shellQuoteForDisplay(task))
+        ? appendCommandArgs(command, shellQuoteForDisplay(task, target))
         : command;
     case 'gemini':
       return task
-        ? appendCommandArgs(command, shellQuoteForDisplay(task))
+        ? appendCommandArgs(command, shellQuoteForDisplay(task, target))
         : command;
     case 'sudocode':
       return command;
@@ -341,12 +354,24 @@ export function buildAgentLaunchCommand(
   }
 }
 
-function shellQuoteForDisplay(s: string): string {
-  if (process.platform === 'win32') {
-    // PowerShell double-quote escaping: escape backticks and double-quotes
-    return `"${s.replace(/[`"$]/g, '`$&')}"`;
+// Quote a value for the target shell. Both the agent launch/resume command
+// and the env prefix that wraps it must agree on which shell will parse them,
+// so we accept the target explicitly instead of hard-coding by platform. See
+// issue #225 §7.
+export function shellQuoteForDisplay(s: string, target?: ShellTarget): string {
+  const t = target ?? defaultShellTarget();
+  switch (t) {
+    case 'posix':
+      // POSIX single-quote literal — no expansion of `$VAR`/`` ` `` inside.
+      return `'${s.replace(/'/g, "'\\''")}'`;
+    case 'pwsh':
+      // PowerShell double-quote string — backtick is the escape char.
+      return `"${s.replace(/[`"$]/g, '`$&')}"`;
+    case 'cmd':
+      // cmd.exe `"…"` — embedded double quotes are doubled. (`$` and backtick
+      // are literal to cmd.)
+      return `"${s.replace(/"/g, '""')}"`;
   }
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function isEnvExecutable(token: string): boolean {

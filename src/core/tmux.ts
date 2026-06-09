@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { exec } from './exec';
+import { exec, execPowerShell } from './exec';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { getHydraConfigPath, getHydraHome, getTmuxCommand, toCanonicalPath } from './path';
 import { shellQuote, pwshQuote } from './shell';
@@ -41,6 +41,23 @@ export function getTmuxSanitizedEnvKeys(): string[] {
 export function buildSanitizedTmuxCommand(command: string): string {
   const tmuxCommand = getTmuxCommand();
   return `${tmuxCommand} ${command}`;
+}
+
+// Format-spec builders. Use double quotes around tmux `-F` / `-p` arguments,
+// not single. cmd.exe on Windows does not strip single quotes, so they would
+// be passed through to tmux/psmux verbatim and every emitted line would be
+// wrapped in literal '…' — silently breaking listSessions / getSessionInfo /
+// getSessionPanePids parsers. See issue #225 §1.
+export function buildListSessionsCommand(): string {
+  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}"`;
+}
+
+export function buildSessionInfoCommand(sessionName: string): string {
+  return `${getTmuxCommand()} display-message -p -t ${shellQuote(sessionName)} "#{session_attached}|||#{session_activity}"`;
+}
+
+export function buildSessionPanePidsCommand(sessionName: string): string {
+  return `${getTmuxCommand()} list-panes -t ${shellQuote(sessionName)} -F "#{pane_pid}"`;
 }
 
 function buildStoredTmuxEnvScrubCommandPowerShell(sessionName?: string): string {
@@ -109,9 +126,15 @@ export function buildStoredTmuxEnvScrubCommand(sessionName?: string): string {
   ].join('\n');
 }
 
+// On Windows the scrub command body is PowerShell, so it MUST be routed
+// through powershell.exe — the default `exec()` uses cmd.exe, which can't
+// parse `*>$null` / `foreach` / `ForEach-Object` and would silently skip
+// the entire env-scrub step. See issue #225 §2.
 async function scrubStoredTmuxEnvironment(sessionName?: string): Promise<void> {
+  const command = buildStoredTmuxEnvScrubCommand(sessionName);
+  const runner = process.platform === 'win32' ? execPowerShell : exec;
   try {
-    await exec(buildStoredTmuxEnvScrubCommand(sessionName));
+    await runner(command);
   } catch {
     // No tmux server yet is fine; createSession will start one with a sanitized env.
   }
@@ -188,8 +211,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async listSessions(): Promise<MultiplexerSession[]> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} list-sessions -F '#{session_name}|||#{session_windows}|||#{session_attached}'`);
+      const output = await exec(buildListSessionsCommand());
       const sessions = output.split('\n').filter(l => l.trim()).map(line => {
         const [name, windows, attached] = line.split('|||');
         return {
@@ -370,8 +392,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async getSessionInfo(sessionName: string): Promise<SessionStatusInfo> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} display-message -p -t ${shellQuote(sessionName)} '#{session_attached}|||#{session_activity}'`);
+      const output = await exec(buildSessionInfoCommand(sessionName));
       const [attachedStr, activityStr] = output.split('|||');
       return {
         attached: attachedStr === '1',
@@ -394,8 +415,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async getSessionPanePids(sessionName: string): Promise<string[]> {
     try {
-      const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} list-panes -t ${shellQuote(sessionName)} -F '#{pane_pid}'`);
+      const output = await exec(buildSessionPanePidsCommand(sessionName));
       return output.split('\n').filter(l => l.trim());
     } catch {
       return [];

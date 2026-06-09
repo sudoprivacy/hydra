@@ -4,11 +4,12 @@ import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions } from './agentConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions, type ShellTarget } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
-import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, resolveAgentSessionFile, toCanonicalPath } from './path';
+import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, getTmuxCommand, resolveAgentSessionFile, toCanonicalPath } from './path';
 import { shellQuote } from './shell';
+import { buildWindowsCopilotSessionEnvPrefix, probePaneShellWithRetry, type WindowsPaneShell } from './copilotSessionEnv';
 import { logger } from './logger';
 import { hashText } from './logRedaction';
 
@@ -734,7 +735,7 @@ export class SessionManager {
         workdir: prepared.workdir,
       });
       if (prepared.agentType === 'codex') {
-        const scriptPath = path.join(getHydraHome(), 'hooks', `notify-${prepared.sessionName}.sh`);
+        const scriptPath = this.getNotifyScriptPath(prepared.sessionName);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
         agentCommand = this.withCodexCompletionHookOverrides(agentCommand, trustRoots, scriptPath);
       }
@@ -761,7 +762,17 @@ export class SessionManager {
       );
     } else {
       sessionId = prepared.agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(prepared.agentType, agentCommand, undefined, sessionId ?? undefined);
+      // Detect the pane shell once so launch-arg quoting matches the shell
+      // that will execute the send-keyed command. See issue #225 §7 (codex
+      // review round 1).
+      const shellTarget = await this.detectShellTarget(prepared.sessionName);
+      const launchCmd = buildAgentLaunchCommand(
+        prepared.agentType,
+        agentCommand,
+        undefined,
+        sessionId ?? undefined,
+        { shellTarget },
+      );
       launchStartedAt = Date.now();
       await this.backend.sendKeys(prepared.sessionName, launchCmd);
     }
@@ -1070,7 +1081,14 @@ export class SessionManager {
       // ── Fresh start: Phase 1 (capture sessionId) ──
       // No stored session ID — launch fresh agent and capture new session ID.
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
-      const launchCmd = buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined);
+      // Detect the pane shell once so launch-arg quoting matches the shell
+      // that will execute the send-keyed command. See issue #225 §7 (codex
+      // review round 1).
+      const shellTarget = await this.detectShellTarget(sessionName);
+      const launchCmd = buildAgentLaunchCommand(
+        agent, command, undefined, preAssignedSessionId ?? undefined,
+        { shellTarget },
+      );
       const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
 
@@ -1151,9 +1169,14 @@ export class SessionManager {
       postCreatePromise = this.waitForAgentReady(sessionName, agent);
     } else {
       const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
-      const launchCmd = this.withCopilotSessionEnv(
-        buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, agentOptions),
+      // Detect the pane shell once and feed it to both the command builder
+      // (so its embedded quoting matches the shell) and the env prefix.
+      // See issue #225 §6 §7.
+      const shellTarget = await this.detectShellTarget(sessionName);
+      const launchCmd = await this.withCopilotSessionEnv(
+        buildAgentLaunchCommand(agent, command, undefined, preAssignedSessionId ?? undefined, { ...agentOptions, shellTarget }),
         sessionName,
+        shellTarget,
       );
       const launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
@@ -1237,9 +1260,14 @@ export class SessionManager {
       );
     } else {
       sessionId = agentType === 'claude' ? randomUUID() : null;
-      const launchCmd = this.withCopilotSessionEnv(
-        buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, agentOptions),
+      // Detect the pane shell once and feed it to both the command builder
+      // (so its embedded quoting matches the shell) and the env prefix.
+      // See issue #225 §6 §7.
+      const shellTarget = await this.detectShellTarget(sessionName);
+      const launchCmd = await this.withCopilotSessionEnv(
+        buildAgentLaunchCommand(agentType, agentCommand, undefined, sessionId ?? undefined, { ...agentOptions, shellTarget }),
         sessionName,
+        shellTarget,
       );
       launchStartedAt = Date.now();
       await this.backend.sendKeys(sessionName, launchCmd);
@@ -2120,12 +2148,19 @@ export class SessionManager {
     }
 
     try {
-      // 1. Write the notification shell script
+      // 1. Write the notification script.
+      //    Windows gets a PowerShell .ps1 (the sh script's `mkdir`/`trap`/`mktemp`/
+      //    `case…esac`/`printf` body is meaningless to cmd.exe, and `sh` is only on
+      //    PATH if the user opted into Git for Windows' bin dir). See issue #225 §3.
       const hooksDir = path.join(getHydraHome(), 'hooks');
       fs.mkdirSync(hooksDir, { recursive: true });
 
-      const scriptPath = path.join(hooksDir, `notify-${info.sessionName}.sh`);
-      fs.writeFileSync(scriptPath, this.buildNotifyScript(info), { mode: 0o755 });
+      const isWindows = process.platform === 'win32';
+      const scriptPath = this.getNotifyScriptPath(info.sessionName);
+      const scriptContent = isWindows
+        ? this.buildNotifyScriptPowerShell(info)
+        : this.buildNotifyScript(info);
+      fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
 
       const hookCommand = this.buildNotifyHookCommand(scriptPath, agentType);
 
@@ -2238,6 +2273,9 @@ export class SessionManager {
   }
 
   private buildNotifyHookCommand(scriptPath: string, agentType: string): string {
+    if (process.platform === 'win32') {
+      return this.buildNotifyHookCommandPowerShell(scriptPath, agentType);
+    }
     const command = `sh ${shellQuote(scriptPath)}`;
     switch (agentType) {
       case 'codex':
@@ -2248,6 +2286,22 @@ export class SessionManager {
         // Gemini hooks expect JSON on stdout. The notification remains
         // best-effort, and the hook command reports a successful no-op payload.
         return `${command} >/dev/null; printf '{}'`;
+      default:
+        return command;
+    }
+  }
+
+  // Windows variant of buildNotifyHookCommand. The hook command is executed by
+  // the agent (claude/codex/gemini) via shell:true → cmd.exe on Windows, so the
+  // shape is: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<path>"`,
+  // optionally followed by cmd's `>NUL & echo {}` for agents that want JSON on
+  // stdout. See issue #225 §3.
+  private buildNotifyHookCommandPowerShell(scriptPath: string, agentType: string): string {
+    const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${shellQuote(scriptPath)}`;
+    switch (agentType) {
+      case 'codex':
+      case 'gemini':
+        return `${command} >NUL & echo {}`;
       default:
         return command;
     }
@@ -2345,16 +2399,151 @@ export class SessionManager {
     ].join('\n') + '\n';
   }
 
+  // Windows variant of buildNotifyScript. Same control flow as the sh version
+  // (early-out on missing PENDING marker, atomic mkdir-lock, has-session probe,
+  // load-buffer/paste-buffer/send-keys Enter, consume the PENDING marker on
+  // success) but expressed in PowerShell so it actually runs on Windows. See
+  // issue #225 §3.
+  private buildNotifyScriptPowerShell(info: WorkerNotificationInfo): string {
+    const pendingPath = this.getNotifyPendingPath(info.sessionName);
+    // PowerShell single-quoted string: no expansion, internal single quotes
+    // are escaped by doubling.
+    const psq = (s: string) => `'${s.replace(/'/g, "''")}'`;
+
+    // PowerShell expands $WORKER_ID etc. inside double-quoted strings. Use
+    // straight single quotes around the worker subcommand instead of backticks
+    // — backticks are PS's escape character and would need awkward doubling.
+    const message = info.source === 'directory'
+      ? `$MSG = "Task worker #$WORKER_ID ($NAME) has completed. Workdir: $WORKDIR. Use 'hydra worker logs $SESSION' to review output."`
+      : `$MSG = "Worker #$WORKER_ID ($NAME) has completed. Branch: $BRANCH. Use 'hydra worker logs $SESSION' to review output."`;
+
+    return [
+      '# Auto-generated by Hydra: parent copilot completion notification.',
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      '',
+      `$COPILOT = ${psq(info.copilotSessionName)}`,
+      `$SESSION = ${psq(info.sessionName)}`,
+      `$WORKER_ID = ${psq(String(info.workerId))}`,
+      `$NAME = ${psq(info.displayName)}`,
+      `$BRANCH = ${psq(info.branch || '')}`,
+      `$WORKDIR = ${psq(info.workdir)}`,
+      `$PENDING = ${psq(pendingPath)}`,
+      '$LOCKDIR = "$PENDING.lock"',
+      '',
+      '# Only Hydra-armed copilot messages should notify on completion.',
+      'if (-not (Test-Path -LiteralPath $PENDING)) { exit 0 }',
+      '',
+      '# Atomic lock via directory creation. Stop on failure so we exit cleanly.',
+      'try { [void](New-Item -ItemType Directory -Path $LOCKDIR -ErrorAction Stop) } catch { exit 0 }',
+      '',
+      'try {',
+      '  if (-not (Test-Path -LiteralPath $PENDING)) { exit 0 }',
+      '',
+      '  # Resolve psmux command (honors HYDRA_TMUX_SOCKET if set).',
+      "  $tmuxBin = 'psmux'",
+      '  $tmuxArgs = @()',
+      '  $sock = $env:HYDRA_TMUX_SOCKET',
+      '  if ($sock) {',
+      "    if ($sock -match '^([\\\\/]|[A-Za-z]:[\\\\/])') { $tmuxArgs = @('-S', $sock) }",
+      "    else { $tmuxArgs = @('-L', $sock) }",
+      '  }',
+      '',
+      '  # Only notify if copilot session still exists.',
+      '  & $tmuxBin @tmuxArgs has-session -t $COPILOT 2>$null',
+      '  if ($LASTEXITCODE -ne 0) { exit 0 }',
+      '',
+      `  ${message}`,
+      '',
+      '  # Use load-buffer/paste-buffer to avoid the Enter-swallow issue (see PR #122).',
+      '  $f = [System.IO.Path]::GetTempFileName()',
+      '  $b = "hydra-$PID"',
+      '  try {',
+      '    [System.IO.File]::WriteAllText($f, $MSG)',
+      '    & $tmuxBin @tmuxArgs load-buffer -b $b $f 2>$null',
+      '    if ($LASTEXITCODE -eq 0) {',
+      '      & $tmuxBin @tmuxArgs paste-buffer -b $b -t $COPILOT -d 2>$null',
+      '      if ($LASTEXITCODE -eq 0) {',
+      '        Start-Sleep -Milliseconds 100',
+      '        & $tmuxBin @tmuxArgs send-keys -t $COPILOT Enter 2>$null',
+      '        if ($LASTEXITCODE -eq 0) {',
+      '          Remove-Item -LiteralPath $PENDING -Force -ErrorAction SilentlyContinue',
+      '        }',
+      '      }',
+      '    }',
+      '  } finally {',
+      '    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue',
+      '  }',
+      '} finally {',
+      '  Remove-Item -LiteralPath $LOCKDIR -Recurse -Force -ErrorAction SilentlyContinue',
+      '}',
+    ].join('\r\n') + '\r\n';
+  }
+
   private getNotifyPendingPath(sessionName: string): string {
     return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
   }
 
-  private withCopilotSessionEnv(command: string, sessionName?: string): string {
+  // Resolve the on-disk path of the completion-notification script for a
+  // session. Single source of truth so the file actually written by
+  // injectCompletionHook (.ps1 on Windows, .sh elsewhere) and the path
+  // embedded in Codex's inline hook override always agree. See issue #225 §3
+  // (codex review round 1).
+  private getNotifyScriptPath(sessionName: string): string {
+    const ext = process.platform === 'win32' ? 'ps1' : 'sh';
+    return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.${ext}`);
+  }
+
+  // Prefix a command with an inline `HYDRA_COPILOT_SESSION=<value>` assignment
+  // so the agent process the shell spawns next inherits the env var. On
+  // Windows the syntax depends on the pane's shell — `$env:` works in
+  // PowerShell, `set ""` works in cmd.exe — so we detect once via
+  // psmux's default-shell option and emit the matching form. See issue #225 §6.
+  // Callers that have already detected the shell (e.g. to pick a shellTarget
+  // for buildAgentLaunchCommand, see issue #225 §7) can pass it explicitly to
+  // avoid a redundant probe.
+  private async withCopilotSessionEnv(
+    command: string,
+    sessionName?: string,
+    shellTarget?: ShellTarget,
+  ): Promise<string> {
     if (!sessionName) return command;
-    if (process.platform === 'win32') {
-      return `$env:${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)}; ${command}`;
+    if (process.platform !== 'win32') {
+      return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
     }
-    return `${HYDRA_COPILOT_SESSION_ENV}=${shellQuote(sessionName)} ${command}`;
+    const winShell: WindowsPaneShell = shellTarget === 'cmd' || shellTarget === 'pwsh'
+      ? shellTarget
+      : await this.detectPaneShell(sessionName);
+    return buildWindowsCopilotSessionEnvPrefix(winShell, sessionName, command);
+  }
+
+  // Resolve the shell that will execute commands send-keyed into the pane.
+  // On non-Windows the shell is POSIX `sh`; on Windows we probe psmux's
+  // default-shell. See issue #225 §6 §7.
+  private async detectShellTarget(sessionName: string): Promise<ShellTarget> {
+    if (process.platform !== 'win32') return 'posix';
+    return this.detectPaneShell(sessionName);
+  }
+
+  // Probe the psmux session's default-shell. Retries a few times to ride out
+  // transient probe failures right after createSession (socket race / server
+  // restart), then falls back to PowerShell — the common Hydra-on-Windows
+  // config — and logs a warning so users who actually picked cmd.exe can see
+  // why their pane is getting PowerShell syntax. See issue #225 §6 (codex
+  // review round 1).
+  private async detectPaneShell(sessionName: string): Promise<WindowsPaneShell> {
+    const tmuxCommand = getTmuxCommand();
+    const command = `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -gqv default-shell`;
+    const result = await probePaneShellWithRetry(
+      () => exec(command, { logFailure: false }),
+    );
+    if (result.usedFallback) {
+      logger.warn(
+        'session.detectPaneShell',
+        'psmux default-shell probe failed after retries; defaulting to PowerShell. If your pane is cmd.exe, set psmux default-shell to pwsh.exe / powershell.exe or report the probe failure.',
+        { sessionName, attempts: result.attempts },
+      );
+    }
+    return result.shell;
   }
 
   private async launchAgentResume(
@@ -2367,12 +2556,22 @@ export class SessionManager {
     agentOptions?: AgentCommandOptions,
     copilotSessionName?: string,
   ): Promise<void> {
-    const resumePlan = buildAgentResumePlan(agentType, agentCommand, sessionId, workdir, agentSessionFile, agentOptions);
+    // Detect the pane shell once and feed it to both the resume-plan builder
+    // (so its embedded quoting matches the shell) and the env prefix.
+    // See issue #225 §6 §7.
+    const shellTarget = await this.detectShellTarget(sessionName);
+    const resumePlan = buildAgentResumePlan(
+      agentType, agentCommand, sessionId, workdir, agentSessionFile,
+      { ...agentOptions, shellTarget },
+    );
     if (!resumePlan) {
       throw new Error(`Agent "${agentType}" does not support session resume`);
     }
 
-    await this.backend.sendKeys(sessionName, this.withCopilotSessionEnv(resumePlan.command, copilotSessionName));
+    await this.backend.sendKeys(
+      sessionName,
+      await this.withCopilotSessionEnv(resumePlan.command, copilotSessionName, shellTarget),
+    );
     if (resumePlan.strategy === 'replSlashCommand') {
       await this.waitForAgentReady(sessionName, agentType);
       const beforeResume = await this.captureCleanPane(sessionName, 400);
@@ -3061,7 +3260,14 @@ export class SessionManager {
       } else {
         // ── Fresh start: Phase 1 (capture sessionId) → Phase 2 (send task) ──
         const preAssignedSessionId = agentType === 'claude' ? randomUUID() : null;
-        const launchCmd = buildAgentLaunchCommand(agentType, agentCommand, undefined, preAssignedSessionId ?? undefined);
+        // Detect the pane shell once so launch-arg quoting matches the shell
+        // that will execute the send-keyed command. See issue #225 §7 (codex
+        // review round 1).
+        const shellTarget = await this.detectShellTarget(sessionName);
+        const launchCmd = buildAgentLaunchCommand(
+          agentType, agentCommand, undefined, preAssignedSessionId ?? undefined,
+          { shellTarget },
+        );
         const launchStartedAt = Date.now();
         await this.backend.sendKeys(sessionName, launchCmd);
         sessionId = preAssignedSessionId;
