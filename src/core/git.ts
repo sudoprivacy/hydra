@@ -94,9 +94,17 @@ export function getRepoSessionNamespace(repoRoot: string, backend: MultiplexerBa
   return `${repoName}-${rootHash}`;
 }
 
+// Use double quotes around the git --format spec, not single. cmd.exe on
+// Windows does not strip single quotes, so they would be passed through to git
+// verbatim and every emitted ref would be wrapped in literal '…' — making the
+// equality check below silently fail for every branch. See issue #225 §1.
+export function buildListLocalBranchesCommand(): string {
+  return 'git for-each-ref --format="%(refname:short)" refs/heads';
+}
+
 export async function localBranchExists(repoRoot: string, branchName: string): Promise<boolean> {
   try {
-    const output = await exec("git for-each-ref --format='%(refname:short)' refs/heads", { cwd: repoRoot });
+    const output = await exec(buildListLocalBranchesCommand(), { cwd: repoRoot });
     return output.split('\n').some(line => line.trim() === branchName);
   } catch {
     return false;

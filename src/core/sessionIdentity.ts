@@ -169,14 +169,20 @@ export function detectIdentity(cwd?: string): HydraIdentity | null {
   return detectCopilotIdentityByEnv(state) || findBestMatch(dir, state);
 }
 
+// Use double quotes around the tmux `-p` format. cmd.exe on Windows does not
+// strip single quotes, so the returned session name would be wrapped in
+// literal '…' — breaking the subsequent show-options query. See issue #225 §1.
+export function buildCurrentTmuxSessionNameCommand(): string {
+  return `${getTmuxCommand()} display-message -p "#S"`;
+}
+
 async function getCurrentTmuxSessionName(): Promise<string | null> {
   if (!process.env.TMUX && process.platform !== 'win32') {
     return null;
   }
 
   try {
-    const tmuxCommand = getTmuxCommand();
-    const sessionName = await exec(`${tmuxCommand} display-message -p '#S'`);
+    const sessionName = await exec(buildCurrentTmuxSessionNameCommand());
     return sessionName.trim() || null;
   } catch {
     return null;

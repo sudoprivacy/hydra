@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { exec } from './exec';
+import { exec, execPowerShell } from './exec';
 import { TmuxBackendCore, buildStoredTmuxEnvScrubCommand } from '../core/tmux';
 import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
 import { getIsolatedEnv, getTmuxCommand } from '../core/path';
@@ -43,7 +43,11 @@ export class TmuxBackend extends TmuxBackendCore implements MultiplexerBackend {
 
     if (existing) {
       const tmuxCommand = getTmuxCommand();
-      void exec(buildTmuxMouseScrollbackCommand(sessionName)).catch(() => {});
+      // The Windows mouse-on body is PowerShell (`*>$null`), so it must be
+      // routed through powershell.exe — exec()'s cmd.exe can't parse it and
+      // would silently no-op. See issue #225 §2.
+      const mouseRunner = process.platform === 'win32' ? execPowerShell : exec;
+      void mouseRunner(buildTmuxMouseScrollbackCommand(sessionName)).catch(() => {});
       void exec(`${tmuxCommand} set-window-option -t "${sessionName}":. window-size latest`).catch(() => {});
       const options = existing.creationOptions as vscode.TerminalOptions;
       // For editor locations, reuse if both are editor-area targets
