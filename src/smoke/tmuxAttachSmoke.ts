@@ -4,6 +4,7 @@ import {
   buildSanitizedTmuxCommand,
   buildStoredTmuxEnvScrubCommand,
   getTmuxSanitizedEnvKeys,
+  isTmuxDuplicateSessionError,
 } from '../core/tmux';
 import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
 
@@ -49,6 +50,18 @@ function main(): void {
     assert.match(
       buildStoredTmuxEnvScrubCommand('worker'),
       new RegExp(HYDRA_COPILOT_SESSION_ENV),
+    );
+
+    const duplicateError = new Error('Command failed: tmux new-session\nduplicate session: hydra-copilot-sudocode');
+    assert.equal(
+      isTmuxDuplicateSessionError(duplicateError),
+      true,
+      'tmux/psmux duplicate-session failures should be classified for createSession reuse',
+    );
+    assert.equal(
+      isTmuxDuplicateSessionError(new Error('no server running')),
+      false,
+      'unrelated tmux failures must not be treated as duplicates',
     );
   } finally {
     if (previousSocket === undefined) {

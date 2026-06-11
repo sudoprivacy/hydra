@@ -164,6 +164,10 @@ function isTmuxMissingSessionError(error: unknown): boolean {
     || text.includes('session not found');
 }
 
+export function isTmuxDuplicateSessionError(error: unknown): boolean {
+  return getExecFailureText(error).toLowerCase().includes('duplicate session');
+}
+
 // psmux (the Windows tmux port) exits non-zero with empty stderr when
 // `has-session` finds no match, so the keyword-based detectors above can't
 // recognize the "missing session" signal there. Silent non-zero exits with no
@@ -246,6 +250,24 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
       );
       logger.info('tmux.createSession', 'Created multiplexer session', { sessionName, cwd });
     } catch (error) {
+      if (isTmuxDuplicateSessionError(error)) {
+        try {
+          if (await this.hasSession(sessionName)) {
+            logger.warn(
+              'tmux.createSession',
+              'Multiplexer session already exists; reusing existing session',
+              { sessionName, cwd },
+            );
+            return;
+          }
+        } catch (inspectError) {
+          logger.warn(
+            'tmux.createSession',
+            'Duplicate session reported, but existing session could not be verified',
+            { sessionName, cwd, inspectError },
+          );
+        }
+      }
       logger.error('tmux.createSession', 'Failed to create multiplexer session', { sessionName, cwd, error });
       throw error;
     }
