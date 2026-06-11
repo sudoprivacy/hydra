@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026060502] - 2026-06-11
+
+### Fixed
+- Fix Windows psmux format argument quoting so session listing does not fail under cmd.exe when tmux format strings contain pipe separators
+
 ## [0.3.2026060501] - 2026-06-05
 
 ### Changed
