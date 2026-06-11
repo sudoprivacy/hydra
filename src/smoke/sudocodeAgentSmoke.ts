@@ -117,6 +117,26 @@ function testAgentConfig(): void {
     'scode --dangerously-skip-permissions',
   );
   assert.equal(
+    buildAgentLaunchCommand(
+      'sudocode',
+      '"C:\\Users\\admin\\AppData\\Local\\Programs\\SudoCode\\scode.exe"',
+      undefined,
+      undefined,
+      { shellTarget: 'pwsh' },
+    ),
+    '& "C:\\Users\\admin\\AppData\\Local\\Programs\\SudoCode\\scode.exe" --dangerously-skip-permissions',
+  );
+  assert.equal(
+    buildAgentLaunchCommand(
+      'sudocode',
+      '"C:\\Users\\admin\\AppData\\Local\\Programs\\SudoCode\\scode.exe"',
+      undefined,
+      undefined,
+      { shellTarget: 'cmd' },
+    ),
+    '"C:\\Users\\admin\\AppData\\Local\\Programs\\SudoCode\\scode.exe" --dangerously-skip-permissions',
+  );
+  assert.equal(
     buildAgentLaunchCommand('claude', 'claude', undefined, '11111111-1111-4111-8111-111111111111', { copilotMode: 'plan' }),
     "claude --permission-mode plan --session-id '11111111-1111-4111-8111-111111111111'",
   );
