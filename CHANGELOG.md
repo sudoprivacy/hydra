@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2026060503] - 2026-06-11
+
+### Fixed
+- Fix the Windows `hydra.cmd` wrapper so subcommands and `--version` are forwarded to Hydra instead of being consumed by Node
+- Fix Sudo Code launch on Windows PowerShell when the resolved `scode.exe` path must be quoted
+
 ## [0.3.2026060502] - 2026-06-11
 
 ### Fixed

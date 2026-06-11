@@ -10,9 +10,9 @@ function getWrapperPath(): string {
   return path.join(getHydraBinDir(), 'hydra');
 }
 
-function buildWrapperScriptWindows(): string {
+export function buildWrapperScriptWindows(): string {
   return `@echo off
-setlocal EnableDelayedExpansion
+setlocal DisableDelayedExpansion
 
 set "HYDRA_DEFAULT_HOME=%USERPROFILE%\\.hydra"
 if defined HYDRA_HOME (
@@ -27,7 +27,7 @@ if defined HYDRA_CONFIG_PATH (
   set "CONFIG_PATH=%HYDRA_HOME_DIR%\\config.json"
 )
 
-node -e "const fs=require('fs'),path=require('path'),os=require('os');function expandHomeDir(p){if(p==='~')return os.homedir();if(p.startsWith('~/')||p.startsWith('~\\\\'))return path.join(os.homedir(),p.slice(2));return p}function resolveConfigPathValue(v,c){if(typeof v!=='string'||!v.trim())return undefined;const e=expandHomeDir(v.trim());const a=path.isAbsolute(e)?e:path.resolve(path.dirname(c),e);return path.normalize(a)}const configPath=process.env.HYDRA_CONFIG_PATH||path.join(process.env.HYDRA_HOME||path.join(os.homedir(),'.hydra'),'config.json');let cfg={};try{if(fs.existsSync(configPath))cfg=JSON.parse(fs.readFileSync(configPath,'utf8'))||{}}catch{}const extPath=typeof(cfg.cli||{}).extensionPath==='string'?cfg.cli.extensionPath:'';if(!extPath||!fs.existsSync(path.join(extPath,'out','cli','index.js'))){console.error('Error: Hydra VS Code extension not found. Open VS Code with Hydra installed.');process.exit(1)}const {spawnSync}=require('child_process');const r=spawnSync(process.execPath,[path.join(extPath,'out','cli','index.js'),...process.argv.slice(2)],{stdio:'inherit',env:{...process.env,HYDRA_HOME:process.env.HYDRA_HOME||path.join(os.homedir(),'.hydra'),HYDRA_CONFIG_PATH:configPath}});if(r.error){console.error(r.error.message);process.exit(1)}process.exit(typeof r.status==='number'?r.status:1)" %*
+node -e "const fs=require('fs'),path=require('path'),os=require('os');function expandHomeDir(p){if(p==='~')return os.homedir();if(p.startsWith('~/')||p.startsWith('~\\\\'))return path.join(os.homedir(),p.slice(2));return p}function resolveConfigPathValue(v,c){if(typeof v!=='string'||!v.trim())return undefined;const e=expandHomeDir(v.trim());const a=path.isAbsolute(e)?e:path.resolve(path.dirname(c),e);return path.normalize(a)}const configPath=process.env.HYDRA_CONFIG_PATH||path.join(process.env.HYDRA_HOME||path.join(os.homedir(),'.hydra'),'config.json');let cfg={};try{if(fs.existsSync(configPath))cfg=JSON.parse(fs.readFileSync(configPath,'utf8'))||{}}catch{}const extPath=typeof(cfg.cli||{}).extensionPath==='string'?cfg.cli.extensionPath:'';if(!extPath||!fs.existsSync(path.join(extPath,'out','cli','index.js'))){console.error('Error: Hydra VS Code extension not found. Open VS Code with Hydra installed.');process.exit(1)}const {spawnSync}=require('child_process');const r=spawnSync(process.execPath,[path.join(extPath,'out','cli','index.js'),...process.argv.slice(1)],{stdio:'inherit',env:{...process.env,HYDRA_HOME:process.env.HYDRA_HOME||path.join(os.homedir(),'.hydra'),HYDRA_CONFIG_PATH:configPath}});if(r.error){console.error(r.error.message);process.exit(1)}process.exit(typeof r.status==='number'?r.status:1)" -- %*
 `;
 }
 

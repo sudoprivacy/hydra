@@ -2,7 +2,7 @@
   "name": "hydra-code",
   "displayName": "Hydra Code",
   "description": "Monitor and orchestrate parallel AI coding agents — see every worker's status, git diff, and terminal output from one sidebar",
-  "version": "0.3.2026060502",
+  "version": "0.3.2026060503",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -395,7 +395,8 @@
     "smoke:shell-target-e2e": "node out/smoke/shellTargetEndToEndSmoke.js",
     "smoke:pane-shell-probe": "node out/smoke/paneShellProbeSmoke.js",
     "smoke:enhanced-path-windows": "node out/smoke/enhancedPathWindowsSmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows"
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
+    "smoke:windows-cli-wrapper": "node out/smoke/windowsCliWrapperSmoke.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

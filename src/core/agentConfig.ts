@@ -190,6 +190,26 @@ function ensureStandaloneCommandFlags(command: string, flags: string): string {
     .reduce((current, flag) => ensureCommandFlag(current, flag), command.trim());
 }
 
+function prepareCommandForShell(command: string, target?: ShellTarget): string {
+  if (target !== 'pwsh') {
+    return command;
+  }
+
+  const trimmed = command.trim();
+  if (/^&\s+/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // PowerShell treats a leading quoted executable path as a string expression.
+  // Use the call operator so commands like `"C:\Program Files\tool.exe" --flag`
+  // actually execute instead of failing with UnexpectedToken.
+  if (/^"[A-Za-z]:\\[^"]+\.(?:exe|cmd|bat|ps1)"(?:\s|$)/i.test(trimmed)) {
+    return `& ${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 // Which shell will execute the launch/resume command string we build below.
 // `posix` is POSIX `sh`-family (default on macOS/Linux). On Windows the value
 // depends on the psmux pane's default-shell — `cmd` (cmd.exe) or `pwsh`
@@ -232,18 +252,24 @@ function buildAgentBaseCommand(
 ): string {
   if (!isPlanCopilot(options)) {
     const yolo = AGENT_YOLO_FLAGS[agentType] || '';
-    return ensureStandaloneCommandFlags(agentBinary, yolo);
+    return prepareCommandForShell(
+      ensureStandaloneCommandFlags(agentBinary, yolo),
+      options?.shellTarget,
+    );
   }
 
   assertPlanCommandIsSafe(agentBinary);
 
   switch (agentType) {
     case 'claude':
-      return ensureCommandFlag(agentBinary, '--permission-mode plan');
+      return prepareCommandForShell(
+        ensureCommandFlag(agentBinary, '--permission-mode plan'),
+        options?.shellTarget,
+      );
     case 'codex': {
       let command = ensureCommandFlag(agentBinary, '--sandbox read-only');
       command = ensureCommandFlag(command, '--ask-for-approval never');
-      return command;
+      return prepareCommandForShell(command, options?.shellTarget);
     }
     default:
       throw new Error(getUnsupportedCopilotModeMessage(agentType, 'plan'));
