@@ -486,7 +486,9 @@ export class WorktreeItem extends TmuxItem {
     isMainWorktree?: boolean;
     isTaskWorker?: boolean;
   }) {
-    const displayLabel = opts.displayName || opts.branchLabel;
+    const displayLabel = opts.isTaskWorker
+      ? (opts.displayName || opts.branchLabel)
+      : opts.branchLabel;
     const description = opts.isCurrentWorkspace
       ? (opts.isTaskWorker ? 'This folder' : 'This project')
       : undefined;
@@ -1141,7 +1143,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       const branchLabel = hasGit && w.workdir
         ? await getWorktreeBranchLabel(w.workdir, w.branch || w.slug)
         : (w.branch || w.slug);
-      const worktreeBranch = w.branch || branchLabel;
+      const worktreeBranch = branchLabel;
 
       const pr = prMap.get(branchLabel);
 

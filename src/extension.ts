@@ -32,9 +32,11 @@ import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogCommands } from './commands/logs';
+import { exec } from './utils/exec';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
+const WORKER_GIT_HEAD_REFRESH_POLL_INTERVAL_MS = 1000;
 const RECENT_TREE_SELECTION_MS = 1000;
 const TREE_SELECTION_SETTLE_MS = 75;
 
@@ -129,13 +131,20 @@ export function activate(context: vscode.ExtensionContext) {
     await action(item);
   };
 
+  let syncWorkerGitHeadWatchers: () => void = () => {};
+  const refreshTreeViews = () => { copilotProvider.refresh(); workerProvider.refresh(); };
+  const refreshAll = () => {
+    refreshTreeViews();
+    syncWorkerGitHeadWatchers();
+  };
+
   context.subscriptions.push(
     copilotView,
     workerView,
     vscode.commands.registerCommand('tmux.attachCreate', attachCreate),
     vscode.commands.registerCommand('hydra.createWorker', newTask),
     vscode.commands.registerCommand('tmux.removeTask', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], removeTask, ...args)),
-    vscode.commands.registerCommand('tmux.refresh', () => { copilotProvider.refresh(); workerProvider.refresh(); }),
+    vscode.commands.registerCommand('tmux.refresh', refreshAll),
     vscode.commands.registerCommand('tmux.attach', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attach, ...args)),
     vscode.commands.registerCommand('tmux.attachInEditor', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], attachInEditor, ...args)),
     vscode.commands.registerCommand('tmux.openWorktree', async (...args: unknown[]) => runWithHydraItem(['worker'], openWorktree, ...args)),
@@ -164,7 +173,8 @@ export function activate(context: vscode.ExtensionContext) {
   autoAttachOnStartup();
   detectAndSetAgentContext();
 
-  const refreshAll = () => { copilotProvider.refresh(); workerProvider.refresh(); };
+  syncWorkerGitHeadWatchers = registerWorkerGitHeadRefreshWatcher(context, refreshTreeViews);
+  syncWorkerGitHeadWatchers();
   registerSessionFileRefreshWatcher(context, refreshAll);
 
   context.subscriptions.push(
@@ -254,6 +264,133 @@ function registerSessionFileRefreshWatcher(context: vscode.ExtensionContext, ref
       },
     },
   );
+}
+
+interface SessionWorkerEntry {
+  source?: string;
+  workdir?: string;
+  repoRoot?: string | null;
+}
+
+interface SessionStateFile {
+  workers?: Record<string, SessionWorkerEntry>;
+}
+
+interface GitHeadWatch {
+  headPath: string;
+  listener: (current: fs.Stats, previous: fs.Stats) => void;
+}
+
+function registerWorkerGitHeadRefreshWatcher(
+  context: vscode.ExtensionContext,
+  refreshTreeViews: () => void,
+): () => void {
+  const watchers = new Map<string, GitHeadWatch>();
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let syncGeneration = 0;
+
+  const scheduleRefresh = () => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      refreshTreeViews();
+    }, SESSION_REFRESH_DEBOUNCE_MS);
+  };
+
+  const stopWatching = (workdir: string) => {
+    const watch = watchers.get(workdir);
+    if (!watch) return;
+    fs.unwatchFile(watch.headPath, watch.listener);
+    watchers.delete(workdir);
+  };
+
+  const startWatching = (workdir: string, headPath: string) => {
+    const listener = (current: fs.Stats, previous: fs.Stats) => {
+      if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
+        return;
+      }
+      scheduleRefresh();
+    };
+
+    fs.watchFile(headPath, { interval: WORKER_GIT_HEAD_REFRESH_POLL_INTERVAL_MS }, listener);
+    watchers.set(workdir, { headPath, listener });
+  };
+
+  const sync = () => {
+    const generation = ++syncGeneration;
+    void (async () => {
+      const workdirs = readRepoWorkerWorkdirs();
+      const entries = await Promise.all(workdirs.map(async (workdir) => ({
+        workdir,
+        headPath: await resolveGitHeadPath(workdir),
+      })));
+
+      if (generation !== syncGeneration) return;
+
+      const desired = new Map<string, string>();
+      for (const entry of entries) {
+        if (entry.headPath) {
+          desired.set(entry.workdir, entry.headPath);
+        }
+      }
+
+      for (const [workdir, watch] of watchers) {
+        if (desired.get(workdir) !== watch.headPath) {
+          stopWatching(workdir);
+        }
+      }
+
+      for (const [workdir, headPath] of desired) {
+        if (!watchers.has(workdir)) {
+          startWatching(workdir, headPath);
+        }
+      }
+    })();
+  };
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+      for (const workdir of [...watchers.keys()]) {
+        stopWatching(workdir);
+      }
+    },
+  });
+
+  return sync;
+}
+
+function readRepoWorkerWorkdirs(): string[] {
+  try {
+    const sessionsFile = getHydraSessionsFile();
+    if (!fs.existsSync(sessionsFile)) return [];
+    const parsed = JSON.parse(fs.readFileSync(sessionsFile, 'utf-8')) as SessionStateFile;
+    const workdirs = Object.values(parsed.workers || {})
+      .filter(worker => worker.source !== 'directory')
+      .map(worker => worker.workdir)
+      .filter((workdir): workdir is string => Boolean(workdir && fs.existsSync(workdir)));
+    return [...new Set(workdirs.map(workdir => path.resolve(workdir)))];
+  } catch {
+    return [];
+  }
+}
+
+async function resolveGitHeadPath(workdir: string): Promise<string | null> {
+  try {
+    const gitDir = await exec('git rev-parse --git-dir', { cwd: workdir });
+    if (!gitDir) return null;
+    const resolvedGitDir = path.isAbsolute(gitDir)
+      ? gitDir
+      : path.resolve(workdir, gitDir);
+    const headPath = path.join(resolvedGitDir, 'HEAD');
+    return fs.existsSync(headPath) ? headPath : null;
+  } catch {
+    return null;
+  }
 }
 
 function getFileSignature(filePath: string): string {
