@@ -204,6 +204,12 @@ function main(): void {
     assert.equal(emptyList.unreadCount, 0);
     assert.equal(emptyList.totalCount, 0);
 
+    const eventsPath = path.join(ctx.hydraHome, 'events.jsonl');
+    const events = fs.readFileSync(eventsPath, 'utf-8').trim().split(/\r?\n/).map(line => JSON.parse(line) as { type: string; seq: number });
+    assert.deepEqual(events.map(event => event.type), ['notify.created', 'notify.read', 'notify.cleared']);
+    assert.deepEqual(events.map(event => event.seq), [1, 2, 3]);
+    assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
+
     console.log('notifyCliSmoke: ok');
   } finally {
     fs.rmSync(ctx.tmp, { recursive: true, force: true });

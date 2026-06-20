@@ -12,6 +12,7 @@ import { shellQuote } from './shell';
 import { buildWindowsCopilotSessionEnvPrefix, probePaneShellWithRetry, type WindowsPaneShell } from './copilotSessionEnv';
 import { logger } from './logger';
 import { hashText } from './logRedaction';
+import { EventLog, type HydraEventRole } from './events';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -332,7 +333,10 @@ function normalizeCopilotMode(mode: CopilotMode | undefined): CopilotMode {
 // ── SessionManager Class ──
 
 export class SessionManager {
-  constructor(private backend: MultiplexerBackendCore) {}
+  constructor(
+    private backend: MultiplexerBackendCore,
+    private readonly eventLog: EventLog = new EventLog(),
+  ) {}
 
   // ── Sync: reconcile sessions.json <-> live multiplexer ──
 
@@ -821,6 +825,9 @@ export class SessionManager {
       workerId: workerInfo.workerId,
       sessionId: workerInfo.sessionId,
     });
+    if (!prepared.preservedWorkerInfo) {
+      this.emitWorkerEvent('worker.created', workerInfo);
+    }
 
     const postCreatePromise = this.withPostCreateTimeout((async () => {
       if (isResume) {
@@ -982,6 +989,14 @@ export class SessionManager {
         removedWorktree,
         deletedBranch,
       });
+      if (archivedWorker) {
+        this.emitWorkerEvent('worker.deleted', archivedWorker, {
+          archived: true,
+          deletedFiles,
+          removedWorktree,
+          deletedBranch,
+        });
+      }
     } catch (error) {
       logger.error('session.delete', 'Failed to delete worker session', {
         ...context,
@@ -1004,6 +1019,10 @@ export class SessionManager {
         state.updatedAt = new Date().toISOString();
       }
     });
+    const stoppedWorker = this.readSessionState().workers[sessionName];
+    if (stoppedWorker) {
+      this.emitWorkerEvent('worker.stopped', stoppedWorker);
+    }
   }
 
   async startWorker(sessionName: string, agentType?: string, agentCommand?: string): Promise<CreateWorkerResult> {
@@ -1116,6 +1135,8 @@ export class SessionManager {
       );
     }
 
+    this.emitWorkerEvent('worker.started', workerInfo, { resumed: canResume });
+
     return {
       workerInfo,
       postCreatePromise: this.withPostCreateTimeout(postCreatePromise, sessionName, 'worker startup'),
@@ -1197,6 +1218,8 @@ export class SessionManager {
         sessionName, agent, preAssignedSessionId, existingCopilot.workdir, launchStartedAt,
       );
     }
+
+    this.emitCopilotEvent('copilot.started', copilotInfo, { resumed: canResume });
 
     return {
       copilotInfo,
@@ -1313,6 +1336,9 @@ export class SessionManager {
       copilotMode: persistedCopilotInfo.copilotMode,
       sessionId: persistedCopilotInfo.sessionId,
     });
+    if (!opts.resumeSessionId) {
+      this.emitCopilotEvent('copilot.created', persistedCopilotInfo);
+    }
 
     // Match worker lifecycle semantics: wait for readiness and persist any deferred
     // session ID capture before the CLI treats creation as complete.
@@ -1544,6 +1570,9 @@ export class SessionManager {
         phase: 'complete',
         archived: !!archivedCopilot,
       });
+      if (archivedCopilot) {
+        this.emitCopilotEvent('copilot.deleted', archivedCopilot, { archived: true });
+      }
     } catch (error) {
       logger.error('session.delete', 'Failed to delete copilot session', {
         ...context,
@@ -1643,7 +1672,7 @@ export class SessionManager {
       if (!fs.existsSync(workdir) && !worker.managedWorkdir) {
         throw new Error(`Task worker workdir "${workdir}" does not exist`);
       }
-      return this.createDirectoryWorker({
+      const result = await this.createDirectoryWorker({
         workdir,
         name: worker.displayName || worker.slug,
         managedWorkdir: worker.managedWorkdir === true,
@@ -1652,12 +1681,14 @@ export class SessionManager {
         resumeSessionFile: entry.agentSessionFile || worker.agentSessionFile || undefined,
         preservedWorkerInfo: worker,
       });
+      this.emitWorkerEvent('worker.restored', result.workerInfo, { archivedAt: entry.archivedAt });
+      return result;
     }
 
     if (!worker.repoRoot || !worker.branch) {
       throw new Error(`Archived worker "${sessionName}" is missing repository metadata`);
     }
-    return this.createWorker({
+    const result = await this.createWorker({
       repoRoot: worker.repoRoot,
       branchName: worker.branch,
       agentType: worker.agent,
@@ -1665,6 +1696,8 @@ export class SessionManager {
       resumeSessionFile: entry.agentSessionFile || worker.agentSessionFile || undefined,
       preservedWorkerInfo: worker,
     });
+    this.emitWorkerEvent('worker.restored', result.workerInfo, { archivedAt: entry.archivedAt });
+    return result;
   }
 
   async restoreCopilot(sessionName: string): Promise<CreateCopilotResult> {
@@ -1677,7 +1710,7 @@ export class SessionManager {
     }
 
     const copilot = entry.data as CopilotInfo;
-    return this.createCopilot({
+    const result = await this.createCopilot({
       workdir: copilot.workdir,
       agentType: copilot.agent,
       copilotMode: copilot.copilotMode,
@@ -1686,9 +1719,69 @@ export class SessionManager {
       resumeSessionId: entry.agentSessionId || undefined,
       resumeSessionFile: entry.agentSessionFile || copilot.agentSessionFile || undefined,
     });
+    this.emitCopilotEvent('copilot.restored', result.copilotInfo, { archivedAt: entry.archivedAt });
+    return result;
   }
 
   // ── Private helpers ──
+
+  private emitLifecycleEvent(
+    type: string,
+    role: HydraEventRole,
+    info: {
+      sessionName: string;
+      agent?: string | null;
+      workdir?: string | null;
+      payload?: Record<string, unknown>;
+    },
+  ): void {
+    try {
+      this.eventLog.append({
+        type,
+        source: 'session-manager',
+        session: info.sessionName,
+        role,
+        agent: info.agent || undefined,
+        workdir: info.workdir || undefined,
+        payload: info.payload,
+      });
+    } catch (error) {
+      logger.warn('session.event', 'Failed to append session lifecycle event', {
+        type,
+        sessionName: info.sessionName,
+        role,
+        error,
+      });
+    }
+  }
+
+  private emitWorkerEvent(type: string, worker: WorkerInfo, payload: Record<string, unknown> = {}): void {
+    this.emitLifecycleEvent(type, 'worker', {
+      sessionName: worker.sessionName,
+      agent: worker.agent,
+      workdir: worker.workdir,
+      payload: {
+        workerId: worker.workerId,
+        source: getWorkerSource(worker),
+        branch: isRepoWorker(worker) ? worker.branch : null,
+        repo: isRepoWorker(worker) ? worker.repo : null,
+        managedWorkdir: isDirectoryWorker(worker) ? worker.managedWorkdir === true : false,
+        ...payload,
+      },
+    });
+  }
+
+  private emitCopilotEvent(type: string, copilot: CopilotInfo, payload: Record<string, unknown> = {}): void {
+    this.emitLifecycleEvent(type, 'copilot', {
+      sessionName: copilot.sessionName,
+      agent: copilot.agent,
+      workdir: copilot.workdir,
+      payload: {
+        copilotMode: copilot.copilotMode,
+        ...payload,
+      },
+    });
+  }
 
   private async finalizeCopilotResult(result: CreateCopilotResult): Promise<CopilotInfo> {
     await result.postCreatePromise;
@@ -2400,6 +2493,7 @@ export class SessionManager {
       '    --worker-id "$WORKER_ID" \\',
       '    --branch "$BRANCH" \\',
       '    --workdir "$WORKDIR" \\',
+      '    --event-source hook \\',
       '    --json >/dev/null 2>&1 || true',
       'fi',
       '',
@@ -2489,7 +2583,7 @@ export class SessionManager {
       '    }',
       '  }',
       '  if ($hydraPath) {',
-      '    & $hydraPath notify create --session $COPILOT --from $SESSION --kind complete --title $TITLE --body $BODY --dedupe-key $DEDUPE --action open-session --action-session $SESSION --worker-id $WORKER_ID --branch $BRANCH --workdir $WORKDIR --json *> $null',
+      '    & $hydraPath notify create --session $COPILOT --from $SESSION --kind complete --title $TITLE --body $BODY --dedupe-key $DEDUPE --action open-session --action-session $SESSION --worker-id $WORKER_ID --branch $BRANCH --workdir $WORKDIR --event-source hook --json *> $null',
       '  }',
       '',
       '  # Resolve psmux command (honors HYDRA_TMUX_SOCKET if set).',
@@ -3002,17 +3096,39 @@ export class SessionManager {
     sessionId: string | null,
     agentSessionFile: string | null,
   ): Promise<void> {
-    await this.updateSessionState((state) => {
+    const eventInfo = await this.updateSessionState((state) => {
       if (state.workers[sessionName]) {
         state.workers[sessionName].sessionId = sessionId;
         state.workers[sessionName].agentSessionFile = agentSessionFile;
         state.updatedAt = new Date().toISOString();
+        return {
+          role: 'worker' as const,
+          agent: state.workers[sessionName].agent,
+          workdir: state.workers[sessionName].workdir,
+        };
       } else if (state.copilots[sessionName]) {
         state.copilots[sessionName].sessionId = sessionId;
         state.copilots[sessionName].agentSessionFile = agentSessionFile;
         state.updatedAt = new Date().toISOString();
+        return {
+          role: 'copilot' as const,
+          agent: state.copilots[sessionName].agent,
+          workdir: state.copilots[sessionName].workdir,
+        };
       }
+      return null;
     });
+    if (sessionId && eventInfo) {
+      this.emitLifecycleEvent('session.id.captured', eventInfo.role, {
+        sessionName,
+        agent: eventInfo.agent,
+        workdir: eventInfo.workdir,
+        payload: {
+          hasSessionId: true,
+          hasAgentSessionFile: !!agentSessionFile,
+        },
+      });
+    }
   }
 
   private sleep(ms: number): Promise<void> {
@@ -3237,6 +3353,11 @@ export class SessionManager {
         return nextWorker;
       });
 
+      this.emitWorkerEvent('worker.started', workerInfo, {
+        resumed: true,
+        alreadyRunning: true,
+      });
+
       return {
         workerInfo,
         postCreatePromise: this.withPostCreateTimeout(Promise.resolve(), sessionName, 'worker startup'),
@@ -3353,6 +3474,11 @@ export class SessionManager {
         state.workers[sessionName] = nextWorker;
         state.updatedAt = now;
         return nextWorker;
+      });
+
+      this.emitWorkerEvent('worker.started', workerInfo, {
+        resumed: canResume,
+        alreadyRunning: false,
       });
 
       return {

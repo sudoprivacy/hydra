@@ -142,6 +142,73 @@ Returns:
 `defaultAgent` and `default_agent` are accepted aliases for the same key in
 commands that take a config key.
 
+### `hydra events --json`
+
+Reads the append-only local event stream in `HYDRA_HOME/events.jsonl`.
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `events` | array | Event records with `seq` greater than `--after`, in ascending sequence order. |
+| `count` | number | `events.length`. |
+| `lastSeq` | number | Last printed event sequence, or the starting sequence when no events matched. |
+
+Event records include:
+
+| Field | Type |
+| --- | --- |
+| `version` | `1` |
+| `seq` | number |
+| `bootId` | string |
+| `ts` | string |
+| `type` | string |
+| `source` | `"cli"`, `"extension"`, `"session-manager"`, or `"hook"` |
+| `session` | string or undefined |
+| `role` | `"worker"`, `"copilot"`, or undefined |
+| `agent` | string or undefined |
+| `workdir` | string or undefined |
+| `payload` | object or undefined |
+
+Current event types:
+
+| Type | Source | Role | Payload contract |
+| --- | --- | --- | --- |
+| `notify.created` | `cli` or `hook` | undefined | `notificationId`, `kind`, `targetSession`, `sourceSession`, optional `actionType`, `actionSession`, `workerId`, `branch`, `agent`. Emitted only when a new notification is stored; dedupe hits do not emit a duplicate event. |
+| `notify.read` | `cli` | undefined | Same notification reference fields as `notify.created`. Emitted only when the notification transitions from unread to read. |
+| `notify.cleared` | `cli` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`. Emitted only when at least one notification is removed. |
+| `worker.created` | `session-manager` | `worker` | `workerId`, `source`, optional `branch`, `repo`, `managedWorkdir`. Emitted for fresh code/task worker creation. |
+| `worker.started` | `session-manager` | `worker` | Worker identity fields plus `resumed`; existing-branch paths also include `alreadyRunning`. Emitted when an existing worker session is started or reused. |
+| `worker.stopped` | `session-manager` | `worker` | Worker identity fields. |
+| `worker.deleted` | `session-manager` | `worker` | Worker identity fields plus `archived`, `deletedFiles`, `removedWorktree`, `deletedBranch`. |
+| `worker.restored` | `session-manager` | `worker` | Worker identity fields plus `archivedAt`. |
+| `copilot.created` | `session-manager` | `copilot` | `copilotMode`. Emitted for fresh copilot creation. |
+| `copilot.started` | `session-manager` | `copilot` | `copilotMode`, `resumed`. Emitted when an existing copilot session is started. |
+| `copilot.deleted` | `session-manager` | `copilot` | `copilotMode`, `archived`. |
+| `copilot.restored` | `session-manager` | `copilot` | `copilotMode`, `archivedAt`. |
+| `session.id.captured` | `session-manager` | `worker` or `copilot` | `hasSessionId`, `hasAgentSessionFile`. |
+
+Payloads are sanitized before writing. Keys that may carry prompt, message,
+body, diff, content, token, credential, password, authorization, API key, or
+private key data are redacted.
+
+`--after <seq>` returns only events with a larger `seq`.
+
+`--cursor-file <path>` reads the starting sequence from a file when `--after`
+is omitted and updates the file after printing events. Cursor files contain the
+last printed sequence as plain text.
+
+### `hydra events --follow --json`
+
+Streams new event records as JSON lines until interrupted. Each stdout line is
+one event record, not a wrapper object. `--after` and `--cursor-file` have the
+same meaning as non-follow mode; the cursor file is updated after each printed
+event.
+
+The first event-log version does not rotate `events.jsonl`. Consumers should
+track by `seq`, not byte offset, so a future rotation implementation can remain
+compatible.
+
 ### `hydra notify create --json`
 
 Creates a structured local notification in `HYDRA_HOME/notifications.json`.
@@ -290,6 +357,12 @@ Notify commands:
 | `notify clear` | Clear all notifications, or a narrowed session/source/target subset. |
 | `notify open <id>` | Mark one notification read and return its suggested action. |
 
+Events command:
+
+| Command | Contract |
+| --- | --- |
+| `events` | Read `HYDRA_HOME/events.jsonl`. Supports `--after`, `--follow`, and `--cursor-file`. |
+
 Archive commands:
 
 | Command | Contract |
@@ -317,6 +390,7 @@ the expected text without tmux, git, VS Code, or a populated `~/.hydra`.
 - `hydra copilot logs --help` -> `Usage: hydra copilot logs [options] <session>`
 - `hydra copilot send --help` -> `Usage: hydra copilot send [options] <session> <message>`
 - `hydra config get --help` -> `Usage: hydra config get [options] <key>`
+- `hydra events --help` -> `Usage: hydra events [options]`
 - `hydra notify create --help` -> `Usage: hydra notify create [options]`
 - `hydra notify list --help` -> `Usage: hydra notify list [options]`
 - `hydra notify read --help` -> `Usage: hydra notify read [options] <id>`

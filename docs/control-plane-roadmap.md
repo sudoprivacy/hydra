@@ -20,10 +20,12 @@ injecting messages.
 
 2. **Event log (#232)**
    - Add `HYDRA_HOME/events.jsonl`.
-   - Emit notification lifecycle events such as `notification.created`,
-     `notification.read`, and `notification.cleared`.
+   - Add `hydra events --json`, `--after`, `--follow`, and `--cursor-file`.
+   - Emit notification lifecycle events and the main worker/copilot lifecycle
+     events needed by future extension and dashboard consumers.
    - Redact text payloads in events; keep full notification text only in the
      local notification store.
+   - Defer event-log rotation until consumers are stable.
 
 3. **VS Code notification service**
    - Load notification snapshots in the extension host.
