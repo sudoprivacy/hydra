@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
-import { buildAgentLaunchCommand, buildAgentResumePlan, DEFAULT_AGENT_COMMANDS, AGENT_SESSION_CAPTURE, CLAUDE_READY_DELAY_MS, AGENT_READY_PATTERNS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, CLAUDE_TRUST_PROMPT_PATTERN, CODEX_RESUME_CWD_PROMPT_PATTERN, CODEX_TRUST_PROMPT_PATTERN, CODEX_HOOK_REVIEW_PROMPT_PATTERN, GEMINI_TRUST_PROMPT_PATTERN, SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN, agentSupportsCompletionNotification, agentSupportsCopilotMode, getUnsupportedCopilotModeMessage, type AgentCommandOptions, type ShellTarget } from './agentConfig';
+import { buildAgentLaunchCommand, buildAgentResumePlan, CLAUDE_READY_DELAY_MS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, agentSupportsCompletionNotification, agentSupportsCopilotMode, getAgentDefaultCommand, getAgentDefinition, getAgentReadyPromptHandlers, getUnsupportedCopilotModeMessage, type AgentCommandOptions, type AgentPromptAction, type ShellTarget } from './agentConfig';
 import { HYDRA_COPILOT_SESSION_ENV } from './env';
 import { exec, resolveCommandPath } from './exec';
 import { expandAndResolvePath, getHydraArchiveFile, getHydraHome, getHydraSessionsFile, getHydraTasksRoot, getTmuxCommand, resolveAgentSessionFile, toCanonicalPath } from './path';
@@ -761,7 +761,7 @@ export class SessionManager {
         prepared.resumeSessionFile,
       );
     } else {
-      sessionId = prepared.agentType === 'claude' ? randomUUID() : null;
+      sessionId = this.createPreassignedAgentSessionId(prepared.agentType);
       // Detect the pane shell once so launch-arg quoting matches the shell
       // that will execute the send-keyed command. See issue #225 §7 (codex
       // review round 1).
@@ -1036,15 +1036,13 @@ export class SessionManager {
     const resolvedResumeSessionFile = storedSessionId
       ? resolveAgentSessionFile(agent, existingWorker.workdir, storedSessionId, existingWorker.agentSessionFile)
       : null;
-    const canResume = !!storedSessionId &&
-      (agent !== 'sudocode' || !!resolvedResumeSessionFile) &&
-      !!buildAgentResumePlan(
-        agent,
-        command,
-        storedSessionId,
-        existingWorker.workdir,
-        resolvedResumeSessionFile,
-      );
+    const canResume = this.canResumeAgentSession(
+      agent,
+      command,
+      storedSessionId,
+      existingWorker.workdir,
+      resolvedResumeSessionFile,
+    );
 
     let workerInfo: WorkerInfo;
     let postCreatePromise: Promise<void>;
@@ -1080,7 +1078,7 @@ export class SessionManager {
     } else {
       // ── Fresh start: Phase 1 (capture sessionId) ──
       // No stored session ID — launch fresh agent and capture new session ID.
-      const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
+      const preAssignedSessionId = this.createPreassignedAgentSessionId(agent);
       // Detect the pane shell once so launch-arg quoting matches the shell
       // that will execute the send-keyed command. See issue #225 §7 (codex
       // review round 1).
@@ -1144,9 +1142,13 @@ export class SessionManager {
     const resolvedResumeSessionFile = storedSessionId
       ? resolveAgentSessionFile(agent, existingCopilot.workdir, storedSessionId, existingCopilot.agentSessionFile)
       : null;
-    const canResume = !!storedSessionId &&
-      (agent !== 'sudocode' || !!resolvedResumeSessionFile) &&
-      !!buildAgentResumePlan(agent, command, storedSessionId, existingCopilot.workdir, resolvedResumeSessionFile);
+    const canResume = this.canResumeAgentSession(
+      agent,
+      command,
+      storedSessionId,
+      existingCopilot.workdir,
+      resolvedResumeSessionFile,
+    );
 
     let copilotInfo: CopilotInfo;
     let postCreatePromise: Promise<void>;
@@ -1168,7 +1170,7 @@ export class SessionManager {
       });
       postCreatePromise = this.waitForAgentReady(sessionName, agent);
     } else {
-      const preAssignedSessionId = agent === 'claude' ? randomUUID() : null;
+      const preAssignedSessionId = this.createPreassignedAgentSessionId(agent);
       // Detect the pane shell once and feed it to both the command builder
       // (so its embedded quoting matches the shell) and the env prefix.
       // See issue #225 §6 §7.
@@ -1259,7 +1261,7 @@ export class SessionManager {
         sessionName,
       );
     } else {
-      sessionId = agentType === 'claude' ? randomUUID() : null;
+      sessionId = this.createPreassignedAgentSessionId(agentType);
       // Detect the pane shell once and feed it to both the command builder
       // (so its embedded quoting matches the shell) and the env prefix.
       // See issue #225 §6 §7.
@@ -2595,6 +2597,32 @@ export class SessionManager {
     return result.shell;
   }
 
+  private createPreassignedAgentSessionId(agentType: string): string | null {
+    return getAgentDefinition(agentType).preassignSessionId ? randomUUID() : null;
+  }
+
+  private canResumeAgentSession(
+    agentType: string,
+    agentCommand: string,
+    storedSessionId: string | null | undefined,
+    workdir: string,
+    resolvedResumeSessionFile?: string | null,
+  ): boolean {
+    if (!storedSessionId) {
+      return false;
+    }
+    if (getAgentDefinition(agentType).resume?.requiresSessionFile && !resolvedResumeSessionFile) {
+      return false;
+    }
+    return !!buildAgentResumePlan(
+      agentType,
+      agentCommand,
+      storedSessionId,
+      workdir,
+      resolvedResumeSessionFile,
+    );
+  }
+
   private async launchAgentResume(
     sessionName: string,
     agentType: string,
@@ -2640,7 +2668,8 @@ export class SessionManager {
     slashCommand: string,
     beforeCommandOutput: string,
   ): Promise<void> {
-    if (agentType === 'sudocode' && slashCommand.trim().startsWith('/resume')) {
+    const waitMode = getAgentDefinition(agentType).resume?.waitForSlashCommandReady;
+    if (waitMode === 'sudocodeSessionResumed' && slashCommand.trim().startsWith('/resume')) {
       await this.waitForSudoCodeResumeReady(sessionName, beforeCommandOutput);
       return;
     }
@@ -2652,7 +2681,11 @@ export class SessionManager {
     sessionName: string,
     beforeResumeOutput: string,
   ): Promise<void> {
-    const pattern = AGENT_READY_PATTERNS.sudocode;
+    const pattern = getAgentDefinition('sudocode').ready?.pattern;
+    if (!pattern) {
+      await this.waitForAgentReady(sessionName, 'sudocode');
+      return;
+    }
     const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
     const marker = 'Session resumed';
     const beforeMarkerCount = countOccurrences(beforeResumeOutput, marker);
@@ -2693,118 +2726,76 @@ export class SessionManager {
    * detection or Hydra will send setup slash commands into a modal.
    */
   private async waitForAgentReady(sessionName: string, agentType: string): Promise<void> {
-    const pattern = AGENT_READY_PATTERNS[agentType];
+    const readyConfig = getAgentDefinition(agentType).ready;
+    const pattern = readyConfig?.pattern;
     if (!pattern) {
       // No known ready pattern — fall back to fixed delay
-      await this.sleep(CLAUDE_READY_DELAY_MS);
+      await this.sleep(readyConfig?.fallbackDelayMs ?? CLAUDE_READY_DELAY_MS);
       return;
     }
 
-    const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
-    let trustPromptHandled = false;
-    let codexTrustPromptHandled = false;
-    let codexHookReviewPromptHandled = false;
-    let codexResumeCwdPromptHandled = false;
-    let geminiTrustPromptHandled = false;
-    let sudoCodeBroadDirectoryPromptHandled = false;
+    const deadline = Date.now() + readyConfig.timeoutMs;
+    const pollIntervalMs = readyConfig.pollIntervalMs;
+    const promptHandlers = getAgentReadyPromptHandlers(agentType);
+    const handledPromptIds = new Set<string>();
 
     // Initial delay before first poll (agent needs time to start the process)
-    await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+    await this.sleep(pollIntervalMs);
 
+    poll:
     while (Date.now() < deadline) {
       try {
         const output = await this.backend.capturePane(sessionName, 50);
 
-        // Handle trust prompt: send Enter to accept "Yes, I trust this folder"
-        if (!trustPromptHandled && CLAUDE_TRUST_PROMPT_PATTERN.test(output)) {
-          await this.backend.sendKeys(sessionName, '');
-          trustPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
+        for (const handler of promptHandlers) {
+          if (handler.once && handledPromptIds.has(handler.id)) {
+            continue;
+          }
+          if (!handler.pattern.test(output)) {
+            continue;
+          }
+          await this.applyAgentPromptAction(sessionName, handler.handle(output));
+          if (handler.once) {
+            handledPromptIds.add(handler.id);
+          }
+          await this.sleep(pollIntervalMs);
+          continue poll;
         }
 
-        if (
-          agentType === 'codex' &&
-          !codexTrustPromptHandled &&
-          CODEX_TRUST_PROMPT_PATTERN.test(output)
-        ) {
-          await this.backend.sendKeys(sessionName, '');
-          codexTrustPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
+        for (const handler of promptHandlers) {
+          if (handler.blocksReadiness && handler.pattern.test(output)) {
+            await this.sleep(pollIntervalMs);
+            continue poll;
+          }
         }
 
-        if (
-          agentType === 'codex' &&
-          !codexHookReviewPromptHandled &&
-          CODEX_HOOK_REVIEW_PROMPT_PATTERN.test(output)
-        ) {
-          // Select "Trust all and continue" for Hydra-injected completion hooks.
-          await this.backend.sendKeys(sessionName, 'Down');
-          codexHookReviewPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
-        }
-
-        // Handle Codex resume cwd picker: accept the default selection and keep
-        // polling until the actual idle input prompt appears.
-        if (
-          agentType === 'codex' &&
-          !codexResumeCwdPromptHandled &&
-          CODEX_RESUME_CWD_PROMPT_PATTERN.test(output)
-        ) {
-          await this.backend.sendKeys(sessionName, '');
-          codexResumeCwdPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
-        }
-
-        if (
-          agentType === 'sudocode' &&
-          !sudoCodeBroadDirectoryPromptHandled &&
-          SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN.test(output)
-        ) {
-          await this.backend.sendKeys(sessionName, 'y');
-          sudoCodeBroadDirectoryPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
-        }
-
-        if (
-          agentType === 'gemini' &&
-          !geminiTrustPromptHandled &&
-          GEMINI_TRUST_PROMPT_PATTERN.test(output)
-        ) {
-          await this.backend.sendKeys(sessionName, '');
-          geminiTrustPromptHandled = true;
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
-          continue;
-        }
-
-        if (
-          (agentType === 'codex' && (
-            CODEX_TRUST_PROMPT_PATTERN.test(output) ||
-            CODEX_HOOK_REVIEW_PROMPT_PATTERN.test(output) ||
-            CODEX_RESUME_CWD_PROMPT_PATTERN.test(output)
-          )) ||
-          (agentType === 'gemini' && GEMINI_TRUST_PROMPT_PATTERN.test(output))
-        ) {
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+        if (readyConfig.additionalBlockingPatterns?.some(blockingPattern => blockingPattern.test(output))) {
+          await this.sleep(pollIntervalMs);
           continue;
         }
 
         if (pattern.test(output)) {
           // Brief settle delay — TUI input handler may not be fully interactive yet
-          await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+          await this.sleep(pollIntervalMs);
           return;
         }
       } catch {
         // Session may not be ready yet — keep polling
       }
-      await this.sleep(AGENT_READY_POLL_INTERVAL_MS);
+      await this.sleep(pollIntervalMs);
     }
 
     // Timeout reached — proceed anyway (best-effort, matches old behavior)
+  }
+
+  private async applyAgentPromptAction(
+    sessionName: string,
+    action: AgentPromptAction | null,
+  ): Promise<void> {
+    if (!action || action.kind === 'wait') {
+      return;
+    }
+    await this.backend.sendKeys(sessionName, action.keys);
   }
 
   /**
@@ -2821,7 +2812,7 @@ export class SessionManager {
     workdir: string,
     launchStartedAt?: number,
   ): Promise<{ sessionId: string | null; agentSessionFile: string | null }> {
-    const config = AGENT_SESSION_CAPTURE[agentType];
+    const config = getAgentDefinition(agentType).sessionCapture;
     if (!config) return { sessionId: null, agentSessionFile: null };
     const logCaptured = (result: { sessionId: string | null; agentSessionFile: string | null }, source: string) => {
       logger.info('session.captureAgentSessionInfo', 'Captured agent session info', {
@@ -2909,7 +2900,7 @@ export class SessionManager {
     workdir: string,
     output: string,
   ): { sessionId: string | null; agentSessionFile: string | null } {
-    const config = AGENT_SESSION_CAPTURE[agentType];
+    const config = getAgentDefinition(agentType).sessionCapture;
     if (!config) return { sessionId: null, agentSessionFile: null };
 
     const cleanOutput = this.stripAnsi(output);
@@ -3037,7 +3028,7 @@ export class SessionManager {
   }
 
   private getDefaultAgentCommand(agentType: string): string {
-    return getHydraGlobalAgentCommand(agentType) || DEFAULT_AGENT_COMMANDS[agentType] || agentType;
+    return getHydraGlobalAgentCommand(agentType) || getAgentDefaultCommand(agentType) || agentType;
   }
 
   private async resolveAgentCommand(agentCommand: string): Promise<string> {
@@ -3276,15 +3267,13 @@ export class SessionManager {
         : null;
 
       // Resume or fresh start
-      const canResume = !!storedSessionId &&
-        (agentType !== 'sudocode' || !!resolvedResumeSessionFile) &&
-        !!buildAgentResumePlan(
-          agentType,
-          agentCommand,
-          storedSessionId,
-          worktreePath,
-          resolvedResumeSessionFile,
-        );
+      const canResume = this.canResumeAgentSession(
+        agentType,
+        agentCommand,
+        storedSessionId,
+        worktreePath,
+        resolvedResumeSessionFile,
+      );
 
       let postCreatePromise: Promise<void>;
       let sessionId: string | null;
@@ -3308,7 +3297,7 @@ export class SessionManager {
         })();
       } else {
         // ── Fresh start: Phase 1 (capture sessionId) → Phase 2 (send task) ──
-        const preAssignedSessionId = agentType === 'claude' ? randomUUID() : null;
+        const preAssignedSessionId = this.createPreassignedAgentSessionId(agentType);
         // Detect the pane shell once so launch-arg quoting matches the shell
         // that will execute the send-keyed command. See issue #225 §7 (codex
         // review round 1).
