@@ -28,6 +28,17 @@ interface StoredNotificationSmoke {
   context?: { workerId?: number; branch?: string | null; workdir?: string | null };
 }
 
+interface StoredEventSmoke {
+  type: string;
+  source: string;
+  session?: string;
+  payload?: {
+    sourceSession?: string | null;
+    targetSession?: string | null;
+    notificationId?: string;
+  };
+}
+
 function sq(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
@@ -73,6 +84,18 @@ function readStoredNotifications(hydraHome: string): StoredNotificationSmoke[] {
   }
   const parsed = JSON.parse(fs.readFileSync(storePath, 'utf-8')) as { notifications?: unknown[] };
   return (parsed.notifications || []) as StoredNotificationSmoke[];
+}
+
+function readStoredEvents(hydraHome: string): StoredEventSmoke[] {
+  const eventsPath = path.join(hydraHome, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) {
+    return [];
+  }
+  return fs.readFileSync(eventsPath, 'utf-8')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as StoredEventSmoke);
 }
 
 class PromptBackend {
@@ -515,6 +538,8 @@ async function main(): Promise<void> {
       hookCommands.length,
       `Structured store should contain one completion notification per agent, got:\n${JSON.stringify(firstNotifications, null, 2)}`,
     );
+    const firstEvents = readStoredEvents(hydraDir).filter(event => event.type === 'notify.created' && event.source === 'hook');
+    assert.equal(firstEvents.length, hookCommands.length, 'Hook notifications should emit notify.created events');
     for (const { agent, info } of hookCommands) {
       const stored = firstNotifications.filter(notification => notification.sourceSession === info.sessionName);
       assert.equal(stored.length, 1, `${agent} should create exactly one structured notification`);
@@ -526,6 +551,9 @@ async function main(): Promise<void> {
       assert.equal(stored[0].context?.branch, info.branch);
       assert.equal(stored[0].context?.workdir, info.workdir);
       assert.ok(stored[0].dedupeKey?.startsWith(`completion:${info.sessionName}:`));
+      const event = firstEvents.find(candidate => candidate.payload?.sourceSession === info.sessionName);
+      assert.ok(event, `${agent} should create a hook-sourced notify.created event`);
+      assert.equal(event?.payload?.targetSession, COPILOT_SESSION);
     }
 
     // Re-arm to simulate a later copilot-originated worker message. The hook
@@ -656,6 +684,9 @@ async function main(): Promise<void> {
     assert.equal(twoStepNotifications[0].kind, 'complete');
     assert.equal(twoStepNotifications[0].targetSession, COPILOT_SESSION);
     assert.equal(twoStepNotifications[0].context?.workerId, twoStepWorkerId);
+    const twoStepEvents = readStoredEvents(hydraDir)
+      .filter(event => event.type === 'notify.created' && event.source === 'hook' && event.payload?.sourceSession === twoStepSession);
+    assert.equal(twoStepEvents.length, 1, 'Two-step E2E: notify.created event should be created');
 
     console.log('  Part 2b (two-step worker end-to-end notification): ok');
   } finally {

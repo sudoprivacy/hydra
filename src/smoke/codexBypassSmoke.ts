@@ -145,6 +145,18 @@ function readJson<T>(filePath: string, fallback: T): T {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
 }
 
+function readEvents(hydraDir: string): Array<{ type: string; session?: string; payload?: Record<string, unknown> }> {
+  const eventsPath = path.join(hydraDir, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) {
+    return [];
+  }
+  return fs.readFileSync(eventsPath, 'utf-8')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as { type: string; session?: string; payload?: Record<string, unknown> });
+}
+
 function countOccurrences(text: string, value: string): number {
   return text.split(value).length - 1;
 }
@@ -360,6 +372,55 @@ async function main(): Promise<void> {
   }
 
   {
+    const copilotStartWorkdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-copilot-start-'));
+    const state = readJson<Record<string, unknown>>(sessionsFile, {
+      copilots: {},
+      workers: {},
+      nextWorkerId: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    const copilots = (state.copilots as Record<string, unknown>) || {};
+    copilots['copilot-start'] = {
+      sessionName: 'copilot-start',
+      displayName: 'copilot-start',
+      status: 'stopped',
+      attached: false,
+      agent: 'codex',
+      copilotMode: 'normal',
+      workdir: copilotStartWorkdir,
+      tmuxSession: 'copilot-start',
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      sessionId: '55555555-5555-4555-8555-555555555555',
+      agentSessionFile: null,
+    };
+    state.copilots = copilots;
+    writeJson(sessionsFile, state);
+
+    const backend = new FakeBackend();
+    backend.paneOutputs.set('copilot-start', '⏵');
+    const sm = new SessionManager(backend);
+    forceFastSleeps(sm);
+
+    const result = await sm.startCopilot('copilot-start');
+    await result.postCreatePromise;
+
+    const command = lastSendKeysFor(backend, 'copilot-start');
+    assert.equal(
+      command,
+      withCopilotSessionEnv(
+        'copilot-start',
+        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${copilotStartWorkdir}' '55555555-5555-4555-8555-555555555555'`,
+      ),
+    );
+    assert.equal(result.resumed, true);
+    const startedEvent = readEvents(hydraDir)
+      .find(event => event.type === 'copilot.started' && event.session === 'copilot-start');
+    assert.ok(startedEvent, 'startCopilot should emit copilot.started');
+    assert.equal(startedEvent?.payload?.resumed, true);
+  }
+
+  {
     const workerWorkdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-start-'));
     const state = readJson<Record<string, unknown>>(sessionsFile, {
       copilots: {},
@@ -565,12 +626,86 @@ async function main(): Promise<void> {
           call.sessionName === 'repo-ns_foo-bar-2' && call.message === 'resume foo slash bar'
         ),
       );
+      const startedEvent = readEvents(hydraDir)
+        .find(event => event.type === 'worker.started' && event.session === 'repo-ns_foo-bar-2');
+      assert.ok(startedEvent, 'Existing-branch resume should emit worker.started');
+      assert.equal(startedEvent?.payload?.resumed, true);
+      assert.equal(startedEvent?.payload?.alreadyRunning, false);
       assert.equal(
         backend.sendKeysCalls.some(call =>
           call.sessionName === 'repo-ns_foo-bar' && call.keys === 'resume foo slash bar'
         ),
         false,
       );
+    } finally {
+      restoreCoreGit();
+    }
+  }
+
+  {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-live-resume-repo-'));
+    const liveWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-live-resume-worktree-'));
+    const now = new Date().toISOString();
+    writeJson(sessionsFile, {
+      copilots: {},
+      workers: {
+        'repo-ns_live-branch': {
+          sessionName: 'repo-ns_live-branch',
+          displayName: 'live-branch',
+          workerId: 21,
+          repo: 'repo',
+          repoRoot,
+          branch: 'live/branch',
+          slug: 'live-branch',
+          status: 'running',
+          attached: false,
+          agent: 'codex',
+          workdir: liveWorktree,
+          tmuxSession: 'repo-ns_live-branch',
+          createdAt: now,
+          lastSeenAt: now,
+          sessionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+          copilotSessionName: null,
+        },
+      },
+      nextWorkerId: 22,
+      updatedAt: now,
+    });
+
+    const restoreCoreGit = patchModule(coreGit, {
+      validateBranchName: () => undefined,
+      getRepoSessionNamespace: () => 'repo-ns',
+      localBranchExists: async (_repoRoot: string, branchName: string) => branchName === 'live/branch',
+      branchNameToSlug: () => 'live-branch',
+      getRepoName: () => 'repo',
+    });
+
+    try {
+      const backend = new FakeBackend();
+      await backend.createSession('repo-ns_live-branch', liveWorktree);
+      await backend.setSessionAgent('repo-ns_live-branch', 'codex');
+      const sm = new SessionManager(backend);
+      forceFastSleeps(sm);
+
+      const result = await sm.createWorker({
+        repoRoot,
+        branchName: 'live/branch',
+        agentType: 'codex',
+        task: 'reuse live branch',
+      });
+      await result.postCreatePromise;
+
+      assert.equal(result.workerInfo.sessionName, 'repo-ns_live-branch');
+      assert.ok(
+        backend.sendMessageCalls.some(call =>
+          call.sessionName === 'repo-ns_live-branch' && call.message === 'reuse live branch'
+        ),
+      );
+      const startedEvent = readEvents(hydraDir)
+        .find(event => event.type === 'worker.started' && event.session === 'repo-ns_live-branch');
+      assert.ok(startedEvent, 'Live existing branch should emit worker.started');
+      assert.equal(startedEvent?.payload?.resumed, true);
+      assert.equal(startedEvent?.payload?.alreadyRunning, true);
     } finally {
       restoreCoreGit();
     }
@@ -661,6 +796,11 @@ async function main(): Promise<void> {
         backend.sendKeysCalls.some(call => call.sessionName === 'repo-ns_foo-bar-2'),
         false,
       );
+      const startedEvent = readEvents(hydraDir)
+        .find(event => event.type === 'worker.started' && event.session === 'repo-ns_foo-bar');
+      assert.ok(startedEvent, 'Existing branch fresh start should emit worker.started');
+      assert.equal(startedEvent?.payload?.resumed, false);
+      assert.equal(startedEvent?.payload?.alreadyRunning, false);
     } finally {
       restoreCoreGit();
     }

@@ -126,6 +126,18 @@ function readJson<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
 }
 
+function readEvents(hydraHome: string): Array<{ type: string; session?: string; payload?: Record<string, unknown> }> {
+  const eventsPath = path.join(hydraHome, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) {
+    return [];
+  }
+  return fs.readFileSync(eventsPath, 'utf-8')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as { type: string; session?: string; payload?: Record<string, unknown> });
+}
+
 async function main(): Promise<void> {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-task-worker-'));
   process.env.HOME = tempHome;
@@ -154,6 +166,10 @@ async function main(): Promise<void> {
   assert.equal(unmanaged.workerInfo.managedWorkdir, false);
   assert.equal(unmanaged.workerInfo.workdir, userDir);
   assert.equal(backend.messages.at(-1)?.message, 'summarize the notes');
+  const unmanagedCreatedEvent = readEvents(process.env.HYDRA_HOME!)
+    .find(event => event.type === 'worker.created' && event.session === unmanaged.workerInfo.sessionName);
+  assert.ok(unmanagedCreatedEvent, 'task worker creation should emit worker.created');
+  assert.equal(unmanagedCreatedEvent?.payload?.source, 'directory');
 
   await assert.rejects(
     () => sm.deleteWorker(unmanaged.workerInfo.sessionName, { deleteFiles: true }),
@@ -164,6 +180,9 @@ async function main(): Promise<void> {
 
   await sm.deleteWorker(unmanaged.workerInfo.sessionName);
   assert.ok(fs.existsSync(userDir), 'unmanaged directory should survive normal delete');
+  const unmanagedDeletedEvent = readEvents(process.env.HYDRA_HOME!)
+    .find(event => event.type === 'worker.deleted' && event.session === unmanaged.workerInfo.sessionName);
+  assert.ok(unmanagedDeletedEvent, 'task worker deletion should emit worker.deleted');
   const stateAfterDelete = readJson<{ workers: Record<string, unknown> }>(getHydraSessionsFile());
   assert.equal(stateAfterDelete.workers[unmanaged.workerInfo.sessionName], undefined);
 
@@ -194,6 +213,9 @@ async function main(): Promise<void> {
   const managedDeletePath = managedDeleteFiles.workerInfo.workdir;
   await sm.deleteWorker(managedDeleteFiles.workerInfo.sessionName, { deleteFiles: true });
   assert.equal(fs.existsSync(managedDeletePath), false, 'managed task directory should be deleted with deleteFiles');
+  const managedDeletedEvent = readEvents(process.env.HYDRA_HOME!)
+    .find(event => event.type === 'worker.deleted' && event.session === managedDeleteFiles.workerInfo.sessionName);
+  assert.equal(managedDeletedEvent?.payload?.deletedFiles, true, 'deleteFiles should be recorded as event metadata');
 
   fs.rmSync(tempHome, { recursive: true, force: true });
   console.log('taskWorkerSmoke: ok');

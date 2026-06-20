@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { getHydraHome } from './path';
+import { EventLog, type HydraEventSource } from './events';
+import { logger } from './logger';
 
 export type NotificationKind = 'complete' | 'needs-input' | 'error' | 'blocked' | 'info';
 
@@ -42,6 +44,7 @@ export interface CreateNotificationInput {
   dedupeKey?: string;
   action?: NotificationAction;
   context?: HydraNotification['context'];
+  eventSource?: HydraEventSource;
 }
 
 export interface CreateNotificationResult {
@@ -99,6 +102,7 @@ export class NotificationStore {
   constructor(
     private readonly filePath: string = getHydraNotificationsFile(),
     private readonly retentionLimit: number = DEFAULT_RETENTION_LIMIT,
+    private readonly eventLog: EventLog = new EventLog(),
   ) {}
 
   create(input: CreateNotificationInput): CreateNotificationResult {
@@ -136,6 +140,7 @@ export class NotificationStore {
 
       store.notifications = [notification, ...store.notifications].slice(0, this.retentionLimit);
       this.writeStore(store);
+      this.emitNotificationEvent('notify.created', notification, input.eventSource || 'cli');
       return { notification, created: true };
     });
   }
@@ -168,6 +173,7 @@ export class NotificationStore {
       const updated = { ...existing, readAt: new Date().toISOString() };
       store.notifications[index] = updated;
       this.writeStore(store);
+      this.emitNotificationEvent('notify.read', updated, 'cli');
       return { notification: updated, markedRead: 1 };
     });
   }
@@ -180,6 +186,7 @@ export class NotificationStore {
       const cleared = before - store.notifications.length;
       if (cleared > 0) {
         this.writeStore(store);
+        this.emitClearEvent(cleared, filters);
       }
       return { cleared };
     });
@@ -263,6 +270,54 @@ export class NotificationStore {
       return fn();
     } finally {
       fs.rmSync(lockDir, { recursive: true, force: true });
+    }
+  }
+
+  private emitNotificationEvent(type: 'notify.created' | 'notify.read', notification: HydraNotification, source: HydraEventSource): void {
+    try {
+      this.eventLog.append({
+        type,
+        source,
+        session: notification.targetSession || notification.sourceSession,
+        payload: {
+          notificationId: notification.id,
+          kind: notification.kind,
+          targetSession: notification.targetSession,
+          sourceSession: notification.sourceSession,
+          actionType: notification.action?.type,
+          actionSession: notification.action?.session,
+          workerId: notification.context?.workerId,
+          branch: notification.context?.branch,
+          agent: notification.context?.agent,
+        },
+      });
+    } catch (error) {
+      logger.warn('notifications.event', 'Failed to append notification event', {
+        type,
+        notificationId: notification.id,
+        error,
+      });
+    }
+  }
+
+  private emitClearEvent(cleared: number, filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'>): void {
+    try {
+      this.eventLog.append({
+        type: 'notify.cleared',
+        source: 'cli',
+        session: filters.session || filters.targetSession || filters.sourceSession,
+        payload: {
+          cleared,
+          session: filters.session,
+          targetSession: filters.targetSession,
+          sourceSession: filters.sourceSession,
+        },
+      });
+    } catch (error) {
+      logger.warn('notifications.event', 'Failed to append notification clear event', {
+        cleared,
+        error,
+      });
     }
   }
 }

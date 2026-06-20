@@ -1,4 +1,5 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
+import { isHydraEventSource, type HydraEventSource } from '../../core/events';
 import {
   isNotificationKind,
   NotificationStore,
@@ -21,6 +22,7 @@ interface NotifyCreateOptions {
   branch?: string;
   workdir?: string;
   agent?: string;
+  eventSource?: string;
 }
 
 interface NotifyListOptions {
@@ -58,6 +60,7 @@ export function registerNotifyCommands(program: Command): void {
     .option('--branch <branch>', 'Branch name for notification context')
     .option('--workdir <path>', 'Workdir for notification context')
     .option('--agent <agent>', 'Agent for notification context')
+    .addOption(new Option('--event-source <source>').hideHelp())
     .action((opts: NotifyCreateOptions) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
@@ -83,6 +86,7 @@ export function registerNotifyCommands(program: Command): void {
             workdir: opts.workdir ?? null,
             agent: opts.agent ?? null,
           },
+          eventSource: parseEventSource(opts.eventSource),
         });
 
         outputResult(
@@ -228,6 +232,14 @@ export function registerNotifyCommands(program: Command): void {
         outputError(error, globalOpts);
       }
     });
+}
+
+function parseEventSource(value: string | undefined): HydraEventSource {
+  const normalized = (value || 'cli').trim();
+  if (isHydraEventSource(normalized)) {
+    return normalized;
+  }
+  throw new Error(`Invalid event source "${value}". Expected: cli, extension, session-manager, or hook.`);
 }
 
 function parseKind(value: string | undefined): NotificationKind {
