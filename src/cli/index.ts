@@ -12,6 +12,7 @@ import { registerWhoamiCommand } from './commands/whoami';
 import { registerTestCommand } from './commands/test';
 import { registerShareCommands } from './commands/share';
 import { registerConfigCommands } from './commands/config';
+import { registerNotifyCommands } from './commands/notify';
 import { peekTelemetry } from '../core/telemetry';
 import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '../core/path';
 import { getHostSummary, logger } from '../core/logger';
@@ -85,5 +86,6 @@ registerWhoamiCommand(program);
 registerTestCommand(program);
 registerShareCommands(program);
 registerConfigCommands(program);
+registerNotifyCommands(program);
 
 program.parse();

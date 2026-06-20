@@ -142,6 +142,86 @@ Returns:
 `defaultAgent` and `default_agent` are accepted aliases for the same key in
 commands that take a config key.
 
+### `hydra notify create --json`
+
+Creates a structured local notification in `HYDRA_HOME/notifications.json`.
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"created"` for a new notification, `"exists"` for an idempotent dedupe hit. |
+| `created` | boolean | Whether a new notification was written. |
+| `notification` | object | The stored notification record. |
+
+Notification records include:
+
+| Field | Type |
+| --- | --- |
+| `id` | string |
+| `createdAt` | string |
+| `readAt` | string or null |
+| `kind` | `"complete"`, `"needs-input"`, `"error"`, `"blocked"`, or `"info"` |
+| `title` | string |
+| `body` | string |
+| `targetSession` | string or null |
+| `sourceSession` | string or null |
+| `dedupeKey` | string or undefined |
+| `action` | object or undefined |
+| `context` | object or undefined |
+
+`--dedupe-key` is an idempotency key. When it matches an existing notification,
+the command returns the existing record and does not append a duplicate.
+
+### `hydra notify list --json`
+
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `notifications` | array | Matching notification records, newest first. |
+| `count` | number | `notifications.length`. |
+| `unreadCount` | number | Total unread notifications in the store, before filters. |
+| `totalCount` | number | Total notifications in the store, before filters. |
+
+Supported filters include `--session`, `--target`, `--from`, `--kind`,
+`--unread`, and `--limit`.
+
+### `hydra notify read <id> --json`
+
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `notification` | object | The notification after the read operation. |
+| `markedRead` | number | `1` if the command changed unread to read, otherwise `0`. |
+
+### `hydra notify clear --json`
+
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `cleared` | number | Number of notifications removed. |
+
+`--session`, `--target`, and `--from` narrow which notifications are cleared.
+With no filter, all notifications are cleared.
+
+### `hydra notify open <id> --json`
+
+Returns notification data and marks the notification read. This MVP does not
+focus VS Code UI directly; callers should inspect `action`.
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `opened` | boolean | Always `false` until a UI-backed opener is added. |
+| `notification` | object | The notification after the open operation. |
+| `action` | object or null | Suggested follow-up action, such as `open-session`. |
+| `markedRead` | number | `1` if the command changed unread to read, otherwise `0`. |
+
 ### `hydra worker logs <session> --json`
 
 Returns:
@@ -200,6 +280,16 @@ Config commands:
 | `config set <key> <value>` | Persist one setting. Currently supports `default-agent`. |
 | `config unset <key>` | Remove one setting and fall back to defaults. |
 
+Notify commands:
+
+| Command | Contract |
+| --- | --- |
+| `notify create` | Create a structured local notification. Supports `--session`, `--from`, `--kind`, `--title`, `--body`, `--dedupe-key`, `--action`, and context flags. |
+| `notify list` | List structured notifications. Supports `--session`, `--target`, `--from`, `--kind`, `--unread`, and `--limit`. |
+| `notify read <id>` | Mark one notification read. |
+| `notify clear` | Clear all notifications, or a narrowed session/source/target subset. |
+| `notify open <id>` | Mark one notification read and return its suggested action. |
+
 Archive commands:
 
 | Command | Contract |
@@ -227,6 +317,11 @@ the expected text without tmux, git, VS Code, or a populated `~/.hydra`.
 - `hydra copilot logs --help` -> `Usage: hydra copilot logs [options] <session>`
 - `hydra copilot send --help` -> `Usage: hydra copilot send [options] <session> <message>`
 - `hydra config get --help` -> `Usage: hydra config get [options] <key>`
+- `hydra notify create --help` -> `Usage: hydra notify create [options]`
+- `hydra notify list --help` -> `Usage: hydra notify list [options]`
+- `hydra notify read --help` -> `Usage: hydra notify read [options] <id>`
+- `hydra notify clear --help` -> `Usage: hydra notify clear [options]`
+- `hydra notify open --help` -> `Usage: hydra notify open [options] <id>`
 <!-- cli-contract-help-probes:end -->
 
 ## Current Caveats
