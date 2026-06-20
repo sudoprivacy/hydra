@@ -122,6 +122,11 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['copilot', 'logs', '--help'], expected: 'Usage: hydra copilot logs [options] <session>' },
     { args: ['copilot', 'send', '--help'], expected: 'Usage: hydra copilot send [options] <session> <message>' },
     { args: ['config', 'get', '--help'], expected: 'Usage: hydra config get [options] <key>' },
+    { args: ['notify', 'create', '--help'], expected: 'Usage: hydra notify create [options]' },
+    { args: ['notify', 'list', '--help'], expected: 'Usage: hydra notify list [options]' },
+    { args: ['notify', 'read', '--help'], expected: 'Usage: hydra notify read [options] <id>' },
+    { args: ['notify', 'clear', '--help'], expected: 'Usage: hydra notify clear [options]' },
+    { args: ['notify', 'open', '--help'], expected: 'Usage: hydra notify open [options] <id>' },
   ];
 
   for (const probe of probes) {

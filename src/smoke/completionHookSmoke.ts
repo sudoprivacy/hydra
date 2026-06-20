@@ -16,6 +16,17 @@ import * as path from 'node:path';
 
 const COPILOT_SESSION = 'hydra-smoke-hook-copilot';
 const CAT_VISIBLE_COPIES_PER_NOTIFICATION = 2;
+const CLI_PATH = path.resolve(__dirname, '..', 'cli', 'index.js');
+
+interface StoredNotificationSmoke {
+  id: string;
+  kind: string;
+  targetSession: string | null;
+  sourceSession: string | null;
+  dedupeKey?: string;
+  action?: { type: string; session: string };
+  context?: { workerId?: number; branch?: string | null; workdir?: string | null };
+}
 
 function sq(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
@@ -38,6 +49,30 @@ function sleep(ms: number): Promise<void> {
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
+}
+
+function installHydraCliShim(binDir: string): void {
+  fs.mkdirSync(binDir, { recursive: true });
+  const posixShim = path.join(binDir, 'hydra');
+  fs.writeFileSync(
+    posixShim,
+    ['#!/bin/sh', `exec ${sq(process.execPath)} ${sq(CLI_PATH)} "$@"`, ''].join('\n'),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(binDir, 'hydra.cmd'),
+    `@echo off\r\n"${process.execPath}" "${CLI_PATH}" %*\r\n`,
+    'utf-8',
+  );
+}
+
+function readStoredNotifications(hydraHome: string): StoredNotificationSmoke[] {
+  const storePath = path.join(hydraHome, 'notifications.json');
+  if (!fs.existsSync(storePath)) {
+    return [];
+  }
+  const parsed = JSON.parse(fs.readFileSync(storePath, 'utf-8')) as { notifications?: unknown[] };
+  return (parsed.notifications || []) as StoredNotificationSmoke[];
 }
 
 class PromptBackend {
@@ -84,6 +119,7 @@ async function main(): Promise<void> {
   // Redirect Hydra state to a temp directory so we don't pollute the real one
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-smoke-hook-'));
   const origHome = process.env.HOME;
+  const origPath = process.env.PATH;
   const origHydraHome = process.env.HYDRA_HOME;
   const origHydraConfigPath = process.env.HYDRA_CONFIG_PATH;
   process.env.HOME = tempHome;
@@ -91,6 +127,9 @@ async function main(): Promise<void> {
   const hydraDir = path.join(tempHome, '.hydra');
   process.env.HYDRA_HOME = hydraDir;
   process.env.HYDRA_CONFIG_PATH = path.join(hydraDir, 'config.json');
+  const shimDir = path.join(tempHome, 'bin');
+  installHydraCliShim(shimDir);
+  process.env.PATH = `${shimDir}${path.delimiter}${origPath || ''}`;
   const sessionsFile = path.join(hydraDir, 'sessions.json');
 
   // Seed a minimal sessions.json so readSessionState doesn't fail
@@ -183,6 +222,8 @@ async function main(): Promise<void> {
   assert.ok(scriptContent.includes('HYDRA_TMUX_SOCKET'), 'Script should handle custom tmux socket');
   assert.ok(scriptContent.includes('PENDING='), 'Script should have a per-message pending marker');
   assert.ok(scriptContent.includes('LOCKDIR='), 'Script should use a lock for duplicate hook entries');
+  assert.ok(scriptContent.includes('notify create'), 'Script should create structured notifications');
+  assert.ok(scriptContent.includes('DEDUPE='), 'Script should use a notification dedupe key');
 
   const codexLaunch = sm['withCodexCompletionHookOverrides'](
     'codex',
@@ -468,6 +509,24 @@ async function main(): Promise<void> {
         `${agent} notification should appear exactly once, got:\n${paneOutput}`,
       );
     }
+    const firstNotifications = readStoredNotifications(hydraDir);
+    assert.equal(
+      firstNotifications.length,
+      hookCommands.length,
+      `Structured store should contain one completion notification per agent, got:\n${JSON.stringify(firstNotifications, null, 2)}`,
+    );
+    for (const { agent, info } of hookCommands) {
+      const stored = firstNotifications.filter(notification => notification.sourceSession === info.sessionName);
+      assert.equal(stored.length, 1, `${agent} should create exactly one structured notification`);
+      assert.equal(stored[0].kind, 'complete');
+      assert.equal(stored[0].targetSession, COPILOT_SESSION);
+      assert.equal(stored[0].action?.type, 'open-session');
+      assert.equal(stored[0].action?.session, info.sessionName);
+      assert.equal(stored[0].context?.workerId, info.workerId);
+      assert.equal(stored[0].context?.branch, info.branch);
+      assert.equal(stored[0].context?.workdir, info.workdir);
+      assert.ok(stored[0].dedupeKey?.startsWith(`completion:${info.sessionName}:`));
+    }
 
     // Re-arm to simulate a later copilot-originated worker message. The hook
     // should notify again after that message completes.
@@ -490,6 +549,12 @@ async function main(): Promise<void> {
         `${agent} notification should appear again after re-arm, got:\n${paneOutput}`,
       );
     }
+    const secondNotifications = readStoredNotifications(hydraDir);
+    assert.equal(
+      secondNotifications.length,
+      hookCommands.length * 2,
+      'Structured store should append one new notification per re-armed hook',
+    );
 
     console.log('  Part 2 (live tmux arm/consume notification): ok');
 
@@ -585,6 +650,12 @@ async function main(): Promise<void> {
       CAT_VISIBLE_COPIES_PER_NOTIFICATION,
       `Two-step E2E: copilot pane should gain one notification, got:\n${paneAfter}`,
     );
+    const twoStepNotifications = readStoredNotifications(hydraDir)
+      .filter(notification => notification.sourceSession === twoStepSession);
+    assert.equal(twoStepNotifications.length, 1, 'Two-step E2E: structured notification should be created');
+    assert.equal(twoStepNotifications[0].kind, 'complete');
+    assert.equal(twoStepNotifications[0].targetSession, COPILOT_SESSION);
+    assert.equal(twoStepNotifications[0].context?.workerId, twoStepWorkerId);
 
     console.log('  Part 2b (two-step worker end-to-end notification): ok');
   } finally {
@@ -594,6 +665,8 @@ async function main(): Promise<void> {
   // Restore environment
   if (origHome) process.env.HOME = origHome;
   else delete process.env.HOME;
+  if (origPath) process.env.PATH = origPath;
+  else delete process.env.PATH;
   if (origHydraHome) process.env.HYDRA_HOME = origHydraHome;
   else delete process.env.HYDRA_HOME;
   if (origHydraConfigPath) process.env.HYDRA_CONFIG_PATH = origHydraConfigPath;
