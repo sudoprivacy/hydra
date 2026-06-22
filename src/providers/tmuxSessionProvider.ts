@@ -9,6 +9,13 @@ import { toCanonicalPath } from '../utils/path';
 import { parseCpuPercentSum } from '../utils/cpuPercent';
 import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '../core/sessionManager';
 import { CopilotMode, Worktree } from '../core/types';
+import {
+  buildSessionNotificationSummary,
+  type SessionNotificationSource,
+  type SessionNotificationSummary,
+} from '../core/sessionNotificationSummary';
+import type { HydraNotification, NotificationKind } from '../core/notifications';
+import { getNotificationDecorationUri } from './notificationDecorationProvider';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
 
@@ -311,6 +318,217 @@ export class TmuxItem extends vscode.TreeItem {
   }
 }
 
+function appendNotificationTooltip(
+  existing: string | vscode.MarkdownString | undefined,
+  summary: SessionNotificationSummary,
+  options: { unreadLabel?: string; footer?: string } = {},
+): vscode.MarkdownString {
+  const md = existing instanceof vscode.MarkdownString
+    ? existing
+    : new vscode.MarkdownString();
+  if (typeof existing === 'string' && existing.trim()) {
+    md.appendText(existing);
+  }
+
+  md.appendMarkdown('\n\n---\n\n**Hydra notification**\n\n');
+  md.appendMarkdown('- ');
+  md.appendText(options.unreadLabel ?? 'Unread');
+  md.appendMarkdown(': ');
+  md.appendText(String(summary.unreadCount));
+  md.appendMarkdown('\n');
+  md.appendMarkdown('- Kind: ');
+  md.appendText(summary.kind);
+  md.appendMarkdown('\n');
+  md.appendMarkdown('- Title: ');
+  md.appendText(summary.attention.title);
+  md.appendMarkdown('\n');
+  if (summary.attention.body) {
+    md.appendMarkdown('- Body: ');
+    md.appendText(summary.attention.body);
+    md.appendMarkdown('\n');
+  }
+  md.appendMarkdown('- Created: ');
+  md.appendText(summary.attention.createdAt);
+  md.appendMarkdown('\n');
+  if (summary.attention.targetSession) {
+    md.appendMarkdown('- Target: ');
+    md.appendText(summary.attention.targetSession);
+    md.appendMarkdown('\n');
+  }
+  if (summary.attention.sourceSession) {
+    md.appendMarkdown('- Source: ');
+    md.appendText(summary.attention.sourceSession);
+    md.appendMarkdown('\n');
+  }
+  if (summary.attention.action) {
+    md.appendMarkdown('- Action: ');
+    md.appendText(`${summary.attention.action.type}:${summary.attention.action.session}`);
+    md.appendMarkdown('\n');
+  }
+  if (options.footer) {
+    md.appendMarkdown('\n');
+    md.appendText(options.footer);
+  } else {
+    md.appendMarkdown('\nRight-click this session to open, mark read, or clear notifications.');
+  }
+  return md;
+}
+
+function applyNotificationSummary(
+  item: vscode.TreeItem,
+  sessionName: string,
+  summary?: SessionNotificationSummary,
+): void {
+  item.resourceUri = getNotificationDecorationUri(sessionName);
+  if (!summary) {
+    return;
+  }
+
+  item.tooltip = appendNotificationTooltip(item.tooltip, summary);
+}
+
+function getTargetSessionNotificationSummary(
+  source: SessionNotificationSource | undefined,
+  sessionName: string,
+): SessionNotificationSummary | undefined {
+  return source
+    ? buildSessionNotificationSummary(sessionName, source.getByTargetSession(sessionName))
+    : undefined;
+}
+
+function getTargetUnreadNotifications(
+  source: SessionNotificationSource | undefined,
+  sessionName: string,
+): readonly HydraNotification[] {
+  return source
+    ? source.getByTargetSession(sessionName).filter(notification => notification.readAt === null)
+    : [];
+}
+
+function getLatestSourceCompletionNotification(
+  source: SessionNotificationSource | undefined,
+  sessionName: string,
+): HydraNotification | undefined {
+  if (!source) return undefined;
+  const projected = source.getLatestSourceCompletion?.(sessionName);
+  if (projected) return projected;
+  return source.getBySourceSession(sessionName)
+    .filter(notification =>
+      notification.kind === 'complete' &&
+      notification.targetSession !== sessionName,
+    )
+    .sort(compareNotificationsNewestFirst)[0];
+}
+
+function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotification): number {
+  const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  if (Number.isFinite(timeDiff) && timeDiff !== 0) {
+    return timeDiff;
+  }
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
+function getNotificationThemeColor(kind: NotificationKind): vscode.ThemeColor {
+  switch (kind) {
+    case 'error':
+      return new vscode.ThemeColor('charts.red');
+    case 'blocked':
+      return new vscode.ThemeColor('charts.purple');
+    case 'needs-input':
+      return new vscode.ThemeColor('charts.yellow');
+    case 'complete':
+      return new vscode.ThemeColor('charts.green');
+    case 'info':
+      return new vscode.ThemeColor('charts.blue');
+  }
+}
+
+function getNotificationIcon(kind: NotificationKind): string {
+  switch (kind) {
+    case 'error':
+      return 'error';
+    case 'blocked':
+    case 'needs-input':
+      return 'warning';
+    case 'complete':
+      return 'pass';
+    case 'info':
+      return 'info';
+  }
+}
+
+function formatNotificationDetailLabel(notification: HydraNotification): string {
+  const title = notification.title || notification.body || 'Notification';
+  return notification.kind === 'complete'
+    ? title
+    : `${notification.kind}: ${title}`;
+}
+
+function formatNotificationSessionLabel(sessionName: string | null): string | undefined {
+  if (!sessionName) return undefined;
+  return sessionName.replace(/^task_/, '');
+}
+
+function formatNotificationDescription(notification: HydraNotification): string | undefined {
+  const parts = [
+    formatNotificationSessionLabel(notification.sourceSession),
+    formatNotificationAge(notification.createdAt),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function formatNotificationAge(createdAt: string): string | undefined {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+  return formatLastActive(Math.floor(timestamp / 1000));
+}
+
+function buildNotificationTooltip(
+  notification: HydraNotification,
+  footer: string,
+): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.appendMarkdown('**Hydra notification**\n\n');
+  md.appendMarkdown('- Kind: ');
+  md.appendText(notification.kind);
+  md.appendMarkdown('\n');
+  md.appendMarkdown('- Title: ');
+  md.appendText(notification.title);
+  md.appendMarkdown('\n');
+  if (notification.body) {
+    md.appendMarkdown('- Body: ');
+    md.appendText(notification.body);
+    md.appendMarkdown('\n');
+  }
+  md.appendMarkdown('- Created: ');
+  md.appendText(notification.createdAt);
+  md.appendMarkdown('\n');
+  if (notification.targetSession) {
+    md.appendMarkdown('- Target: ');
+    md.appendText(notification.targetSession);
+    md.appendMarkdown('\n');
+  }
+  if (notification.sourceSession) {
+    md.appendMarkdown('- Source: ');
+    md.appendText(notification.sourceSession);
+    md.appendMarkdown('\n');
+  }
+  if (notification.action) {
+    md.appendMarkdown('- Action: ');
+    md.appendText(`${notification.action.type}:${notification.action.session}`);
+    md.appendMarkdown('\n');
+  }
+  md.appendMarkdown('\n');
+  md.appendText(footer);
+  return md;
+}
+
+function formatWorkerStatusLabel(kind: NotificationKind): string {
+  return kind === 'complete' ? 'completed' : kind;
+}
+
 
 // ─── Copilot Item (Level 2) ──────────────────────────────
 
@@ -370,6 +588,7 @@ export class CopilotItem extends TmuxItem {
   public readonly copilotMode: CopilotMode;
   public readonly classification: Classification;
   public readonly workerSummary: CopilotWorkerSummary;
+  public readonly notificationDetailItems: NotificationDetailItem[];
 
   constructor(opts: {
     sessionName: string;
@@ -379,6 +598,8 @@ export class CopilotItem extends TmuxItem {
     worktreePath?: string;
     classification: Classification;
     workerSummary?: CopilotWorkerSummary;
+    notificationSummary?: SessionNotificationSummary;
+    notifications?: readonly HydraNotification[];
   }) {
     const label = opts.displayName || opts.sessionName;
     const copilotMode = opts.copilotMode || 'normal';
@@ -404,6 +625,10 @@ export class CopilotItem extends TmuxItem {
     this.description = description;
     this.tooltip = buildCopilotTooltip(label, opts.agentType, copilotMode, workerSummary);
     this.contextValue = 'copilotItem';
+    applyNotificationSummary(this, opts.sessionName, opts.notificationSummary);
+    this.notificationDetailItems = (opts.notifications ?? []).map(notification =>
+      new NotificationDetailItem(opts.sessionName, notification),
+    );
     this.command = {
       command: 'tmux.attachCreate',
       title: 'Open Session',
@@ -485,6 +710,7 @@ export class WorktreeItem extends TmuxItem {
     hasTmux: boolean;
     isMainWorktree?: boolean;
     isTaskWorker?: boolean;
+    notificationSummary?: SessionNotificationSummary;
   }) {
     const displayLabel = opts.isTaskWorker
       ? (opts.displayName || opts.branchLabel)
@@ -521,6 +747,7 @@ export class WorktreeItem extends TmuxItem {
     } else {
       this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.green'));
     }
+    applyNotificationSummary(this, opts.sessionName, opts.notificationSummary);
   }
 }
 
@@ -593,6 +820,37 @@ export class InactiveDetailItem extends TmuxItem {
   }
 }
 
+export class NotificationDetailItem extends TmuxItem {
+  public readonly notificationId: string;
+
+  constructor(
+    sessionName: string,
+    public readonly notification: HydraNotification,
+  ) {
+    super(
+      formatNotificationDetailLabel(notification),
+      vscode.TreeItemCollapsibleState.None,
+      undefined,
+      sessionName,
+    );
+
+    this.notificationId = notification.id;
+    this.id = `notification:target:${sessionName}:${notification.id}`;
+    this.contextValue = 'notificationDetailItem';
+    this.description = formatNotificationDescription(notification);
+    this.iconPath = new vscode.ThemeIcon(
+      getNotificationIcon(notification.kind),
+      getNotificationThemeColor(notification.kind),
+    );
+    this.tooltip = buildNotificationTooltip(notification, 'Click to open this notification and mark it read.');
+    this.command = {
+      command: 'hydra.openSessionNotification',
+      title: 'Open Notification',
+      arguments: [this],
+    };
+  }
+}
+
 export class GitStatusItem extends TmuxItem {
   public readonly worktreePath?: string;
   public readonly prNumber?: number;
@@ -645,6 +903,7 @@ export class GitStatusItem extends TmuxItem {
 export class TmuxSessionItem extends WorktreeItem {
   public readonly session: SessionWithStatus;
   public readonly detailItem: TmuxDetailItem;
+  public readonly completionNotification?: HydraNotification;
   public readonly gitStatusItem?: GitStatusItem;
 
   constructor(
@@ -659,7 +918,9 @@ export class TmuxSessionItem extends WorktreeItem {
     repoRoot?: string,
     workerId?: number,
     displayName?: string,
-    isTaskWorker?: boolean
+    isTaskWorker?: boolean,
+    notificationSummary?: SessionNotificationSummary,
+    completionNotification?: HydraNotification
   ) {
     const isRoot = Boolean(worktree?.isMain);
     const branchLabel = branchLabelOverride || worktree?.branch || (isRoot ? 'main' : session.slug);
@@ -680,12 +941,25 @@ export class TmuxSessionItem extends WorktreeItem {
 
     this.session = session;
     this.detailItem = new TmuxDetailItem(session, repoName, worktree, extensionUri);
+    this.completionNotification = completionNotification;
 
     const descParts: string[] = [];
     if (this.description) descParts.push(String(this.description));
     if (workerId != null) descParts.push(`#${workerId}`);
     if (agentType) descParts.push(`[${agentType}]`);
+    if (notificationSummary) {
+      descParts.push(formatWorkerStatusLabel(notificationSummary.kind));
+    } else if (completionNotification) {
+      descParts.push('completed');
+    }
     if (descParts.length > 0) this.description = descParts.join(' ');
+    applyNotificationSummary(this, session.name, notificationSummary);
+    if (completionNotification && !notificationSummary) {
+      this.tooltip = buildNotificationTooltip(
+        completionNotification,
+        'This worker has produced a completion notification for its copilot.',
+      );
+    }
 
     const hasGitChanges = session.status.commitsAhead > 0 || session.status.gitModified > 0 ||
       session.status.gitDeleted > 0 || session.status.gitAdded > 0 || session.status.gitUntracked > 0;
@@ -697,6 +971,7 @@ export class TmuxSessionItem extends WorktreeItem {
 
 export class InactiveWorktreeItem extends WorktreeItem {
   public readonly detailItem: InactiveDetailItem;
+  public readonly completionNotification?: HydraNotification;
   public readonly gitStatusItem?: GitStatusItem;
   public readonly worktree: Worktree;
   public readonly targetSessionName: string;
@@ -712,7 +987,9 @@ export class InactiveWorktreeItem extends WorktreeItem {
     gitStatusOverride?: SessionStatus,
     repoRoot?: string,
     displayName?: string,
-    isTaskWorker?: boolean
+    isTaskWorker?: boolean,
+    notificationSummary?: SessionNotificationSummary,
+    completionNotification?: HydraNotification
   ) {
     const branchLabel = branchLabelOverride || worktree.branch || (worktree.isMain ? 'main' : path.basename(worktree.path));
 
@@ -734,6 +1011,23 @@ export class InactiveWorktreeItem extends WorktreeItem {
     this.worktree = worktree;
     this.targetSessionName = targetSessionName;
     this.detailItem = new InactiveDetailItem(worktree, repoName, targetSessionName, extensionUri);
+    this.completionNotification = completionNotification;
+    if (notificationSummary || completionNotification) {
+      const descParts = typeof this.description === 'string' && this.description.trim()
+        ? [this.description]
+        : [];
+      descParts.push(notificationSummary
+        ? formatWorkerStatusLabel(notificationSummary.kind)
+        : 'completed');
+      this.description = descParts.join(' ');
+    }
+    applyNotificationSummary(this, targetSessionName, notificationSummary);
+    if (completionNotification && !notificationSummary) {
+      this.tooltip = buildNotificationTooltip(
+        completionNotification,
+        'This worker has produced a completion notification for its copilot.',
+      );
+    }
 
     if (gitStatusOverride) {
       const hasGitChanges = gitStatusOverride.commitsAhead > 0 || gitStatusOverride.gitModified > 0 ||
@@ -849,6 +1143,8 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
   private _extensionUri: vscode.Uri | undefined;
   private _copilotItems: CopilotItem[] = [];
 
+  constructor(private readonly notifications?: SessionNotificationSource) {}
+
   setExtensionUri(uri: vscode.Uri): void { this._extensionUri = uri; }
   refresh(): void { this._onDidChangeTreeData.fire(undefined); }
   getTreeItem(element: TmuxItem): vscode.TreeItem { return element; }
@@ -902,6 +1198,8 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
           worktreePath: c.workdir,
           classification,
           workerSummary: summariesByCopilot.get(c.sessionName),
+          notificationSummary: getTargetSessionNotificationSummary(this.notifications, c.sessionName),
+          notifications: getTargetUnreadNotifications(this.notifications, c.sessionName),
         }));
       }
 
@@ -930,7 +1228,9 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
       hydraAgent: copilot.agentType,
       hydraCopilotMode: copilot.copilotMode,
     };
-    return [new TmuxDetailItem(session, '', undefined, this._extensionUri)];
+    const children: TmuxItem[] = [new TmuxDetailItem(session, '', undefined, this._extensionUri)];
+    children.push(...copilot.notificationDetailItems);
+    return children;
   }
 }
 
@@ -945,6 +1245,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   private _taskGroup: TaskGroupItem | undefined;
   private _workerItemsByRepo = new Map<string, TmuxItem[]>();
   private _taskWorkerItems: TmuxItem[] = [];
+
+  constructor(private readonly notifications?: SessionNotificationSource) {}
 
   setExtensionUri(uri: vscode.Uri): void { this._extensionUri = uri; }
   refresh(): void {
@@ -966,23 +1268,35 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       }
       return this._repoGroups.find(g => g.repoName === element.repoName);
     }
-    // Detail items (TmuxDetailItem, GitStatusItem) are children of a WorktreeItem
+    // Detail items are children of a WorktreeItem.
     for (const items of this._workerItemsByRepo.values()) {
       for (const item of items) {
         if (item instanceof TmuxSessionItem) {
-          if (item.detailItem === element || item.gitStatusItem === element) return item;
+          if (
+            item.detailItem === element ||
+            item.gitStatusItem === element
+          ) return item;
         }
         if (item instanceof InactiveWorktreeItem) {
-          if (item.detailItem === element || item.gitStatusItem === element) return item;
+          if (
+            item.detailItem === element ||
+            item.gitStatusItem === element
+          ) return item;
         }
       }
     }
     for (const item of this._taskWorkerItems) {
       if (item instanceof TmuxSessionItem) {
-        if (item.detailItem === element || item.gitStatusItem === element) return item;
+        if (
+          item.detailItem === element ||
+          item.gitStatusItem === element
+        ) return item;
       }
       if (item instanceof InactiveWorktreeItem) {
-        if (item.detailItem === element || item.gitStatusItem === element) return item;
+        if (
+          item.detailItem === element ||
+          item.gitStatusItem === element
+        ) return item;
       }
     }
     return undefined;
@@ -1166,7 +1480,9 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
         items.push(new TmuxSessionItem(
           session, repoName, worktree, isCurrentWs, hasGit,
-          this._extensionUri, branchLabel, w.agent, repoRoot, w.workerId, w.displayName
+          this._extensionUri, branchLabel, w.agent, repoRoot, w.workerId, w.displayName, false,
+          getTargetSessionNotificationSummary(this.notifications, w.sessionName),
+          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
         ));
       } else {
         const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
@@ -1187,7 +1503,9 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         }
         items.push(new InactiveWorktreeItem(
           worktree, repoName, w.sessionName, isCurrentWs, hasGit,
-          this._extensionUri, branchLabel, stoppedStatus, repoRoot, w.displayName
+          this._extensionUri, branchLabel, stoppedStatus, repoRoot, w.displayName, false,
+          getTargetSessionNotificationSummary(this.notifications, w.sessionName),
+          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
         ));
       }
     }
@@ -1221,7 +1539,9 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         };
         items.push(new TmuxSessionItem(
           session, repoName, worktree, isCurrentWs, false,
-          this._extensionUri, label, w.agent, undefined, w.workerId, w.displayName, true
+          this._extensionUri, label, w.agent, undefined, w.workerId, w.displayName, true,
+          getTargetSessionNotificationSummary(this.notifications, w.sessionName),
+          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
         ));
       } else {
         const stoppedStatus: SessionStatus = {
@@ -1239,7 +1559,9 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         };
         items.push(new InactiveWorktreeItem(
           worktree, repoName, w.sessionName, isCurrentWs, false,
-          this._extensionUri, label, stoppedStatus, undefined, w.displayName, true
+          this._extensionUri, label, stoppedStatus, undefined, w.displayName, true,
+          getTargetSessionNotificationSummary(this.notifications, w.sessionName),
+          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
         ));
       }
     }

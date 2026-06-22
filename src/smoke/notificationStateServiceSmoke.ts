@@ -111,6 +111,17 @@ function parseStdoutJson<T>(proc: SpawnSyncReturns<string>, label: string): T {
   return JSON.parse(proc.stdout) as T;
 }
 
+function readEventLines(ctx: TestContext): Array<{ type?: string; source?: string; payload?: { notificationId?: string } }> {
+  const eventsPath = path.join(ctx.hydraHome, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) {
+    return [];
+  }
+  return fs.readFileSync(eventsPath, 'utf-8')
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .map(line => JSON.parse(line) as { type?: string; source?: string; payload?: { notificationId?: string } });
+}
+
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 3000): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -174,10 +185,17 @@ async function testInitialLoadAndIndexes(): Promise<void> {
         assert.equal(service.getLatest(1)[0].id, second.id);
         assert.equal(service.getById(first.id)?.title, 'Worker completed');
         assert.deepEqual(service.getBySession('repo_worker').map(notification => notification.id), [first.id]);
+        assert.deepEqual(service.getByTargetSession('repo_worker').map(notification => notification.id), []);
+        assert.deepEqual(service.getBySourceSession('repo_worker').map(notification => notification.id), [first.id]);
         assert.deepEqual(
           service.getBySession('repo_copilot').map(notification => notification.id),
           [second.id, first.id],
         );
+        assert.deepEqual(
+          service.getByTargetSession('repo_copilot').map(notification => notification.id),
+          [second.id, first.id],
+        );
+        assert.deepEqual(service.getBySourceSession('repo_copilot').map(notification => notification.id), []);
 
         const snapshot = service.getSnapshot();
         (snapshot.notifications as unknown as { pop(): unknown }).pop();
@@ -237,6 +255,58 @@ async function testServiceOperationsReloadSynchronously(): Promise<void> {
   }
 }
 
+async function testTargetSessionOperationsIgnoreSourceOnlyNotifications(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-target-ops-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const sourceOnly = store.create({
+        kind: 'complete',
+        title: 'Worker completed',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+      const targeted = store.create({
+        kind: 'needs-input',
+        title: 'Worker needs input',
+        targetSession: 'repo_worker',
+        sourceSession: 'repo_copilot',
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.deepEqual(service.getByTargetSession('repo_worker').map(notification => notification.id), [targeted.id]);
+        assert.deepEqual(service.getBySourceSession('repo_worker').map(notification => notification.id), [sourceOnly.id]);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, sourceOnly.id);
+
+        const read = service.markTargetSessionRead('repo_worker');
+        assert.equal(read.markedRead, 1);
+        assert.equal(service.getById(targeted.id)?.readAt !== null, true);
+        assert.equal(service.getById(sourceOnly.id)?.readAt, null, 'source-only completion should remain unread for copilot');
+
+        const cleared = service.clear({ targetSession: 'repo_worker' });
+        assert.equal(cleared.cleared, 1);
+        assert.equal(service.getById(targeted.id), undefined);
+        assert.equal(service.getById(sourceOnly.id)?.id, sourceOnly.id);
+
+        const clearedCopilotInbox = service.clear({ targetSession: 'repo_copilot' });
+        assert.equal(clearedCopilotInbox.cleared, 1);
+        assert.equal(service.getById(sourceOnly.id), undefined);
+        const projectedCompletion = service.getLatestSourceCompletion('repo_worker');
+        assert.equal(projectedCompletion?.id, sourceOnly.id);
+        assert.equal(projectedCompletion?.kind, 'complete');
+        assert.equal(projectedCompletion?.action?.session, 'repo_worker');
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
 async function testWatcherUpdatesFromNotificationFileOnly(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-file-only-');
   try {
@@ -259,6 +329,100 @@ async function testWatcherUpdatesFromNotificationFileOnly(): Promise<void> {
         await waitFor(() => service.getUnreadCount() === 1, 'file-only notification reload');
         assert.equal(service.getLatest(1)[0].title, 'File-only notification');
       } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testBatchReadAndClearEventSources(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-batch-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const first = store.create({
+        kind: 'info',
+        title: 'First unread',
+        targetSession: 'repo_worker',
+      }).notification;
+      const second = store.create({
+        kind: 'blocked',
+        title: 'Second unread',
+        sourceSession: 'repo_worker',
+      }).notification;
+      store.create({
+        kind: 'complete',
+        title: 'Other unread',
+        targetSession: 'other_worker',
+      });
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getUnreadCount(), 3);
+
+        const read = service.markSessionRead('repo_worker', 'extension');
+        assert.equal(read.markedRead, 2);
+        assert.equal(service.getById(first.id)?.readAt !== null, true);
+        assert.equal(service.getById(second.id)?.readAt !== null, true);
+        assert.equal(service.getUnreadCount(), 1);
+
+        const readEvents = readEventLines(ctx).filter(event =>
+          event.type === 'notify.read' &&
+          event.source === 'extension' &&
+          (event.payload?.notificationId === first.id || event.payload?.notificationId === second.id)
+        );
+        assert.equal(readEvents.length, 2, 'batch read should emit one extension notify.read per notification');
+
+        const cleared = service.clear({ session: 'repo_worker' }, 'extension');
+        assert.equal(cleared.cleared, 2);
+        const clearEvents = readEventLines(ctx).filter(event =>
+          event.type === 'notify.cleared' &&
+          event.source === 'extension'
+        );
+        assert.equal(clearEvents.length, 1, 'clear should emit an extension notify.cleared event');
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-event-projection-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const service = createService();
+      let changes = 0;
+      const listener = service.onDidChange(() => { changes += 1; });
+      try {
+        service.initialize();
+        new EventLog().append({
+          type: 'notify.created',
+          source: 'hook',
+          payload: {
+            notificationId: 'event-only-complete',
+            kind: 'complete',
+            targetSession: 'repo_copilot',
+            sourceSession: 'repo_worker',
+            actionType: 'open-session',
+            actionSession: 'repo_worker',
+          },
+        });
+
+        await waitFor(
+          () => service.getLatestSourceCompletion('repo_worker')?.id === 'event-only-complete',
+          'event-only completion projection',
+        );
+        assert.equal(service.getSnapshot().totalCount, 0);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.action?.session, 'repo_worker');
+        assert.ok(changes > 0, 'event-only completion projection should emit a change');
+      } finally {
+        listener.dispose();
         service.dispose();
       }
     });
@@ -385,6 +549,8 @@ async function testCliEndToEnd(): Promise<void> {
         await waitFor(() => service.getById(created.notification.id) !== undefined, 'CLI create reflected in service');
         assert.equal(service.getUnreadCount(), 1);
         assert.equal(service.getBySession('repo_worker')[0].id, created.notification.id);
+        assert.equal(service.getByTargetSession('repo_copilot')[0].id, created.notification.id);
+        assert.equal(service.getBySourceSession('repo_worker')[0].id, created.notification.id);
 
         parseStdoutJson<{ markedRead: number }>(
           runCli(['notify', 'read', created.notification.id, '--json'], ctx.env),
@@ -397,6 +563,11 @@ async function testCliEndToEnd(): Promise<void> {
           'hydra notify clear --json',
         );
         await waitFor(() => service.getSnapshot().totalCount === 0, 'CLI clear reflected in service');
+        assert.equal(
+          service.getLatestSourceCompletion('repo_worker')?.id,
+          created.notification.id,
+          'worker completion projection should survive notification clear',
+        );
       } finally {
         service.dispose();
       }
@@ -433,7 +604,10 @@ async function main(): Promise<void> {
   await testMissingFiles();
   await testInitialLoadAndIndexes();
   await testServiceOperationsReloadSynchronously();
+  await testTargetSessionOperationsIgnoreSourceOnlyNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();
+  await testBatchReadAndClearEventSources();
+  await testEventOnlyCompletionProjectionEmitsChange();
   await testInitializeSignatureWindow();
   await testDuplicateAndMalformedEventTolerance();
   await testCliEndToEnd();

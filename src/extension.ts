@@ -34,6 +34,8 @@ import { NotificationStateService } from './core/notificationStateService';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogCommands } from './commands/logs';
 import { exec } from './utils/exec';
+import { NotificationDecorationProvider } from './providers/notificationDecorationProvider';
+import { createNotificationTreeCommands } from './commands/notificationTreeCommands';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
@@ -51,9 +53,13 @@ export function activate(context: vscode.ExtensionContext) {
   registerHydraLogCommands(context, hydraOutputChannel);
   logExtensionActivated(context);
 
-  const copilotProvider = new CopilotProvider();
+  const notificationState = new NotificationStateService();
+  notificationState.initialize();
+  const notificationDecorations = new NotificationDecorationProvider(notificationState);
+
+  const copilotProvider = new CopilotProvider(notificationState);
   copilotProvider.setExtensionUri(context.extensionUri);
-  const workerProvider = new WorkerProvider();
+  const workerProvider = new WorkerProvider(notificationState);
   workerProvider.setExtensionUri(context.extensionUri);
 
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
@@ -138,6 +144,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTreeViews();
     syncWorkerGitHeadWatchers();
   };
+  const notificationCommands = createNotificationTreeCommands(notificationState);
 
   context.subscriptions.push(
     copilotView,
@@ -153,6 +160,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tmux.copyPath', async (...args: unknown[]) => runWithHydraItem(['worker'], copyPath, ...args)),
     vscode.commands.registerCommand('tmux.newPane', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newPane, ...args)),
     vscode.commands.registerCommand('tmux.newWindow', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newWindow, ...args)),
+    vscode.commands.registerCommand('hydra.openSessionNotification', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.openSessionNotification, ...args)),
+    vscode.commands.registerCommand('hydra.markSessionNotificationsRead', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.markSessionNotificationsRead, ...args)),
+    vscode.commands.registerCommand('hydra.clearSessionNotifications', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.clearSessionNotifications, ...args)),
     vscode.commands.registerCommand('tmux.terminalPaste', terminalSmartPaste),
     vscode.commands.registerCommand('tmux.pasteImage', pasteImageForce),
     vscode.commands.registerCommand('tmux.createWorktreeFromBranch', (item) => createWorktreeFromBranch(item)),
@@ -165,14 +175,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hydra.startCopilotSudoCode', () => createCopilotWithAgent('sudocode')),
     copilotView.onDidChangeSelection(rememberHydraSelection),
     workerView.onDidChangeSelection(rememberHydraSelection),
+    vscode.window.registerFileDecorationProvider(notificationDecorations),
   );
 
   ensureHydraGlobalConfig();
-  const notificationState = new NotificationStateService();
-  notificationState.initialize();
   context.subscriptions.push(
     notificationState,
-    notificationState.onDidChange(refreshTreeViews),
+    notificationState.onDidChange(() => {
+      refreshTreeViews();
+      notificationDecorations.refresh();
+    }),
   );
   silentInstallCli(context);
   seedDefaultAgentToHydraConfig();

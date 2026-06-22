@@ -3,12 +3,14 @@ import {
   EventLog,
   getHydraEventsFile,
   type HydraEvent,
+  type HydraEventSource,
 } from './events';
 import { logger } from './logger';
 import {
   getHydraNotificationsFile,
   NotificationStore,
   type HydraNotification,
+  type NotificationMarkSessionReadResult,
   type NotificationClearResult,
   type NotificationListFilters,
   type NotificationOpenResult,
@@ -57,6 +59,7 @@ export class NotificationStateService implements Disposable {
   private lastNotificationSignature = 'missing';
   private lastEventSignature = 'missing';
   private lastMalformedEventSignature: string | undefined;
+  private sourceCompletionBySession = new Map<string, HydraNotification>();
   private readonly notificationFileListener = (current: fs.Stats, previous: fs.Stats) => {
     if (!this.didStatChange(current, previous)) {
       return;
@@ -138,25 +141,70 @@ export class NotificationStateService implements Disposable {
     return notifications.map(cloneNotification);
   }
 
+  getByTargetSession(sessionName: string): readonly HydraNotification[] {
+    const notifications = this.state.indexes.byTargetSession.get(sessionName) || [];
+    return notifications.map(cloneNotification);
+  }
+
+  getBySourceSession(sessionName: string): readonly HydraNotification[] {
+    const notifications = this.state.indexes.bySourceSession.get(sessionName) || [];
+    return notifications.map(cloneNotification);
+  }
+
+  getLatestSourceCompletion(sessionName: string): HydraNotification | undefined {
+    const stored = this.getLatestStoredSourceCompletion(sessionName);
+    if (stored) {
+      return stored;
+    }
+
+    const projected = this.sourceCompletionBySession.get(sessionName);
+    return projected ? cloneNotification(projected) : undefined;
+  }
+
   getById(id: string): HydraNotification | undefined {
     const notification = this.state.indexes.byId.get(id);
     return notification ? cloneNotification(notification) : undefined;
   }
 
-  markRead(id: string): NotificationReadResult {
-    const result = this.store.markRead(id);
+  markRead(id: string, eventSource: HydraEventSource = 'extension'): NotificationReadResult {
+    const result = this.store.markRead(id, eventSource);
     this.reloadNow({ emit: true, reason: 'mark-read' });
     return result;
   }
 
-  clear(filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {}): NotificationClearResult {
-    const result = this.store.clear(filters);
+  markSessionRead(sessionName: string, eventSource: HydraEventSource = 'extension'): NotificationMarkSessionReadResult {
+    const result = this.store.markSessionRead(sessionName, eventSource);
+    this.reloadNow({ emit: true, reason: 'mark-session-read' });
+    return result;
+  }
+
+  markTargetSessionRead(sessionName: string, eventSource: HydraEventSource = 'extension'): NotificationMarkSessionReadResult {
+    const unread = this.store.list({ targetSession: sessionName, unread: true }).notifications;
+    const notifications: HydraNotification[] = [];
+    for (const notification of unread) {
+      const result = this.store.markRead(notification.id, eventSource);
+      if (result.markedRead > 0) {
+        notifications.push(result.notification);
+      }
+    }
+    this.reloadNow({ emit: true, reason: 'mark-target-session-read' });
+    return {
+      notifications,
+      markedRead: notifications.length,
+    };
+  }
+
+  clear(
+    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    eventSource: HydraEventSource = 'extension',
+  ): NotificationClearResult {
+    const result = this.store.clear(filters, eventSource);
     this.reloadNow({ emit: true, reason: 'clear' });
     return result;
   }
 
-  open(id: string): NotificationOpenResult {
-    const result = this.store.open(id);
+  open(id: string, eventSource: HydraEventSource = 'extension'): NotificationOpenResult {
+    const result = this.store.open(id, eventSource);
     this.reloadNow({ emit: true, reason: 'open' });
     return result;
   }
@@ -236,6 +284,7 @@ export class NotificationStateService implements Disposable {
     }
 
     const previousRevision = this.state.contentRevision;
+    const previousCompletionRevision = buildSourceCompletionRevision(this.sourceCompletionBySession);
     let notifications: HydraNotification[];
     try {
       notifications = this.store.list().notifications;
@@ -250,10 +299,61 @@ export class NotificationStateService implements Disposable {
     this.lastNotificationSignature = getFileSignature(this.notificationsFile);
     this.lastEventSeq = Math.max(this.lastEventSeq, this.safeReadLastSeq());
     this.state = buildNotificationState(notifications, this.lastEventSeq);
+    this.rebuildSourceCompletionProjection(notifications);
+    const completionRevision = buildSourceCompletionRevision(this.sourceCompletionBySession);
 
-    if (options.emit && this.state.contentRevision !== previousRevision) {
+    if (
+      options.emit &&
+      (
+        this.state.contentRevision !== previousRevision ||
+        completionRevision !== previousCompletionRevision
+      )
+    ) {
       this.emitChange();
     }
+  }
+
+  private getLatestStoredSourceCompletion(sessionName: string): HydraNotification | undefined {
+    return [...(this.state.indexes.bySourceSession.get(sessionName) || [])]
+      .filter(notification =>
+        notification.kind === 'complete' &&
+        notification.targetSession !== sessionName,
+      )
+      .sort(compareNotificationsNewestFirst)
+      .map(cloneNotification)[0];
+  }
+
+  private rebuildSourceCompletionProjection(notifications: readonly HydraNotification[]): void {
+    const completions = new Map<string, HydraNotification>();
+
+    for (const notification of notifications) {
+      if (
+        notification.kind === 'complete' &&
+        notification.sourceSession &&
+        notification.targetSession !== notification.sourceSession
+      ) {
+        upsertLatestCompletion(completions, notification.sourceSession, notification);
+      }
+    }
+
+    let events: HydraEvent[];
+    try {
+      events = this.eventLog.read({ tolerateIncompleteTail: true });
+    } catch (error) {
+      logger.warn('notification-state.events', 'Failed to rebuild source completion projection', { error });
+      this.sourceCompletionBySession = completions;
+      return;
+    }
+
+    for (const event of events) {
+      const notification = notificationFromCreatedEvent(event);
+      if (!notification?.sourceSession) {
+        continue;
+      }
+      upsertLatestCompletion(completions, notification.sourceSession, notification);
+    }
+
+    this.sourceCompletionBySession = completions;
   }
 
   private emitChange(): void {
@@ -305,4 +405,91 @@ function getFileStatSignature(stat: fs.Stats): string {
     return 'missing';
   }
   return `${stat.mtimeMs}:${stat.size}`;
+}
+
+function upsertLatestCompletion(
+  completions: Map<string, HydraNotification>,
+  sessionName: string,
+  notification: HydraNotification,
+): void {
+  const existing = completions.get(sessionName);
+  if (!existing || compareNotificationsNewestFirst(notification, existing) < 0) {
+    completions.set(sessionName, cloneNotification(notification));
+  }
+}
+
+function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | undefined {
+  if (event.type !== 'notify.created') {
+    return undefined;
+  }
+  const payload = event.payload || {};
+  if (payload.kind !== 'complete') {
+    return undefined;
+  }
+  const sourceSession = getStringPayload(payload, 'sourceSession');
+  const targetSession = getStringPayload(payload, 'targetSession');
+  if (!sourceSession || targetSession === sourceSession) {
+    return undefined;
+  }
+  const id = getStringPayload(payload, 'notificationId') || `event:${event.seq}`;
+  const action = getActionPayload(payload);
+  return {
+    id,
+    createdAt: event.ts,
+    readAt: null,
+    kind: 'complete',
+    title: 'Worker completed',
+    body: '',
+    targetSession: targetSession || null,
+    sourceSession,
+    action,
+    context: {
+      workerId: getNumberPayload(payload, 'workerId'),
+      branch: getStringPayload(payload, 'branch') ?? null,
+      agent: getStringPayload(payload, 'agent') ?? null,
+    },
+  };
+}
+
+function getActionPayload(payload: Record<string, unknown>): HydraNotification['action'] | undefined {
+  const type = getStringPayload(payload, 'actionType');
+  const session = getStringPayload(payload, 'actionSession');
+  if ((type === 'open-session' || type === 'review-diff') && session) {
+    return { type, session };
+  }
+  return undefined;
+}
+
+function getStringPayload(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function getNumberPayload(payload: Record<string, unknown>, key: string): number | undefined {
+  const value = payload[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotification): number {
+  const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  if (Number.isFinite(timeDiff) && timeDiff !== 0) {
+    return timeDiff;
+  }
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
+function buildSourceCompletionRevision(completions: ReadonlyMap<string, HydraNotification>): string {
+  return JSON.stringify([...completions.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([sessionName, notification]) => ({
+      sessionName,
+      id: notification.id,
+      createdAt: notification.createdAt,
+      targetSession: notification.targetSession,
+      sourceSession: notification.sourceSession,
+      action: notification.action ? {
+        type: notification.action.type,
+        session: notification.action.session,
+      } : null,
+    })));
 }
