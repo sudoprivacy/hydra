@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2026062200] - 2026-06-22
+
+### Added
+- Add structured Hydra notifications, a local event stream, and notification state services for CLI and extension clients
+- Add Copilot inbox rows and Worker attention badges in the VS Code TreeView, including durable worker completion status projection
+- Add an agent registry for configurable Copilot and Worker agent launch behavior
+
+### Fixed
+- Refresh worker branch labels when git HEAD changes on disk
+
 ## [0.3.2026060503] - 2026-06-11
 
 ### Fixed
