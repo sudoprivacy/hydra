@@ -11,6 +11,8 @@ export interface NotificationSnapshot {
 export interface NotificationStateIndexes {
   readonly byId: ReadonlyMap<string, HydraNotification>;
   readonly bySession: ReadonlyMap<string, readonly HydraNotification[]>;
+  readonly byTargetSession: ReadonlyMap<string, readonly HydraNotification[]>;
+  readonly bySourceSession: ReadonlyMap<string, readonly HydraNotification[]>;
 }
 
 export interface NotificationState {
@@ -82,27 +84,39 @@ export function getLatestNotifications(snapshot: NotificationSnapshot, limit?: n
 function buildIndexes(notifications: readonly HydraNotification[]): NotificationStateIndexes {
   const byId = new Map<string, HydraNotification>();
   const bySession = new Map<string, HydraNotification[]>();
+  const byTargetSession = new Map<string, HydraNotification[]>();
+  const bySourceSession = new Map<string, HydraNotification[]>();
 
   for (const notification of notifications) {
     byId.set(notification.id, notification);
     const sessions = new Set<string>();
     if (notification.targetSession) {
       sessions.add(notification.targetSession);
+      addToIndex(byTargetSession, notification.targetSession, notification);
     }
     if (notification.sourceSession) {
       sessions.add(notification.sourceSession);
+      addToIndex(bySourceSession, notification.sourceSession, notification);
     }
     for (const session of sessions) {
-      const existing = bySession.get(session);
-      if (existing) {
-        existing.push(notification);
-      } else {
-        bySession.set(session, [notification]);
-      }
+      addToIndex(bySession, session, notification);
     }
   }
 
-  return { byId, bySession };
+  return { byId, bySession, byTargetSession, bySourceSession };
+}
+
+function addToIndex(
+  index: Map<string, HydraNotification[]>,
+  sessionName: string,
+  notification: HydraNotification,
+): void {
+  const existing = index.get(sessionName);
+  if (existing) {
+    existing.push(notification);
+  } else {
+    index.set(sessionName, [notification]);
+  }
 }
 
 function buildContentRevision(notifications: readonly HydraNotification[]): string {

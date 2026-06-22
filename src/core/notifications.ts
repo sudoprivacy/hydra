@@ -73,6 +73,11 @@ export interface NotificationReadResult {
   markedRead: number;
 }
 
+export interface NotificationMarkSessionReadResult {
+  notifications: HydraNotification[];
+  markedRead: number;
+}
+
 export interface NotificationClearResult {
   cleared: number;
 }
@@ -159,7 +164,7 @@ export class NotificationStore {
     };
   }
 
-  markRead(id: string): NotificationReadResult {
+  markRead(id: string, eventSource: HydraEventSource = 'cli'): NotificationReadResult {
     return this.withLock(() => {
       const store = this.readStore();
       const index = store.notifications.findIndex(notification => notification.id === id);
@@ -173,12 +178,46 @@ export class NotificationStore {
       const updated = { ...existing, readAt: new Date().toISOString() };
       store.notifications[index] = updated;
       this.writeStore(store);
-      this.emitNotificationEvent('notify.read', updated, 'cli');
+      this.emitNotificationEvent('notify.read', updated, eventSource);
       return { notification: updated, markedRead: 1 };
     });
   }
 
-  clear(filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {}): NotificationClearResult {
+  markSessionRead(sessionName: string, eventSource: HydraEventSource = 'cli'): NotificationMarkSessionReadResult {
+    return this.withLock(() => {
+      const store = this.readStore();
+      const readAt = new Date().toISOString();
+      const updatedNotifications: HydraNotification[] = [];
+      store.notifications = store.notifications.map(notification => {
+        if (
+          notification.readAt !== null ||
+          (notification.targetSession !== sessionName && notification.sourceSession !== sessionName)
+        ) {
+          return notification;
+        }
+        const updated = { ...notification, readAt };
+        updatedNotifications.push(updated);
+        return updated;
+      });
+
+      if (updatedNotifications.length > 0) {
+        this.writeStore(store);
+        for (const notification of updatedNotifications) {
+          this.emitNotificationEvent('notify.read', notification, eventSource);
+        }
+      }
+
+      return {
+        notifications: updatedNotifications,
+        markedRead: updatedNotifications.length,
+      };
+    });
+  }
+
+  clear(
+    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    eventSource: HydraEventSource = 'cli',
+  ): NotificationClearResult {
     return this.withLock(() => {
       const store = this.readStore();
       const before = store.notifications.length;
@@ -186,14 +225,14 @@ export class NotificationStore {
       const cleared = before - store.notifications.length;
       if (cleared > 0) {
         this.writeStore(store);
-        this.emitClearEvent(cleared, filters);
+        this.emitClearEvent(cleared, filters, eventSource);
       }
       return { cleared };
     });
   }
 
-  open(id: string): NotificationOpenResult {
-    const read = this.markRead(id);
+  open(id: string, eventSource: HydraEventSource = 'cli'): NotificationOpenResult {
+    const read = this.markRead(id, eventSource);
     return {
       notification: read.notification,
       action: read.notification.action ?? null,
@@ -300,11 +339,15 @@ export class NotificationStore {
     }
   }
 
-  private emitClearEvent(cleared: number, filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'>): void {
+  private emitClearEvent(
+    cleared: number,
+    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'>,
+    source: HydraEventSource,
+  ): void {
     try {
       this.eventLog.append({
         type: 'notify.cleared',
-        source: 'cli',
+        source,
         session: filters.session || filters.targetSession || filters.sourceSession,
         payload: {
           cleared,

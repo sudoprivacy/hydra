@@ -169,6 +169,18 @@
         "title": "Hydra: Open PR"
       },
       {
+        "command": "hydra.openSessionNotification",
+        "title": "Hydra: Open Notification"
+      },
+      {
+        "command": "hydra.markSessionNotificationsRead",
+        "title": "Hydra: Mark Notifications Read"
+      },
+      {
+        "command": "hydra.clearSessionNotifications",
+        "title": "Hydra: Clear Notifications"
+      },
+      {
         "command": "hydra.createCopilot",
         "title": "Hydra: Create Copilot",
         "icon": "$(add)"
@@ -318,6 +330,21 @@
           "group": "1_open@3"
         },
         {
+          "command": "hydra.openSessionNotification",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "1_open@4"
+        },
+        {
+          "command": "hydra.markSessionNotificationsRead",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "5_notifications@1"
+        },
+        {
+          "command": "hydra.clearSessionNotifications",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "5_notifications@2"
+        },
+        {
           "command": "tmux.copyPath",
           "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
           "group": "2_copy"
@@ -385,6 +412,7 @@
     "smoke:events-cli": "node out/smoke/eventsCliSmoke.js",
     "smoke:notify-cli": "node out/smoke/notifyCliSmoke.js",
     "smoke:notification-state": "node out/smoke/notificationStateServiceSmoke.js",
+    "smoke:session-notification-summary": "node out/smoke/sessionNotificationSummarySmoke.js",
     "smoke:agent-registry": "node out/smoke/agentRegistrySmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
     "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
@@ -399,7 +427,7 @@
     "smoke:shell-target-e2e": "node out/smoke/shellTargetEndToEndSmoke.js",
     "smoke:pane-shell-probe": "node out/smoke/paneShellProbeSmoke.js",
     "smoke:enhanced-path-windows": "node out/smoke/enhancedPathWindowsSmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:notification-state && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
     "smoke:windows-cli-wrapper": "node out/smoke/windowsCliWrapperSmoke.js"
   },
   "devDependencies": {
