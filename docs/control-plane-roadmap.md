@@ -28,9 +28,12 @@ injecting messages.
    - Defer event-log rotation until consumers are stable.
 
 3. **VS Code notification service**
-   - Load notification snapshots in the extension host.
-   - Watch or poll the store/event log.
-   - Expose unread counts and latest notifications to existing providers.
+   - Load notification snapshots in the extension host via
+     `NotificationStateService`.
+   - Treat `notifications.json` as the authoritative state source and
+     `events.jsonl` as a wake-up signal.
+   - Expose unread counts, latest notifications, and session/id lookups for
+     future providers and inbox UI.
 
 4. **Attention Inbox**
    - Add a user-facing notification surface in VS Code.

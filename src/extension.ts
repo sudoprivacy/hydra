@@ -30,6 +30,7 @@ import {
 import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } from './utils/hydraEditorGroup';
 import { lookupWorkerId } from './core/sessionManager';
 import { getHydraSessionsFile } from './core/path';
+import { NotificationStateService } from './core/notificationStateService';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogCommands } from './commands/logs';
 import { exec } from './utils/exec';
@@ -167,6 +168,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   ensureHydraGlobalConfig();
+  const notificationState = new NotificationStateService();
+  notificationState.initialize();
+  context.subscriptions.push(
+    notificationState,
+    notificationState.onDidChange(refreshTreeViews),
+  );
   silentInstallCli(context);
   seedDefaultAgentToHydraConfig();
   syncAgentCommandsToHydraConfig();
