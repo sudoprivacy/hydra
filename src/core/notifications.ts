@@ -321,12 +321,15 @@ export class NotificationStore {
         payload: {
           notificationId: notification.id,
           kind: notification.kind,
+          title: notification.title,
+          body: notification.body,
           targetSession: notification.targetSession,
           sourceSession: notification.sourceSession,
           actionType: notification.action?.type,
           actionSession: notification.action?.session,
           workerId: notification.context?.workerId,
           branch: notification.context?.branch,
+          workdir: notification.context?.workdir,
           agent: notification.context?.agent,
         },
       });

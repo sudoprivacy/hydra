@@ -32,6 +32,7 @@ import { importCodexNativeSession } from '../../share/codexAdapter';
 import { ensureLocalBranchFromRemote, validateRepoMatch } from '../../share/repo';
 import type { HydraShareBundle, ShareHydraWorkerInfo } from '../../share/types';
 import { outputError, outputResult, type OutputOpts } from '../output';
+import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
 
 interface CreateShareOpts {
   bucket?: string;
@@ -349,7 +350,7 @@ async function acceptWorker(
     notifyCopilot: false,
     fetchMode: 'best-effort',
   });
-  await postCreatePromise;
+  await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
   return workerInfo;
 }
 

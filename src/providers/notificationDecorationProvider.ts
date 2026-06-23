@@ -45,9 +45,10 @@ export class NotificationDecorationProvider implements vscode.FileDecorationProv
 
     const summary = buildSessionNotificationSummary(sessionName, this.notifications.getByTargetSession(sessionName));
     if (!summary) {
-      const completion = this.notifications.getLatestSourceCompletion?.(sessionName);
-      return completion
-        ? new vscode.FileDecoration('C', 'Hydra worker completed', getDecorationColor('complete'))
+      const attention = this.notifications.getLatestSourceAttention?.(sessionName) ||
+        this.notifications.getLatestSourceCompletion?.(sessionName);
+      return attention
+        ? new vscode.FileDecoration(getDecorationBadge(attention.kind), getDecorationTooltip(attention.kind), getDecorationColor(attention.kind))
         : undefined;
     }
 
@@ -60,6 +61,36 @@ export class NotificationDecorationProvider implements vscode.FileDecorationProv
 
   refresh(): void {
     this.onDidChangeEmitter.fire(undefined);
+  }
+}
+
+function getDecorationBadge(kind: NotificationKind): string {
+  switch (kind) {
+    case 'error':
+      return 'E';
+    case 'blocked':
+      return 'B';
+    case 'needs-input':
+      return '?';
+    case 'complete':
+      return 'C';
+    case 'info':
+      return 'i';
+  }
+}
+
+function getDecorationTooltip(kind: NotificationKind): string {
+  switch (kind) {
+    case 'error':
+      return 'Hydra worker error';
+    case 'blocked':
+      return 'Hydra worker blocked';
+    case 'needs-input':
+      return 'Hydra worker needs input';
+    case 'complete':
+      return 'Hydra worker completed';
+    case 'info':
+      return 'Hydra worker notification';
   }
 }
 
