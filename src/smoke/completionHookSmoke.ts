@@ -193,6 +193,18 @@ async function main(): Promise<void> {
   assert.equal(claudeConfig.hooks.Stop[0].hooks[0].async, true, 'Claude hook should be async');
   const claudeCmd: string = claudeConfig.hooks.Stop[0].hooks[0].command;
   assert.ok(claudeCmd.includes('notify-repo_feat-auth.sh'), `Hook command should reference script, got: ${claudeCmd}`);
+  assert.ok(claudeConfig.hooks?.PermissionRequest, 'Claude config should have PermissionRequest needs-input hook');
+  assert.ok(claudeConfig.hooks?.PreToolUse, 'Claude config should have PreToolUse needs-input hook');
+  assert.equal(claudeConfig.hooks.PermissionRequest.length, 1);
+  assert.equal(claudeConfig.hooks.PreToolUse.length, 1);
+  assert.ok(
+    claudeConfig.hooks.PermissionRequest[0].hooks[0].command.includes('hooks needs-input'),
+    'Claude PermissionRequest hook should call hydra hooks needs-input',
+  );
+  assert.ok(
+    claudeConfig.hooks.PreToolUse[0].hooks[0].command.includes('hooks needs-input'),
+    'Claude PreToolUse hook should call hydra hooks needs-input',
+  );
 
   // Codex
   sm['injectCompletionHook'](fakeWorktree, 'codex', hookInfo);
@@ -256,10 +268,20 @@ async function main(): Promise<void> {
   assert.ok(codexLaunch.includes('"/tmp/hydra-primary-repo"={trust_level="trusted"}'));
   assert.ok(codexLaunch.includes('"/tmp/hydra-worker-worktree"={trust_level="trusted"}'));
 
-  // Verify merge behavior: inject again and check Claude has 2 Stop entries
+  // Verify merge behavior: inject again and check generated hooks stay idempotent
   sm['injectCompletionHook'](fakeWorktree, 'claude', hookInfo);
   const claudeConfig2 = JSON.parse(fs.readFileSync(path.join(fakeWorktree, '.claude', 'settings.json'), 'utf-8'));
-  assert.equal(claudeConfig2.hooks.Stop.length, 2, 'Merge should append, not overwrite');
+  assert.equal(claudeConfig2.hooks.Stop.length, 1, 'Merge should not duplicate Stop hooks');
+  assert.equal(claudeConfig2.hooks.PermissionRequest.length, 1, 'Merge should not duplicate PermissionRequest hooks');
+  assert.equal(claudeConfig2.hooks.PreToolUse.length, 1, 'Merge should not duplicate PreToolUse hooks');
+
+  const needsOnlyWorktree = path.join(tempHome, 'needs-only-worktree');
+  fs.mkdirSync(needsOnlyWorktree, { recursive: true });
+  sm['injectCompletionHook'](needsOnlyWorktree, 'claude', hookInfo, false);
+  const needsOnlyConfig = JSON.parse(fs.readFileSync(path.join(needsOnlyWorktree, '.claude', 'settings.json'), 'utf-8'));
+  assert.equal(needsOnlyConfig.hooks.Stop, undefined, 'Completion hook should respect includeCompletion=false');
+  assert.equal(needsOnlyConfig.hooks.PermissionRequest.length, 1, 'Needs-input hook should still install without completion hook');
+  assert.equal(needsOnlyConfig.hooks.PreToolUse.length, 1, 'PreToolUse needs-input hook should still install without completion hook');
 
   console.log('  Part 1 (config injection): ok');
 

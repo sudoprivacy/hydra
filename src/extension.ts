@@ -36,6 +36,7 @@ import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogComma
 import { exec } from './utils/exec';
 import { NotificationDecorationProvider } from './providers/notificationDecorationProvider';
 import { createNotificationTreeCommands } from './commands/notificationTreeCommands';
+import { WorkerNeedsInputMonitor } from './core/workerNeedsInputMonitor';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
@@ -56,6 +57,8 @@ export function activate(context: vscode.ExtensionContext) {
   const notificationState = new NotificationStateService();
   notificationState.initialize();
   const notificationDecorations = new NotificationDecorationProvider(notificationState);
+  const needsInputMonitor = new WorkerNeedsInputMonitor();
+  needsInputMonitor.initialize();
 
   const copilotProvider = new CopilotProvider(notificationState);
   copilotProvider.setExtensionUri(context.extensionUri);
@@ -181,6 +184,7 @@ export function activate(context: vscode.ExtensionContext) {
   ensureHydraGlobalConfig();
   context.subscriptions.push(
     notificationState,
+    needsInputMonitor,
     notificationState.onDidChange(() => {
       refreshTreeViews();
       notificationDecorations.refresh();
