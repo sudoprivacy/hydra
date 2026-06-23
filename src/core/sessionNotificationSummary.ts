@@ -4,6 +4,7 @@ export interface SessionNotificationSource {
   getBySession(sessionName: string): readonly HydraNotification[];
   getByTargetSession(sessionName: string): readonly HydraNotification[];
   getBySourceSession(sessionName: string): readonly HydraNotification[];
+  getLatestSourceAttention?(sessionName: string): HydraNotification | undefined;
   getLatestSourceCompletion?(sessionName: string): HydraNotification | undefined;
 }
 

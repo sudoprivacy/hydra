@@ -9,6 +9,7 @@ import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { detectIdentity, getWorkerCreationBlockedMessage } from '../core/sessionIdentity';
 import { showHydraCommandError } from './logs';
+import { awaitWorkerPostCreateOrPublishError } from '../core/workerAttentionNotifications';
 
 function getBaseBranchOverride(): string | undefined {
   const hydraOverride = vscode.workspace.getConfiguration('hydra').get<string>('baseBranch');
@@ -91,7 +92,7 @@ async function createCodeWorker(repoRoot: string): Promise<void> {
 
   await refreshHydraViewsBeforeAttach();
   getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
-  void postCreatePromise.catch((error) => {
+  void awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'extension' }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(
       `Worker "${workerInfo.sessionName}" started, but agent initialization did not complete cleanly: ${message}`,
@@ -209,7 +210,7 @@ async function createTaskWorker(workspacePath: string, workspaceIsGitRepo: boole
 
   await refreshHydraViewsBeforeAttach();
   getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
-  void postCreatePromise.catch((error) => {
+  void awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'extension' }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(
       `Worker "${workerInfo.sessionName}" started, but agent initialization did not complete cleanly: ${message}`,

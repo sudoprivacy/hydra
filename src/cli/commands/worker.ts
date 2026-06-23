@@ -10,6 +10,7 @@ import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMess
 import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
 import { agentSupportsCompletionNotification } from '../../core/agentConfig';
 import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
+import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
 
 type WorkerCreateCliOpts = {
   repo?: string;
@@ -240,7 +241,7 @@ export function registerWorkerCommands(program: Command): void {
         );
 
         // Wait for delayed Enter (Claude trust prompt) before exiting
-        await postCreatePromise;
+        await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
       } catch (error) {
         outputError(error, globalOpts);
       }
@@ -320,7 +321,7 @@ export function registerWorkerCommands(program: Command): void {
           },
         );
 
-        await postCreatePromise;
+        await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
       } catch (error) {
         outputError(error, globalOpts);
       }

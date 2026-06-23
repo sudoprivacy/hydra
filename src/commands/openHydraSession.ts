@@ -11,6 +11,7 @@ import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { sendCopilotOnboarding } from './createCopilot';
 import { openChangesReview } from './reviewChanges';
+import { awaitWorkerPostCreateOrPublishError } from '../core/workerAttentionNotifications';
 
 export async function openHydraSessionByItem(item: TmuxItem): Promise<void> {
   const backend = getActiveBackend();
@@ -103,7 +104,16 @@ async function resumeWorker(sessionName: string, fallbackWorktreePath?: string):
   try {
     const sm = new SessionManager(new TmuxBackendCore());
     const result = await sm.startWorker(sessionName);
-    result.postCreatePromise.catch(() => {});
+    void awaitWorkerPostCreateOrPublishError(
+      result.workerInfo,
+      result.postCreatePromise,
+      { eventSource: 'extension' },
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showWarningMessage(
+        `Worker "${result.workerInfo.sessionName}" resumed, but agent initialization did not complete cleanly: ${message}`,
+      );
+    });
     workdir = result.workerInfo.workdir || workdir;
   } catch {
     if (!workdir) {

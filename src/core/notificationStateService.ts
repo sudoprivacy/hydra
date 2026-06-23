@@ -8,8 +8,10 @@ import {
 import { logger } from './logger';
 import {
   getHydraNotificationsFile,
+  isNotificationKind,
   NotificationStore,
   type HydraNotification,
+  type NotificationKind,
   type NotificationMarkSessionReadResult,
   type NotificationClearResult,
   type NotificationListFilters,
@@ -59,6 +61,7 @@ export class NotificationStateService implements Disposable {
   private lastNotificationSignature = 'missing';
   private lastEventSignature = 'missing';
   private lastMalformedEventSignature: string | undefined;
+  private sourceAttentionBySession = new Map<string, HydraNotification>();
   private sourceCompletionBySession = new Map<string, HydraNotification>();
   private readonly notificationFileListener = (current: fs.Stats, previous: fs.Stats) => {
     if (!this.didStatChange(current, previous)) {
@@ -152,13 +155,21 @@ export class NotificationStateService implements Disposable {
   }
 
   getLatestSourceCompletion(sessionName: string): HydraNotification | undefined {
-    const stored = this.getLatestStoredSourceCompletion(sessionName);
-    if (stored) {
-      return stored;
+    const projected = this.sourceCompletionBySession.get(sessionName);
+    if (projected) {
+      return cloneNotification(projected);
     }
 
-    const projected = this.sourceCompletionBySession.get(sessionName);
-    return projected ? cloneNotification(projected) : undefined;
+    return this.getLatestStoredSourceCompletion(sessionName);
+  }
+
+  getLatestSourceAttention(sessionName: string): HydraNotification | undefined {
+    const projected = this.sourceAttentionBySession.get(sessionName);
+    if (projected) {
+      return cloneNotification(projected);
+    }
+
+    return this.getLatestStoredSourceAttention(sessionName);
   }
 
   getById(id: string): HydraNotification | undefined {
@@ -284,6 +295,7 @@ export class NotificationStateService implements Disposable {
     }
 
     const previousRevision = this.state.contentRevision;
+    const previousAttentionRevision = buildSourceProjectionRevision(this.sourceAttentionBySession);
     const previousCompletionRevision = buildSourceCompletionRevision(this.sourceCompletionBySession);
     let notifications: HydraNotification[];
     try {
@@ -299,18 +311,27 @@ export class NotificationStateService implements Disposable {
     this.lastNotificationSignature = getFileSignature(this.notificationsFile);
     this.lastEventSeq = Math.max(this.lastEventSeq, this.safeReadLastSeq());
     this.state = buildNotificationState(notifications, this.lastEventSeq);
-    this.rebuildSourceCompletionProjection(notifications);
+    this.rebuildSourceProjections(notifications);
+    const attentionRevision = buildSourceProjectionRevision(this.sourceAttentionBySession);
     const completionRevision = buildSourceCompletionRevision(this.sourceCompletionBySession);
 
     if (
       options.emit &&
       (
         this.state.contentRevision !== previousRevision ||
+        attentionRevision !== previousAttentionRevision ||
         completionRevision !== previousCompletionRevision
       )
     ) {
       this.emitChange();
     }
+  }
+
+  private getLatestStoredSourceAttention(sessionName: string): HydraNotification | undefined {
+    return [...(this.state.indexes.bySourceSession.get(sessionName) || [])]
+      .filter(notification => notification.targetSession !== sessionName)
+      .sort(compareSourceAttentionNotifications)
+      .map(cloneNotification)[0];
   }
 
   private getLatestStoredSourceCompletion(sessionName: string): HydraNotification | undefined {
@@ -323,15 +344,18 @@ export class NotificationStateService implements Disposable {
       .map(cloneNotification)[0];
   }
 
-  private rebuildSourceCompletionProjection(notifications: readonly HydraNotification[]): void {
+  private rebuildSourceProjections(notifications: readonly HydraNotification[]): void {
+    const attention = new Map<string, HydraNotification>();
     const completions = new Map<string, HydraNotification>();
+    const storedNotificationIds = new Set<string>();
 
     for (const notification of notifications) {
-      if (
-        notification.kind === 'complete' &&
-        notification.sourceSession &&
-        notification.targetSession !== notification.sourceSession
-      ) {
+      storedNotificationIds.add(notification.id);
+      if (!notification.sourceSession || notification.targetSession === notification.sourceSession) {
+        continue;
+      }
+      upsertLatestAttention(attention, notification.sourceSession, notification);
+      if (notification.kind === 'complete') {
         upsertLatestCompletion(completions, notification.sourceSession, notification);
       }
     }
@@ -340,7 +364,8 @@ export class NotificationStateService implements Disposable {
     try {
       events = this.eventLog.read({ tolerateIncompleteTail: true });
     } catch (error) {
-      logger.warn('notification-state.events', 'Failed to rebuild source completion projection', { error });
+      logger.warn('notification-state.events', 'Failed to rebuild source notification projections', { error });
+      this.sourceAttentionBySession = attention;
       this.sourceCompletionBySession = completions;
       return;
     }
@@ -350,9 +375,16 @@ export class NotificationStateService implements Disposable {
       if (!notification?.sourceSession) {
         continue;
       }
-      upsertLatestCompletion(completions, notification.sourceSession, notification);
+      if (storedNotificationIds.has(notification.id)) {
+        continue;
+      }
+      upsertLatestAttention(attention, notification.sourceSession, notification);
+      if (notification.kind === 'complete') {
+        upsertLatestCompletion(completions, notification.sourceSession, notification);
+      }
     }
 
+    this.sourceAttentionBySession = attention;
     this.sourceCompletionBySession = completions;
   }
 
@@ -418,12 +450,23 @@ function upsertLatestCompletion(
   }
 }
 
+function upsertLatestAttention(
+  attention: Map<string, HydraNotification>,
+  sessionName: string,
+  notification: HydraNotification,
+): void {
+  const existing = attention.get(sessionName);
+  if (!existing || compareSourceAttentionNotifications(notification, existing) < 0) {
+    attention.set(sessionName, cloneNotification(notification));
+  }
+}
+
 function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | undefined {
   if (event.type !== 'notify.created') {
     return undefined;
   }
   const payload = event.payload || {};
-  if (payload.kind !== 'complete') {
+  if (!isNotificationKind(payload.kind)) {
     return undefined;
   }
   const sourceSession = getStringPayload(payload, 'sourceSession');
@@ -437,18 +480,42 @@ function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | un
     id,
     createdAt: event.ts,
     readAt: null,
-    kind: 'complete',
-    title: 'Worker completed',
-    body: '',
+    kind: payload.kind,
+    title: getStringPayload(payload, 'title') || getDefaultNotificationTitle(payload.kind),
+    body: getStringPayload(payload, 'body') || '',
     targetSession: targetSession || null,
     sourceSession,
     action,
     context: {
       workerId: getNumberPayload(payload, 'workerId'),
       branch: getStringPayload(payload, 'branch') ?? null,
+      workdir: getStringPayload(payload, 'workdir') ?? null,
       agent: getStringPayload(payload, 'agent') ?? null,
     },
   };
+}
+
+const SOURCE_ATTENTION_KIND_PRIORITY: Record<NotificationKind, number> = {
+  error: 0,
+  blocked: 1,
+  'needs-input': 2,
+  complete: 3,
+  info: 4,
+};
+
+function getDefaultNotificationTitle(kind: NotificationKind): string {
+  switch (kind) {
+    case 'complete':
+      return 'Worker completed';
+    case 'error':
+      return 'Worker error';
+    case 'blocked':
+      return 'Worker blocked';
+    case 'needs-input':
+      return 'Worker needs input';
+    case 'info':
+      return 'Worker notification';
+  }
 }
 
 function getActionPayload(payload: Record<string, unknown>): HydraNotification['action'] | undefined {
@@ -478,13 +545,34 @@ function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotificat
   return b.createdAt.localeCompare(a.createdAt);
 }
 
+function compareSourceAttentionNotifications(a: HydraNotification, b: HydraNotification): number {
+  const newestDiff = compareNotificationsNewestFirst(a, b);
+  if (newestDiff !== 0) {
+    return newestDiff;
+  }
+
+  const priorityDiff = SOURCE_ATTENTION_KIND_PRIORITY[a.kind] - SOURCE_ATTENTION_KIND_PRIORITY[b.kind];
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+
+  return a.id.localeCompare(b.id);
+}
+
 function buildSourceCompletionRevision(completions: ReadonlyMap<string, HydraNotification>): string {
-  return JSON.stringify([...completions.entries()]
+  return buildSourceProjectionRevision(completions);
+}
+
+function buildSourceProjectionRevision(projection: ReadonlyMap<string, HydraNotification>): string {
+  return JSON.stringify([...projection.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([sessionName, notification]) => ({
       sessionName,
       id: notification.id,
       createdAt: notification.createdAt,
+      kind: notification.kind,
+      title: notification.title,
+      body: notification.body,
       targetSession: notification.targetSession,
       sourceSession: notification.sourceSession,
       action: notification.action ? {

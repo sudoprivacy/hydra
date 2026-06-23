@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { TmuxBackendCore } from '../../core/tmux';
 import { isDirectoryWorker, SessionManager, ArchivedSessionInfo, type WorkerInfo } from '../../core/sessionManager';
 import { outputResult, outputError, type OutputOpts } from '../output';
+import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
 
 function formatEntry(entry: ArchivedSessionInfo): Record<string, unknown> {
   const worker = entry.type === 'worker' ? entry.data as WorkerInfo : null;
@@ -156,7 +157,7 @@ export function registerArchiveCommands(program: Command): void {
               console.log(`  Session ID: ${workerInfo.sessionId || 'none'}`);
             },
           );
-          await postCreatePromise;
+          await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
         } else {
           const { copilotInfo, postCreatePromise } = await sm.restoreCopilot(sessionName);
           await postCreatePromise;

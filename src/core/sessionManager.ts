@@ -77,6 +77,10 @@ function countOccurrences(text: string, needle: string): number {
   }
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function rebasePathUnderDirectory(filePath: string | null | undefined, oldDir: string, newDir: string): string | null {
   if (!filePath || !oldDir || !newDir) {
     return null;
@@ -2223,7 +2227,11 @@ export class SessionManager {
       if (notifyCopilot) {
         this.armCompletionNotification(sessionName);
       }
-      await this.backend.sendMessage(sessionName, task);
+      try {
+        await this.backend.sendMessage(sessionName, task);
+      } catch (error) {
+        throw new Error(`Initial prompt delivery failed for "${sessionName}": ${getErrorMessage(error)}`);
+      }
     }
   }
 

@@ -174,9 +174,9 @@ Current event types:
 
 | Type | Source | Role | Payload contract |
 | --- | --- | --- | --- |
-| `notify.created` | `cli` or `hook` | undefined | `notificationId`, `kind`, `targetSession`, `sourceSession`, optional `actionType`, `actionSession`, `workerId`, `branch`, `agent`. Emitted only when a new notification is stored; dedupe hits do not emit a duplicate event. |
-| `notify.read` | `cli` | undefined | Same notification reference fields as `notify.created`. Emitted only when the notification transitions from unread to read. |
-| `notify.cleared` | `cli` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`. Emitted only when at least one notification is removed. |
+| `notify.created` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `notificationId`, `kind`, `title`, redacted `body`, `targetSession`, `sourceSession`, optional `actionType`, `actionSession`, `workerId`, `branch`, `workdir`, `agent`. Emitted only when a new notification is stored; dedupe hits do not emit a duplicate event. |
+| `notify.read` | `cli`, `extension`, `session-manager`, or `hook` | undefined | Same notification reference fields as `notify.created`. Emitted only when the notification transitions from unread to read. |
+| `notify.cleared` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`. Emitted only when at least one notification is removed. |
 | `worker.created` | `session-manager` | `worker` | `workerId`, `source`, optional `branch`, `repo`, `managedWorkdir`. Emitted for fresh code/task worker creation. |
 | `worker.started` | `session-manager` | `worker` | Worker identity fields plus `resumed`; existing-branch paths also include `alreadyRunning`. Emitted when an existing worker session is started or reused. |
 | `worker.stopped` | `session-manager` | `worker` | Worker identity fields. |

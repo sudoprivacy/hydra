@@ -405,19 +405,18 @@ function getTargetUnreadNotifications(
     : [];
 }
 
-function getLatestSourceCompletionNotification(
+function getLatestSourceAttentionNotification(
   source: SessionNotificationSource | undefined,
   sessionName: string,
 ): HydraNotification | undefined {
   if (!source) return undefined;
-  const projected = source.getLatestSourceCompletion?.(sessionName);
+  const projected = source.getLatestSourceAttention?.(sessionName);
   if (projected) return projected;
   return source.getBySourceSession(sessionName)
     .filter(notification =>
-      notification.kind === 'complete' &&
       notification.targetSession !== sessionName,
     )
-    .sort(compareNotificationsNewestFirst)[0];
+    .sort(compareSourceAttentionNotifications)[0];
 }
 
 function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotification): number {
@@ -426,6 +425,26 @@ function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotificat
     return timeDiff;
   }
   return b.createdAt.localeCompare(a.createdAt);
+}
+
+const SOURCE_ATTENTION_KIND_PRIORITY: Record<NotificationKind, number> = {
+  error: 0,
+  blocked: 1,
+  'needs-input': 2,
+  complete: 3,
+  info: 4,
+};
+
+function compareSourceAttentionNotifications(a: HydraNotification, b: HydraNotification): number {
+  const newestDiff = compareNotificationsNewestFirst(a, b);
+  if (newestDiff !== 0) {
+    return newestDiff;
+  }
+  const priorityDiff = SOURCE_ATTENTION_KIND_PRIORITY[a.kind] - SOURCE_ATTENTION_KIND_PRIORITY[b.kind];
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+  return a.id.localeCompare(b.id);
 }
 
 function getNotificationThemeColor(kind: NotificationKind): vscode.ThemeColor {
@@ -903,7 +922,7 @@ export class GitStatusItem extends TmuxItem {
 export class TmuxSessionItem extends WorktreeItem {
   public readonly session: SessionWithStatus;
   public readonly detailItem: TmuxDetailItem;
-  public readonly completionNotification?: HydraNotification;
+  public readonly sourceAttentionNotification?: HydraNotification;
   public readonly gitStatusItem?: GitStatusItem;
 
   constructor(
@@ -920,7 +939,7 @@ export class TmuxSessionItem extends WorktreeItem {
     displayName?: string,
     isTaskWorker?: boolean,
     notificationSummary?: SessionNotificationSummary,
-    completionNotification?: HydraNotification
+    sourceAttentionNotification?: HydraNotification
   ) {
     const isRoot = Boolean(worktree?.isMain);
     const branchLabel = branchLabelOverride || worktree?.branch || (isRoot ? 'main' : session.slug);
@@ -941,7 +960,7 @@ export class TmuxSessionItem extends WorktreeItem {
 
     this.session = session;
     this.detailItem = new TmuxDetailItem(session, repoName, worktree, extensionUri);
-    this.completionNotification = completionNotification;
+    this.sourceAttentionNotification = sourceAttentionNotification;
 
     const descParts: string[] = [];
     if (this.description) descParts.push(String(this.description));
@@ -949,15 +968,15 @@ export class TmuxSessionItem extends WorktreeItem {
     if (agentType) descParts.push(`[${agentType}]`);
     if (notificationSummary) {
       descParts.push(formatWorkerStatusLabel(notificationSummary.kind));
-    } else if (completionNotification) {
-      descParts.push('completed');
+    } else if (sourceAttentionNotification) {
+      descParts.push(formatWorkerStatusLabel(sourceAttentionNotification.kind));
     }
     if (descParts.length > 0) this.description = descParts.join(' ');
     applyNotificationSummary(this, session.name, notificationSummary);
-    if (completionNotification && !notificationSummary) {
+    if (sourceAttentionNotification && !notificationSummary) {
       this.tooltip = buildNotificationTooltip(
-        completionNotification,
-        'This worker has produced a completion notification for its copilot.',
+        sourceAttentionNotification,
+        'This worker has a recent source notification for its copilot.',
       );
     }
 
@@ -971,7 +990,7 @@ export class TmuxSessionItem extends WorktreeItem {
 
 export class InactiveWorktreeItem extends WorktreeItem {
   public readonly detailItem: InactiveDetailItem;
-  public readonly completionNotification?: HydraNotification;
+  public readonly sourceAttentionNotification?: HydraNotification;
   public readonly gitStatusItem?: GitStatusItem;
   public readonly worktree: Worktree;
   public readonly targetSessionName: string;
@@ -989,7 +1008,7 @@ export class InactiveWorktreeItem extends WorktreeItem {
     displayName?: string,
     isTaskWorker?: boolean,
     notificationSummary?: SessionNotificationSummary,
-    completionNotification?: HydraNotification
+    sourceAttentionNotification?: HydraNotification
   ) {
     const branchLabel = branchLabelOverride || worktree.branch || (worktree.isMain ? 'main' : path.basename(worktree.path));
 
@@ -1011,21 +1030,21 @@ export class InactiveWorktreeItem extends WorktreeItem {
     this.worktree = worktree;
     this.targetSessionName = targetSessionName;
     this.detailItem = new InactiveDetailItem(worktree, repoName, targetSessionName, extensionUri);
-    this.completionNotification = completionNotification;
-    if (notificationSummary || completionNotification) {
+    this.sourceAttentionNotification = sourceAttentionNotification;
+    if (notificationSummary || sourceAttentionNotification) {
       const descParts = typeof this.description === 'string' && this.description.trim()
         ? [this.description]
         : [];
       descParts.push(notificationSummary
         ? formatWorkerStatusLabel(notificationSummary.kind)
-        : 'completed');
+        : formatWorkerStatusLabel(sourceAttentionNotification!.kind));
       this.description = descParts.join(' ');
     }
     applyNotificationSummary(this, targetSessionName, notificationSummary);
-    if (completionNotification && !notificationSummary) {
+    if (sourceAttentionNotification && !notificationSummary) {
       this.tooltip = buildNotificationTooltip(
-        completionNotification,
-        'This worker has produced a completion notification for its copilot.',
+        sourceAttentionNotification,
+        'This worker has a recent source notification for its copilot.',
       );
     }
 
@@ -1482,7 +1501,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           session, repoName, worktree, isCurrentWs, hasGit,
           this._extensionUri, branchLabel, w.agent, repoRoot, w.workerId, w.displayName, false,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
         ));
       } else {
         const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
@@ -1505,7 +1524,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           worktree, repoName, w.sessionName, isCurrentWs, hasGit,
           this._extensionUri, branchLabel, stoppedStatus, repoRoot, w.displayName, false,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
         ));
       }
     }
@@ -1541,7 +1560,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           session, repoName, worktree, isCurrentWs, false,
           this._extensionUri, label, w.agent, undefined, w.workerId, w.displayName, true,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
         ));
       } else {
         const stoppedStatus: SessionStatus = {
@@ -1561,7 +1580,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           worktree, repoName, w.sessionName, isCurrentWs, false,
           this._extensionUri, label, stoppedStatus, undefined, w.displayName, true,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceCompletionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
         ));
       }
     }

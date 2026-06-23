@@ -279,6 +279,7 @@ async function testTargetSessionOperationsIgnoreSourceOnlyNotifications(): Promi
         service.initialize();
         assert.deepEqual(service.getByTargetSession('repo_worker').map(notification => notification.id), [targeted.id]);
         assert.deepEqual(service.getBySourceSession('repo_worker').map(notification => notification.id), [sourceOnly.id]);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, sourceOnly.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, sourceOnly.id);
 
         const read = service.markTargetSessionRead('repo_worker');
@@ -294,6 +295,9 @@ async function testTargetSessionOperationsIgnoreSourceOnlyNotifications(): Promi
         const clearedCopilotInbox = service.clear({ targetSession: 'repo_copilot' });
         assert.equal(clearedCopilotInbox.cleared, 1);
         assert.equal(service.getById(sourceOnly.id), undefined);
+        const projectedAttention = service.getLatestSourceAttention('repo_worker');
+        assert.equal(projectedAttention?.id, sourceOnly.id);
+        assert.equal(projectedAttention?.kind, 'complete');
         const projectedCompletion = service.getLatestSourceCompletion('repo_worker');
         assert.equal(projectedCompletion?.id, sourceOnly.id);
         assert.equal(projectedCompletion?.kind, 'complete');
@@ -423,6 +427,194 @@ async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
         assert.ok(changes > 0, 'event-only completion projection should emit a change');
       } finally {
         listener.dispose();
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-source-attention-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const error = store.create({
+        kind: 'error',
+        title: 'Worker failed during startup',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+      await sleep(10);
+      const complete = store.create({
+        kind: 'complete',
+        title: 'Worker completed',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(
+          service.getLatestSourceAttention('repo_worker')?.id,
+          complete.id,
+          'latest source status should override an older higher-priority error',
+        );
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'complete');
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, complete.id);
+
+        await sleep(10);
+        new EventLog().append({
+          type: 'notify.created',
+          source: 'cli',
+          payload: {
+            notificationId: 'event-newer-error',
+            kind: 'error',
+            title: 'Worker failed after store completion',
+            targetSession: 'repo_copilot',
+            sourceSession: 'repo_worker',
+            actionType: 'open-session',
+            actionSession: 'repo_worker',
+          },
+        });
+        await waitFor(
+          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-newer-error',
+          'event source attention overrides older stored notifications',
+        );
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'error');
+        assert.equal(
+          service.getLatestSourceCompletion('repo_worker')?.id,
+          complete.id,
+          'completion compatibility projection should remain available while latest attention is error',
+        );
+
+        service.clear({ targetSession: 'repo_copilot' });
+        const projectedAttention = service.getLatestSourceAttention('repo_worker');
+        assert.equal(projectedAttention?.id, 'event-newer-error');
+        assert.equal(projectedAttention?.kind, 'error');
+
+        await sleep(10);
+        const latestComplete = store.create({
+          kind: 'complete',
+          title: 'Worker completed after error',
+          targetSession: 'repo_copilot',
+          sourceSession: 'repo_worker',
+          action: { type: 'open-session', session: 'repo_worker' },
+        }).notification;
+        await waitFor(
+          () => service.getLatestSourceAttention('repo_worker')?.id === latestComplete.id,
+          'latest complete source attention',
+        );
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'complete');
+        assert.equal(
+          service.getLatestSourceCompletion('repo_worker')?.id,
+          latestComplete.id,
+          'completion compatibility projection should track latest completion',
+        );
+        assert.notEqual(error.id, latestComplete.id);
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-event-error-projection-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const service = createService();
+      let changes = 0;
+      const listener = service.onDidChange(() => { changes += 1; });
+      try {
+        service.initialize();
+        new EventLog().append({
+          type: 'notify.created',
+          source: 'cli',
+          payload: {
+            notificationId: 'event-only-error',
+            kind: 'error',
+            title: 'Worker failed during startup',
+            targetSession: 'repo_copilot',
+            sourceSession: 'repo_worker',
+            actionType: 'open-session',
+            actionSession: 'repo_worker',
+            workerId: 4,
+            branch: 'feat/error',
+            workdir: ctx.tmp,
+            agent: 'codex',
+          },
+        });
+
+        await waitFor(
+          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-only-error',
+          'event-only error projection',
+        );
+        assert.equal(service.getSnapshot().totalCount, 0);
+        const projected = service.getLatestSourceAttention('repo_worker');
+        assert.equal(projected?.kind, 'error');
+        assert.equal(projected?.title, 'Worker failed during startup');
+        assert.equal(projected?.action?.session, 'repo_worker');
+        assert.equal(projected?.context?.workerId, 4);
+        assert.equal(projected?.context?.workdir, ctx.tmp);
+        assert.ok(changes > 0, 'event-only error projection should emit a change');
+      } finally {
+        listener.dispose();
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testStoredNotificationWinsOverDuplicateEventProjection(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-duplicate-event-projection-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const stored = store.create({
+        kind: 'error',
+        title: 'Worker failed during startup',
+        body: 'Full pane missing details remain in notifications.json',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.body, stored.body);
+
+        await sleep(10);
+        new EventLog().append({
+          type: 'notify.created',
+          source: 'cli',
+          payload: {
+            notificationId: stored.id,
+            kind: 'error',
+            title: 'Event projection should not replace store title',
+            body: 'Event body is redacted by the event sanitizer',
+            targetSession: 'repo_copilot',
+            sourceSession: 'repo_worker',
+            actionType: 'open-session',
+            actionSession: 'repo_worker',
+          },
+        });
+
+        service.markRead(stored.id);
+        const projected = service.getLatestSourceAttention('repo_worker');
+        assert.equal(projected?.id, stored.id);
+        assert.equal(projected?.title, stored.title);
+        assert.equal(projected?.body, stored.body);
+      } finally {
         service.dispose();
       }
     });
@@ -564,10 +756,11 @@ async function testCliEndToEnd(): Promise<void> {
         );
         await waitFor(() => service.getSnapshot().totalCount === 0, 'CLI clear reflected in service');
         assert.equal(
-          service.getLatestSourceCompletion('repo_worker')?.id,
+          service.getLatestSourceAttention('repo_worker')?.id,
           created.notification.id,
-          'worker completion projection should survive notification clear',
+          'worker source attention projection should survive notification clear',
         );
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, created.notification.id);
       } finally {
         service.dispose();
       }
@@ -608,6 +801,9 @@ async function main(): Promise<void> {
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
   await testEventOnlyCompletionProjectionEmitsChange();
+  await testSourceAttentionProjectionUsesLatestStatus();
+  await testEventOnlyErrorProjectionEmitsChange();
+  await testStoredNotificationWinsOverDuplicateEventProjection();
   await testInitializeSignatureWindow();
   await testDuplicateAndMalformedEventTolerance();
   await testCliEndToEnd();
