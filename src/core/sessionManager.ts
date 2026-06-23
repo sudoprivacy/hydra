@@ -715,6 +715,7 @@ export class SessionManager {
     const shouldNotifyCopilot = agentSupportsCompletionNotification(prepared.agentType) &&
       prepared.notifyCopilot &&
       !!prepared.copilotSessionName;
+    const shouldInstallClaudeNeedsInputHooks = prepared.agentType === 'claude' && !!prepared.copilotSessionName;
     logger.info('session.launchWorker', 'Launching worker session', {
       source: prepared.source,
       sessionName: prepared.sessionName,
@@ -728,7 +729,7 @@ export class SessionManager {
       notifyCopilot: shouldNotifyCopilot,
     });
 
-    if (shouldNotifyCopilot && prepared.copilotSessionName) {
+    if ((shouldNotifyCopilot || shouldInstallClaudeNeedsInputHooks) && prepared.copilotSessionName) {
       const peekState = this.readSessionState();
       const workerId = peekState.workers[prepared.sessionName]?.workerId ??
         prepared.preservedWorkerInfo?.workerId ??
@@ -741,7 +742,7 @@ export class SessionManager {
         source: prepared.source,
         branch: prepared.branch,
         workdir: prepared.workdir,
-      });
+      }, shouldNotifyCopilot);
       if (prepared.agentType === 'codex') {
         const scriptPath = this.getNotifyScriptPath(prepared.sessionName);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
@@ -2245,60 +2246,80 @@ export class SessionManager {
     worktreePath: string,
     agentType: string,
     info: WorkerNotificationInfo,
+    includeCompletion = true,
   ): void {
     if (!agentSupportsCompletionNotification(agentType)) {
       return;
     }
 
     try {
-      // 1. Write the notification script.
-      //    Windows gets a PowerShell .ps1 (the sh script's `mkdir`/`trap`/`mktemp`/
-      //    `case…esac`/`printf` body is meaningless to cmd.exe, and `sh` is only on
-      //    PATH if the user opted into Git for Windows' bin dir). See issue #225 §3.
-      const hooksDir = path.join(getHydraHome(), 'hooks');
-      fs.mkdirSync(hooksDir, { recursive: true });
+      let hookCommand: string | undefined;
+      if (includeCompletion) {
+        // 1. Write the completion notification script.
+        //    Windows gets a PowerShell .ps1 (the sh script's `mkdir`/`trap`/`mktemp`/
+        //    `case…esac`/`printf` body is meaningless to cmd.exe, and `sh` is only on
+        //    PATH if the user opted into Git for Windows' bin dir). See issue #225 §3.
+        const hooksDir = path.join(getHydraHome(), 'hooks');
+        fs.mkdirSync(hooksDir, { recursive: true });
 
-      const isWindows = process.platform === 'win32';
-      const scriptPath = this.getNotifyScriptPath(info.sessionName);
-      const scriptContent = isWindows
-        ? this.buildNotifyScriptPowerShell(info)
-        : this.buildNotifyScript(info);
-      fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
+        const isWindows = process.platform === 'win32';
+        const scriptPath = this.getNotifyScriptPath(info.sessionName);
+        const scriptContent = isWindows
+          ? this.buildNotifyScriptPowerShell(info)
+          : this.buildNotifyScript(info);
+        fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
 
-      const hookCommand = this.buildNotifyHookCommand(scriptPath, agentType);
+        hookCommand = this.buildNotifyHookCommand(scriptPath, agentType);
+      }
 
       // 2. Merge the completion hook into the agent's config
       switch (agentType) {
         case 'claude':
+          if (hookCommand) {
+            this.mergeAgentHookConfig(
+              path.join(worktreePath, '.claude', 'settings.json'),
+              'Stop',
+              { hooks: [{ type: 'command', command: hookCommand, async: true }] },
+            );
+          }
           this.mergeAgentHookConfig(
             path.join(worktreePath, '.claude', 'settings.json'),
-            'Stop',
-            { hooks: [{ type: 'command', command: hookCommand, async: true }] },
+            'PermissionRequest',
+            { hooks: [{ type: 'command', command: this.buildNeedsInputHookCommand(info.sessionName, 'claude', 'PermissionRequest'), async: true }] },
+          );
+          this.mergeAgentHookConfig(
+            path.join(worktreePath, '.claude', 'settings.json'),
+            'PreToolUse',
+            { hooks: [{ type: 'command', command: this.buildNeedsInputHookCommand(info.sessionName, 'claude', 'PreToolUse'), async: true }] },
           );
           break;
         case 'codex':
-          this.mergeAgentHookConfig(
-            path.join(worktreePath, '.codex', 'hooks.json'),
-            'Stop',
-            { hooks: [{ type: 'command', command: hookCommand }] },
-          );
-          // Codex requires the codex_hooks feature flag to be enabled
-          this.ensureCodexHooksEnabled(path.join(worktreePath, '.codex', 'config.toml'));
+          if (hookCommand) {
+            this.mergeAgentHookConfig(
+              path.join(worktreePath, '.codex', 'hooks.json'),
+              'Stop',
+              { hooks: [{ type: 'command', command: hookCommand }] },
+            );
+            // Codex requires the codex_hooks feature flag to be enabled
+            this.ensureCodexHooksEnabled(path.join(worktreePath, '.codex', 'config.toml'));
+          }
           break;
         case 'gemini':
-          this.mergeAgentHookConfig(
-            path.join(worktreePath, '.gemini', 'settings.json'),
-            'AfterAgent',
-            {
-              matcher: '*',
-              hooks: [{
-                name: 'hydra-notify-copilot',
-                type: 'command',
-                command: hookCommand,
-                timeout: 5000,
-              }],
-            },
-          );
+          if (hookCommand) {
+            this.mergeAgentHookConfig(
+              path.join(worktreePath, '.gemini', 'settings.json'),
+              'AfterAgent',
+              {
+                matcher: '*',
+                hooks: [{
+                  name: 'hydra-notify-copilot',
+                  type: 'command',
+                  command: hookCommand,
+                  timeout: 5000,
+                }],
+              },
+            );
+          }
           break;
         // custom: no known hook system — skip
       }
@@ -2324,9 +2345,38 @@ export class SessionManager {
 
     if (!config.hooks) config.hooks = {};
     if (!Array.isArray(config.hooks[eventName])) config.hooks[eventName] = [];
-    config.hooks[eventName].push(hookEntry);
+    if (!this.hasMatchingAgentHookEntry(config.hooks[eventName], hookEntry)) {
+      config.hooks[eventName].push(hookEntry);
+    }
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+  }
+
+  private hasMatchingAgentHookEntry(entries: unknown[], hookEntry: Record<string, unknown>): boolean {
+    const command = this.extractFirstAgentHookCommand(hookEntry);
+    if (command) {
+      return entries.some(entry => this.extractFirstAgentHookCommand(entry) === command);
+    }
+    return entries.some(entry => JSON.stringify(entry) === JSON.stringify(hookEntry));
+  }
+
+  private extractFirstAgentHookCommand(entry: unknown): string | undefined {
+    if (!entry || typeof entry !== 'object') {
+      return undefined;
+    }
+    const hooks = (entry as { hooks?: unknown }).hooks;
+    if (!Array.isArray(hooks)) {
+      return undefined;
+    }
+    for (const hook of hooks) {
+      if (hook && typeof hook === 'object') {
+        const command = (hook as { command?: unknown }).command;
+        if (typeof command === 'string' && command.trim()) {
+          return command;
+        }
+      }
+    }
+    return undefined;
   }
 
   private ensureCodexHooksEnabled(configTomlPath: string): void {
@@ -2408,6 +2458,35 @@ export class SessionManager {
       default:
         return command;
     }
+  }
+
+  private buildNeedsInputHookCommand(sessionName: string, agentType: string, eventName: string): string {
+    if (process.platform === 'win32') {
+      return this.buildNeedsInputHookCommandPowerShell(sessionName, agentType, eventName);
+    }
+    const agent = shellQuote(agentType);
+    const session = shellQuote(sessionName);
+    const event = shellQuote(eventName);
+    return [
+      'HYDRA_CLI=$(command -v hydra 2>/dev/null || true)',
+      '[ -n "$HYDRA_CLI" ] || HYDRA_CLI="$HOME/.hydra/bin/hydra"',
+      `[ -x "$HYDRA_CLI" ] && "$HYDRA_CLI" hooks needs-input --agent ${agent} --session ${session} --event ${event} --json >/dev/null 2>&1 || true`,
+    ].join('; ');
+  }
+
+  private buildNeedsInputHookCommandPowerShell(sessionName: string, agentType: string, eventName: string): string {
+    const psq = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    return [
+      '$hydra = Get-Command hydra -ErrorAction SilentlyContinue',
+      '$hydraPath = if ($hydra) { $hydra.Source } else { $null }',
+      'if (-not $hydraPath) {',
+      "  foreach ($candidate in @((Join-Path $HOME '.hydra\\bin\\hydra.cmd'), (Join-Path $HOME '.hydra\\bin\\hydra.ps1'), (Join-Path $HOME '.hydra\\bin\\hydra'))) {",
+      '    if (Test-Path -LiteralPath $candidate) { $hydraPath = $candidate; break }',
+      '  }',
+      '}',
+      `if ($hydraPath) { & $hydraPath hooks needs-input --agent ${psq(agentType)} --session ${psq(sessionName)} --event ${psq(eventName)} --json *> $null }`,
+      'exit 0',
+    ].join('; ');
   }
 
   private withCodexCompletionHookOverrides(

@@ -7,6 +7,7 @@ import {
   type HydraNotification,
   type NotificationKind,
 } from './notifications';
+import type { WorkerNeedsInputSignal } from './workerNeedsInputClassifier';
 import type { WorkerInfo } from './sessionManager';
 
 export type WorkerRuntimeErrorReason = 'post-create' | 'initial-prompt' | 'startup-timeout';
@@ -30,11 +31,17 @@ export interface PublishWorkerRuntimeErrorOptions {
   store?: NotificationStore;
 }
 
+export interface PublishWorkerNeedsInputOptions {
+  eventSource?: HydraEventSource;
+  store?: NotificationStore;
+}
+
 export type PublishWorkerAttentionNotificationResult =
   | (CreateNotificationResult & { skipped?: undefined })
   | { created: false; notification?: undefined; skipped: 'missing-target' | 'store-failed' };
 
 const ERROR_BODY_LIMIT = 600;
+const NEEDS_INPUT_BODY_LIMIT = 600;
 
 export function publishWorkerAttentionNotification(
   input: PublishWorkerAttentionNotificationInput,
@@ -99,6 +106,33 @@ export function publishWorkerRuntimeErrorNotification(
   });
 }
 
+export function publishWorkerNeedsInputNotification(
+  worker: WorkerInfo,
+  signal: WorkerNeedsInputSignal,
+  options: PublishWorkerNeedsInputOptions = {},
+): PublishWorkerAttentionNotificationResult {
+  const workerLabel = formatWorkerLabel(worker);
+  const body = formatNeedsInputBody(signal);
+
+  return publishWorkerAttentionNotification({
+    kind: 'needs-input',
+    targetCopilotSession: worker.copilotSessionName,
+    sourceWorkerSession: worker.sessionName,
+    title: `${workerLabel} needs input`,
+    body,
+    dedupeKey: `worker-needs-input:${worker.sessionName}:${signal.source}:${signal.reason}:${signal.fingerprint}`,
+    actionSession: worker.sessionName,
+    context: {
+      workerId: worker.workerId,
+      branch: worker.branch,
+      workdir: worker.workdir,
+      agent: worker.agent,
+    },
+    eventSource: options.eventSource || 'hook',
+    store: options.store,
+  });
+}
+
 export async function awaitWorkerPostCreateOrPublishError(
   worker: WorkerInfo,
   postCreatePromise: Promise<void>,
@@ -137,6 +171,15 @@ function formatWorkerLabel(worker: WorkerInfo): string {
   return worker.workerId != null
     ? `Worker #${worker.workerId}`
     : `Worker ${worker.sessionName}`;
+}
+
+function formatNeedsInputBody(signal: WorkerNeedsInputSignal): string {
+  const parts = [
+    signal.title,
+    signal.body,
+    'Open the worker session to respond.',
+  ].filter(Boolean);
+  return truncateText(redactText(parts.join('\n\n'), NEEDS_INPUT_BODY_LIMIT), NEEDS_INPUT_BODY_LIMIT);
 }
 
 function formatErrorMessage(error: unknown): string {
