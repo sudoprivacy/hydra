@@ -370,12 +370,29 @@ export class NotificationStateService implements Disposable {
       return;
     }
 
-    for (const event of events) {
+    const eventOnlyNotifications = new Map<string, HydraNotification>();
+    for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
       const notification = notificationFromCreatedEvent(event);
-      if (!notification?.sourceSession) {
+      if (notification?.sourceSession) {
+        if (!storedNotificationIds.has(notification.id)) {
+          eventOnlyNotifications.set(notification.id, notification);
+        }
         continue;
       }
-      if (storedNotificationIds.has(notification.id)) {
+
+      if (event.type !== 'notify.cleared') {
+        continue;
+      }
+
+      for (const [id, projected] of eventOnlyNotifications.entries()) {
+        if (notificationMatchesClearEvent(projected, event)) {
+          eventOnlyNotifications.delete(id);
+        }
+      }
+    }
+
+    for (const notification of eventOnlyNotifications.values()) {
+      if (!notification.sourceSession) {
         continue;
       }
       upsertLatestAttention(attention, notification.sourceSession, notification);
@@ -493,6 +510,27 @@ function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | un
       agent: getStringPayload(payload, 'agent') ?? null,
     },
   };
+}
+
+function notificationMatchesClearEvent(notification: HydraNotification, event: HydraEvent): boolean {
+  const payload = event.payload || {};
+  const session = getStringPayload(payload, 'session');
+  const targetSession = getStringPayload(payload, 'targetSession');
+  const sourceSession = getStringPayload(payload, 'sourceSession');
+
+  if (!session && !targetSession && !sourceSession) {
+    return true;
+  }
+  if (session && notification.targetSession !== session && notification.sourceSession !== session) {
+    return false;
+  }
+  if (targetSession && notification.targetSession !== targetSession) {
+    return false;
+  }
+  if (sourceSession && notification.sourceSession !== sourceSession) {
+    return false;
+  }
+  return true;
 }
 
 const SOURCE_ATTENTION_KIND_PRIORITY: Record<NotificationKind, number> = {

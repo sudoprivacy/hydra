@@ -4,6 +4,10 @@ import { randomUUID } from 'crypto';
 import { getHydraHome } from './path';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
+import {
+  projectWorkerRuntimeFromNotification,
+  WorkerRuntimeStateStore,
+} from './workerRuntimeState';
 
 export type NotificationKind = 'complete' | 'needs-input' | 'error' | 'blocked' | 'info';
 
@@ -108,6 +112,10 @@ export class NotificationStore {
     private readonly filePath: string = getHydraNotificationsFile(),
     private readonly retentionLimit: number = DEFAULT_RETENTION_LIMIT,
     private readonly eventLog: EventLog = new EventLog(),
+    private readonly runtimeStateStore: WorkerRuntimeStateStore = new WorkerRuntimeStateStore(
+      path.join(path.dirname(filePath), 'worker-runtime-state.json'),
+      eventLog,
+    ),
   ) {}
 
   create(input: CreateNotificationInput): CreateNotificationResult {
@@ -117,6 +125,7 @@ export class NotificationStore {
       if (dedupeKey) {
         const existing = store.notifications.find(notification => notification.dedupeKey === dedupeKey);
         if (existing) {
+          this.projectRuntimeState(existing, input.eventSource || 'cli');
           return { notification: existing, created: false };
         }
       }
@@ -146,6 +155,7 @@ export class NotificationStore {
       store.notifications = [notification, ...store.notifications].slice(0, this.retentionLimit);
       this.writeStore(store);
       this.emitNotificationEvent('notify.created', notification, input.eventSource || 'cli');
+      this.projectRuntimeState(notification, input.eventSource || 'cli');
       return { notification, created: true };
     });
   }
@@ -337,6 +347,19 @@ export class NotificationStore {
       logger.warn('notifications.event', 'Failed to append notification event', {
         type,
         notificationId: notification.id,
+        error,
+      });
+    }
+  }
+
+  private projectRuntimeState(notification: HydraNotification, source: HydraEventSource): void {
+    try {
+      projectWorkerRuntimeFromNotification(notification, source, this.runtimeStateStore);
+    } catch (error) {
+      logger.warn('notifications.runtime-state', 'Failed to project notification into worker runtime state', {
+        notificationId: notification.id,
+        kind: notification.kind,
+        sourceSession: notification.sourceSession,
         error,
       });
     }

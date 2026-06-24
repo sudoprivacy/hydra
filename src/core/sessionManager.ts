@@ -13,6 +13,11 @@ import { buildWindowsCopilotSessionEnvPrefix, probePaneShellWithRetry, type Wind
 import { logger } from './logger';
 import { hashText } from './logRedaction';
 import { EventLog, type HydraEventRole } from './events';
+import {
+  setWorkerRuntimeState,
+  WorkerRuntimeStateStore,
+  type WorkerRuntimeState,
+} from './workerRuntimeState';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -340,6 +345,7 @@ export class SessionManager {
   constructor(
     private backend: MultiplexerBackendCore,
     private readonly eventLog: EventLog = new EventLog(),
+    private readonly runtimeStateStore: WorkerRuntimeStateStore = new WorkerRuntimeStateStore(undefined, eventLog),
   ) {}
 
   // ── Sync: reconcile sessions.json <-> live multiplexer ──
@@ -833,6 +839,7 @@ export class SessionManager {
     if (!prepared.preservedWorkerInfo) {
       this.emitWorkerEvent('worker.created', workerInfo);
     }
+    this.updateWorkerRuntimeState(workerInfo, 'running', prepared.preservedWorkerInfo ? 'worker-restored' : 'worker-created');
 
     const postCreatePromise = this.withPostCreateTimeout((async () => {
       if (isResume) {
@@ -1141,6 +1148,7 @@ export class SessionManager {
     }
 
     this.emitWorkerEvent('worker.started', workerInfo, { resumed: canResume });
+    this.updateWorkerRuntimeState(workerInfo, 'running', 'worker-started');
 
     return {
       workerInfo,
@@ -1774,6 +1782,27 @@ export class SessionManager {
         ...payload,
       },
     });
+  }
+
+  private updateWorkerRuntimeState(worker: WorkerInfo, state: WorkerRuntimeState, reason: string): void {
+    try {
+      setWorkerRuntimeState({
+        sessionName: worker.sessionName,
+        state,
+        origin: 'session-manager',
+        reason,
+        workerId: worker.workerId,
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, 'session-manager', this.runtimeStateStore);
+    } catch (error) {
+      logger.warn('session.worker-runtime-state', 'Failed to update worker runtime state', {
+        sessionName: worker.sessionName,
+        state,
+        reason,
+        error,
+      });
+    }
   }
 
   private emitCopilotEvent(type: string, copilot: CopilotInfo, payload: Record<string, unknown> = {}): void {
@@ -3444,6 +3473,7 @@ export class SessionManager {
         resumed: true,
         alreadyRunning: true,
       });
+      this.updateWorkerRuntimeState(workerInfo, 'running', task ? 'worker-started-with-task' : 'worker-started');
 
       return {
         workerInfo,
@@ -3567,6 +3597,7 @@ export class SessionManager {
         resumed: canResume,
         alreadyRunning: false,
       });
+      this.updateWorkerRuntimeState(workerInfo, 'running', task ? 'worker-started-with-task' : 'worker-started');
 
       return {
         workerInfo,

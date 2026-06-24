@@ -119,6 +119,7 @@ Worker entries include:
 | `branch` | string or null |
 | `agent` | string |
 | `status` | string |
+| `runtimeState` | object |
 | `attached` | boolean |
 | `workdir` | string or null |
 | `managedWorkdir` | boolean |
@@ -126,6 +127,13 @@ Worker entries include:
 | `sessionId` | string or null |
 | `sessionFile` | string or null |
 | `agentSessionId` | string or null |
+
+`status` is the tmux/session lifecycle (`running` or `stopped`). `runtimeState`
+is the current worker runtime projection. Its `state` is one of `unknown`,
+`running`, `idle`, `needs-input`, or `error`; `complete` remains a notification
+event and usually projects runtime to `idle`. When the tmux session is stopped,
+`runtimeState.state` is reported as `unknown` so stale agent state is not shown
+as current.
 
 ### `hydra config get default-agent --json`
 
@@ -179,6 +187,7 @@ Current event types:
 | `notify.cleared` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`. Emitted only when at least one notification is removed. |
 | `worker.created` | `session-manager` | `worker` | `workerId`, `source`, optional `branch`, `repo`, `managedWorkdir`. Emitted for fresh code/task worker creation. |
 | `worker.started` | `session-manager` | `worker` | Worker identity fields plus `resumed`; existing-branch paths also include `alreadyRunning`. Emitted when an existing worker session is started or reused. |
+| `worker.runtime.changed` | `cli`, `extension`, `session-manager`, or `hook` | `worker` | `state`, optional `previousState`, `origin`, `reason`, `notificationId`, `workerId`, `updatedAt`. Emitted when the durable worker runtime projection changes. |
 | `worker.stopped` | `session-manager` | `worker` | Worker identity fields. |
 | `worker.deleted` | `session-manager` | `worker` | Worker identity fields plus `archived`, `deletedFiles`, `removedWorktree`, `deletedBranch`. |
 | `worker.restored` | `session-manager` | `worker` | Worker identity fields plus `archivedAt`. |
@@ -238,6 +247,9 @@ Notification records include:
 
 `--dedupe-key` is an idempotency key. When it matches an existing notification,
 the command returns the existing record and does not append a duplicate.
+`complete`, `needs-input`, and `error` notifications also update
+`HYDRA_HOME/worker-runtime-state.json` for the `sourceSession`; reading,
+opening, or clearing notifications does not clear runtime state.
 
 ### `hydra notify list --json`
 

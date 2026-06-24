@@ -120,11 +120,14 @@ async function main(): Promise<void> {
       'hydra events --json',
     );
     assert.equal(allAfterCreate.status, 'ok');
-    assert.equal(allAfterCreate.count, 1);
+    assert.equal(allAfterCreate.count, 2);
     assert.equal(allAfterCreate.events[0].type, 'notify.created');
     assert.equal(allAfterCreate.events[0].source, 'cli');
     assert.equal(allAfterCreate.events[0].seq, 1);
-    assert.equal(allAfterCreate.lastSeq, 1);
+    assert.equal(allAfterCreate.events[1].type, 'worker.runtime.changed');
+    assert.equal(allAfterCreate.events[1].source, 'cli');
+    assert.equal(allAfterCreate.events[1].seq, 2);
+    assert.equal(allAfterCreate.lastSeq, 2);
 
     parseStdoutJson<{ markedRead: number }>(
       runCli(['notify', 'read', created.notification.id, '--json'], ctx.env),
@@ -132,22 +135,22 @@ async function main(): Promise<void> {
     );
 
     const afterOne = parseStdoutJson<{ events: EventRecord[]; count: number; lastSeq: number }>(
-      runCli(['events', '--after', '1', '--json'], ctx.env),
-      'hydra events --after 1 --json',
+      runCli(['events', '--after', '2', '--json'], ctx.env),
+      'hydra events --after 2 --json',
     );
     assert.equal(afterOne.count, 1);
-    assert.equal(afterOne.events[0].seq, 2);
+    assert.equal(afterOne.events[0].seq, 3);
     assert.equal(afterOne.events[0].type, 'notify.read');
-    assert.equal(afterOne.lastSeq, 2);
+    assert.equal(afterOne.lastSeq, 3);
 
     const cursorFile = path.join(ctx.tmp, 'events.seq');
     const cursorRead = parseStdoutJson<{ events: EventRecord[]; count: number; lastSeq: number }>(
       runCli(['events', '--cursor-file', cursorFile, '--json'], ctx.env),
       'hydra events --cursor-file --json',
     );
-    assert.equal(cursorRead.count, 2);
-    assert.equal(cursorRead.lastSeq, 2);
-    assert.equal(fs.readFileSync(cursorFile, 'utf-8').trim(), '2');
+    assert.equal(cursorRead.count, 3);
+    assert.equal(cursorRead.lastSeq, 3);
+    assert.equal(fs.readFileSync(cursorFile, 'utf-8').trim(), '3');
 
     const otherBody = 'another body should also stay out of events';
     parseStdoutJson<{ notification: { id: string } }>(
@@ -174,10 +177,10 @@ async function main(): Promise<void> {
       'hydra events --cursor-file next --json',
     );
     assert.equal(cursorNext.count, 1);
-    assert.equal(cursorNext.events[0].seq, 3);
+    assert.equal(cursorNext.events[0].seq, 4);
     assert.equal(cursorNext.events[0].type, 'notify.created');
-    assert.equal(cursorNext.lastSeq, 3);
-    assert.equal(fs.readFileSync(cursorFile, 'utf-8').trim(), '3');
+    assert.equal(cursorNext.lastSeq, 4);
+    assert.equal(fs.readFileSync(cursorFile, 'utf-8').trim(), '4');
 
     const eventLogPath = path.join(ctx.hydraHome, 'events.jsonl');
     const followCursor = path.join(ctx.tmp, 'follow.seq');
@@ -185,7 +188,7 @@ async function main(): Promise<void> {
       cliPath,
       'events',
       '--after',
-      '3',
+      '4',
       '--follow',
       '--cursor-file',
       followCursor,
@@ -202,9 +205,9 @@ async function main(): Promise<void> {
         'hydra notify clear --json',
       );
       const followed = await nextEvent;
-      assert.equal(followed.seq, 4);
+      assert.equal(followed.seq, 5);
       assert.equal(followed.type, 'notify.cleared');
-      await waitForFileContent(followCursor, '4');
+      await waitForFileContent(followCursor, '5');
     } finally {
       await stopProcess(follow);
     }
@@ -213,7 +216,7 @@ async function main(): Promise<void> {
       cliPath,
       'events',
       '--after',
-      '4',
+      '5',
       '--follow',
       '--json',
     ], {
@@ -225,13 +228,13 @@ async function main(): Promise<void> {
       await sleep(300);
       fs.appendFileSync(
         eventLogPath,
-        `{"version":1,"seq":5,"bootId":"manual","ts":"${new Date().toISOString()}","type":"manual.partial","source":"cli"`,
+        `{"version":1,"seq":6,"bootId":"manual","ts":"${new Date().toISOString()}","type":"manual.partial","source":"cli"`,
         'utf-8',
       );
       await sleep(400);
       fs.appendFileSync(eventLogPath, '}\n', 'utf-8');
       const completed = await nextEvent;
-      assert.equal(completed.seq, 5);
+      assert.equal(completed.seq, 6);
       assert.equal(completed.type, 'manual.partial');
     } finally {
       await stopProcess(partialFollow);
