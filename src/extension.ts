@@ -37,6 +37,7 @@ import { exec } from './utils/exec';
 import { NotificationDecorationProvider } from './providers/notificationDecorationProvider';
 import { createNotificationTreeCommands } from './commands/notificationTreeCommands';
 import { WorkerNeedsInputMonitor } from './core/workerNeedsInputMonitor';
+import { WorkerRuntimeStateService } from './core/workerRuntimeStateService';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
@@ -56,13 +57,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   const notificationState = new NotificationStateService();
   notificationState.initialize();
+  const workerRuntimeState = new WorkerRuntimeStateService();
+  workerRuntimeState.initialize();
   const notificationDecorations = new NotificationDecorationProvider(notificationState);
   const needsInputMonitor = new WorkerNeedsInputMonitor();
   needsInputMonitor.initialize();
 
-  const copilotProvider = new CopilotProvider(notificationState);
+  const copilotProvider = new CopilotProvider(notificationState, workerRuntimeState);
   copilotProvider.setExtensionUri(context.extensionUri);
-  const workerProvider = new WorkerProvider(notificationState);
+  const workerProvider = new WorkerProvider(notificationState, workerRuntimeState);
   workerProvider.setExtensionUri(context.extensionUri);
 
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
@@ -184,10 +187,14 @@ export function activate(context: vscode.ExtensionContext) {
   ensureHydraGlobalConfig();
   context.subscriptions.push(
     notificationState,
+    workerRuntimeState,
     needsInputMonitor,
     notificationState.onDidChange(() => {
       refreshTreeViews();
       notificationDecorations.refresh();
+    }),
+    workerRuntimeState.onDidChange(() => {
+      refreshTreeViews();
     }),
   );
   silentInstallCli(context);

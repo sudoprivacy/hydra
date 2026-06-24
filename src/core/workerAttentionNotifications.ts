@@ -9,6 +9,12 @@ import {
 } from './notifications';
 import type { WorkerNeedsInputSignal } from './workerNeedsInputClassifier';
 import type { WorkerInfo } from './sessionManager';
+import {
+  setWorkerRuntimeState,
+  WorkerRuntimeStateStore,
+  type WorkerRuntimeSignalOrigin,
+  type WorkerRuntimeState,
+} from './workerRuntimeState';
 
 export type WorkerRuntimeErrorReason = 'post-create' | 'initial-prompt' | 'startup-timeout';
 
@@ -29,11 +35,13 @@ export interface PublishWorkerRuntimeErrorOptions {
   eventSource?: HydraEventSource;
   reason?: WorkerRuntimeErrorReason;
   store?: NotificationStore;
+  runtimeStateStore?: WorkerRuntimeStateStore;
 }
 
 export interface PublishWorkerNeedsInputOptions {
   eventSource?: HydraEventSource;
   store?: NotificationStore;
+  runtimeStateStore?: WorkerRuntimeStateStore;
 }
 
 export type PublishWorkerAttentionNotificationResult =
@@ -87,7 +95,7 @@ export function publishWorkerRuntimeErrorNotification(
   const workerLabel = formatWorkerLabel(worker);
   const title = getWorkerRuntimeErrorTitle(workerLabel, reason);
 
-  return publishWorkerAttentionNotification({
+  const result = publishWorkerAttentionNotification({
     kind: 'error',
     targetCopilotSession: worker.copilotSessionName,
     sourceWorkerSession: worker.sessionName,
@@ -104,6 +112,17 @@ export function publishWorkerRuntimeErrorNotification(
     eventSource: options.eventSource || 'session-manager',
     store: options.store,
   });
+  if (result.skipped) {
+    updateWorkerRuntimeStateFromAttention(
+      worker,
+      'error',
+      reason,
+      'session-manager',
+      options.eventSource || 'session-manager',
+      options.runtimeStateStore,
+    );
+  }
+  return result;
 }
 
 export function publishWorkerNeedsInputNotification(
@@ -114,7 +133,7 @@ export function publishWorkerNeedsInputNotification(
   const workerLabel = formatWorkerLabel(worker);
   const body = formatNeedsInputBody(signal);
 
-  return publishWorkerAttentionNotification({
+  const result = publishWorkerAttentionNotification({
     kind: 'needs-input',
     targetCopilotSession: worker.copilotSessionName,
     sourceWorkerSession: worker.sessionName,
@@ -131,6 +150,17 @@ export function publishWorkerNeedsInputNotification(
     eventSource: options.eventSource || 'hook',
     store: options.store,
   });
+  if (result.skipped) {
+    updateWorkerRuntimeStateFromAttention(
+      worker,
+      'needs-input',
+      signal.reason,
+      signal.source === 'codex-transcript' ? 'codex-transcript' : 'hook',
+      options.eventSource || 'hook',
+      options.runtimeStateStore,
+    );
+  }
+  return result;
 }
 
 export async function awaitWorkerPostCreateOrPublishError(
@@ -155,6 +185,34 @@ export function classifyRuntimeErrorReason(error: unknown): WorkerRuntimeErrorRe
     return 'startup-timeout';
   }
   return 'post-create';
+}
+
+function updateWorkerRuntimeStateFromAttention(
+  worker: WorkerInfo,
+  state: WorkerRuntimeState,
+  reason: string,
+  origin: WorkerRuntimeSignalOrigin,
+  eventSource: HydraEventSource,
+  runtimeStateStore?: WorkerRuntimeStateStore,
+): void {
+  try {
+    setWorkerRuntimeState({
+      sessionName: worker.sessionName,
+      state,
+      origin,
+      reason,
+      workerId: worker.workerId,
+      agent: worker.agent,
+      workdir: worker.workdir,
+    }, eventSource, runtimeStateStore ?? new WorkerRuntimeStateStore());
+  } catch (error) {
+    logger.warn('worker-attention-notification.runtime-state', 'Failed to update worker runtime state', {
+      sessionName: worker.sessionName,
+      state,
+      reason,
+      error,
+    });
+  }
 }
 
 function getWorkerRuntimeErrorTitle(workerLabel: string, reason: WorkerRuntimeErrorReason): string {

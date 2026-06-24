@@ -3,6 +3,20 @@ import { TmuxBackendCore } from '../../core/tmux';
 import { isDirectoryWorker, isRepoWorker, SessionManager } from '../../core/sessionManager';
 import { resolveAgentSessionFile } from '../../core/path';
 import { outputResult, outputError, type OutputOpts } from '../output';
+import {
+  WorkerRuntimeStateStore,
+  type WorkerRuntimeSnapshot,
+  type WorkerRuntimeSignalOrigin,
+  type WorkerRuntimeState,
+} from '../../core/workerRuntimeState';
+
+interface WorkerRuntimeCliSnapshot {
+  state: WorkerRuntimeState;
+  updatedAt: string | null;
+  origin: WorkerRuntimeSignalOrigin;
+  reason?: string;
+  notificationId?: string;
+}
 
 export function registerListCommand(program: Command): void {
   program
@@ -14,6 +28,7 @@ export function registerListCommand(program: Command): void {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
         const state = await sm.sync();
+        const runtimeStateStore = new WorkerRuntimeStateStore();
 
         // Sort copilots and workers alphabetically by name for stability
         const copilots = Object.values(state.copilots)
@@ -42,6 +57,7 @@ export function registerListCommand(program: Command): void {
             branch: w.branch || null,
             agent: w.agent,
             status: w.status,
+            runtimeState: formatWorkerRuntimeState(w.status, runtimeStateStore.get(w.sessionName || w.tmuxSession)),
             attached: w.attached,
             workdir: w.workdir || null,
             managedWorkdir: w.managedWorkdir === true,
@@ -141,4 +157,35 @@ export function registerListCommand(program: Command): void {
         outputError(error, globalOpts);
       }
     });
+}
+
+function formatWorkerRuntimeState(
+  workerStatus: 'running' | 'stopped',
+  snapshot: WorkerRuntimeSnapshot | undefined,
+): WorkerRuntimeCliSnapshot {
+  if (workerStatus === 'stopped') {
+    return {
+      state: 'unknown',
+      updatedAt: null,
+      origin: 'session-manager',
+      reason: 'session-stopped',
+    };
+  }
+
+  if (!snapshot) {
+    return {
+      state: 'unknown',
+      updatedAt: null,
+      origin: 'session-manager',
+      reason: 'no-runtime-signal',
+    };
+  }
+
+  return {
+    state: snapshot.state,
+    updatedAt: snapshot.updatedAt,
+    origin: snapshot.origin,
+    reason: snapshot.reason,
+    notificationId: snapshot.notificationId,
+  };
 }

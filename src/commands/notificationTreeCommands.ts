@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { NotificationStateService } from '../core/notificationStateService';
 import { buildSessionNotificationSummary } from '../core/sessionNotificationSummary';
 import { TmuxItem } from '../providers/tmuxSessionProvider';
+import { resolveSessionNotificationClearScope } from './notificationScope';
 import { resolveSessionName } from './treeItemResolver';
 import { openHydraSessionByName, reviewHydraSessionByName } from './openHydraSession';
 
@@ -87,7 +88,10 @@ export function createNotificationTreeCommands(
           return;
         }
 
-        const count = notificationState.getByTargetSession(sessionName).length;
+        const clearScope = resolveSessionNotificationClearScope(item, sessionName);
+        const count = clearScope.lookup === 'session'
+          ? notificationState.getBySession(sessionName).length
+          : notificationState.getByTargetSession(sessionName).length;
         if (count === 0) {
           vscode.window.showInformationMessage(`No notifications for ${sessionName}`);
           return;
@@ -102,7 +106,7 @@ export function createNotificationTreeCommands(
           return;
         }
 
-        const result = notificationState.clear({ targetSession: sessionName }, 'extension');
+        const result = notificationState.clear(clearScope.filters, 'extension');
         vscode.window.showInformationMessage(
           `Cleared ${result.cleared} notification${result.cleared === 1 ? '' : 's'}`,
         );

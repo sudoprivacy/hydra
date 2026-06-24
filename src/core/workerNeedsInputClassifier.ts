@@ -1,4 +1,5 @@
 import { hashText, redactText, truncateText } from './logRedaction';
+import type { WorkerRuntimeState } from './workerRuntimeState';
 
 export type WorkerNeedsInputSignalSource = 'claude-hook' | 'codex-transcript' | 'manual';
 
@@ -11,6 +12,16 @@ export type WorkerNeedsInputReason =
 export interface WorkerNeedsInputSignal {
   source: WorkerNeedsInputSignalSource;
   reason: WorkerNeedsInputReason;
+  title: string;
+  body: string;
+  fingerprint: string;
+}
+
+export type CodexRuntimeSignalReason = 'task-started' | 'request-user-input' | 'turn-complete';
+
+export interface CodexRuntimeSignal {
+  state: Extract<WorkerRuntimeState, 'running' | 'idle' | 'needs-input'>;
+  reason: CodexRuntimeSignalReason;
   title: string;
   body: string;
   fingerprint: string;
@@ -140,6 +151,101 @@ export function classifyCodexNeedsInputTranscriptText(text: string): WorkerNeeds
     body: truncateBody(question),
     fingerprint: `codex:${hashText(candidate.callId)}`,
   };
+}
+
+export function classifyCodexRuntimeTranscriptText(text: string): CodexRuntimeSignal | undefined {
+  let currentTurnId: string | undefined;
+  let latest: CodexRuntimeSignal | undefined;
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const object = parseJsonObject(trimmed);
+    if (!object) {
+      continue;
+    }
+
+    const type = getString(object, ['type']);
+    if (type === 'turn_context') {
+      const payload = asRecord(object.payload);
+      currentTurnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
+      continue;
+    }
+
+    if (type === 'response_item') {
+      const payload = asRecord(object.payload);
+      if (!payload) {
+        continue;
+      }
+      const responseCandidate = codexUserInputFunctionCallCandidate(payload);
+      if (responseCandidate) {
+        latest = {
+          state: 'needs-input',
+          reason: 'request-user-input',
+          title: 'Codex needs input',
+          body: truncateBody(responseCandidate.question || 'Codex is waiting for input.'),
+          fingerprint: `codex-runtime:${hashText(responseCandidate.callId)}`,
+        };
+      }
+      continue;
+    }
+
+    if (type !== 'event_msg') {
+      continue;
+    }
+
+    const payload = asRecord(object.payload);
+    if (!payload) {
+      continue;
+    }
+    const eventType = getString(payload, ['type']);
+    switch (eventType) {
+      case 'task_started': {
+        const turnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
+        currentTurnId = turnId;
+        latest = {
+          state: 'running',
+          reason: 'task-started',
+          title: 'Codex task started',
+          body: 'Codex started processing a task.',
+          fingerprint: `codex-runtime:${hashText(turnId || 'task-started')}`,
+        };
+        break;
+      }
+      case 'request_user_input': {
+        const candidate = codexUserInputEventCandidate(payload);
+        latest = {
+          state: 'needs-input',
+          reason: 'request-user-input',
+          title: 'Codex needs input',
+          body: truncateBody(candidate?.question || 'Codex is waiting for input.'),
+          fingerprint: `codex-runtime:${hashText(candidate?.callId || getString(payload, ['call_id', 'callId']) || 'request-user-input')}`,
+        };
+        break;
+      }
+      case 'task_complete':
+      case 'turn_complete': {
+        const payloadTurnId = getString(payload, ['turn_id', 'turnId']);
+        if (!payloadTurnId || !currentTurnId || payloadTurnId === currentTurnId) {
+          latest = {
+            state: 'idle',
+            reason: 'turn-complete',
+            title: 'Codex turn completed',
+            body: 'Codex completed the current turn.',
+            fingerprint: `codex-runtime:${hashText(payloadTurnId || currentTurnId || eventType)}`,
+          };
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return latest;
 }
 
 function buildClaudeSignal(

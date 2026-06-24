@@ -206,8 +206,13 @@ function main(): void {
 
     const eventsPath = path.join(ctx.hydraHome, 'events.jsonl');
     const events = fs.readFileSync(eventsPath, 'utf-8').trim().split(/\r?\n/).map(line => JSON.parse(line) as { type: string; seq: number });
-    assert.deepEqual(events.map(event => event.type), ['notify.created', 'notify.read', 'notify.cleared']);
-    assert.deepEqual(events.map(event => event.seq), [1, 2, 3]);
+    assert.deepEqual(events.map(event => event.type), [
+      'notify.created',
+      'worker.runtime.changed',
+      'notify.read',
+      'notify.cleared',
+    ]);
+    assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4]);
     assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
 
     console.log('notifyCliSmoke: ok');

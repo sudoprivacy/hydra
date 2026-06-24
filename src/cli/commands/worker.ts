@@ -11,6 +11,7 @@ import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
 import { agentSupportsCompletionNotification } from '../../core/agentConfig';
 import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
 import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
+import { setWorkerRuntimeState } from '../../core/workerRuntimeState';
 
 type WorkerCreateCliOpts = {
   repo?: string;
@@ -420,6 +421,7 @@ export function registerWorkerCommands(program: Command): void {
               sm.armCompletionNotification(worker.sessionName);
             }
             await backend.sendMessage(worker.sessionName, message);
+            markWorkerRunning(worker, 'worker-send');
             sent.push(worker.sessionName);
           }
 
@@ -446,6 +448,9 @@ export function registerWorkerCommands(program: Command): void {
             sm.armCompletionNotification(session);
           }
           await backend.sendMessage(session, message);
+          if (worker) {
+            markWorkerRunning(worker, 'worker-send');
+          }
 
           outputResult(
             { status: 'sent', session, message },
@@ -460,4 +465,20 @@ export function registerWorkerCommands(program: Command): void {
         outputError(error, globalOpts);
       }
     });
+}
+
+function markWorkerRunning(worker: WorkerInfo, reason: string): void {
+  try {
+    setWorkerRuntimeState({
+      sessionName: worker.sessionName,
+      state: 'running',
+      origin: 'manual',
+      reason,
+      workerId: worker.workerId,
+      agent: worker.agent,
+      workdir: worker.workdir,
+    }, 'cli');
+  } catch {
+    // Best-effort: sending the message is the user-visible operation.
+  }
 }

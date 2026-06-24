@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { EXIT_OK } from '../cli/output';
+import { resolveSessionNotificationClearScope } from '../commands/notificationScope';
 import { EventLog } from '../core/events';
 import { NotificationStateService } from '../core/notificationStateService';
 import {
@@ -295,13 +296,45 @@ async function testTargetSessionOperationsIgnoreSourceOnlyNotifications(): Promi
         const clearedCopilotInbox = service.clear({ targetSession: 'repo_copilot' });
         assert.equal(clearedCopilotInbox.cleared, 1);
         assert.equal(service.getById(sourceOnly.id), undefined);
-        const projectedAttention = service.getLatestSourceAttention('repo_worker');
-        assert.equal(projectedAttention?.id, sourceOnly.id);
-        assert.equal(projectedAttention?.kind, 'complete');
-        const projectedCompletion = service.getLatestSourceCompletion('repo_worker');
-        assert.equal(projectedCompletion?.id, sourceOnly.id);
-        assert.equal(projectedCompletion?.kind, 'complete');
-        assert.equal(projectedCompletion?.action?.session, 'repo_worker');
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-worker-clear-scope-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const completed = store.create({
+        kind: 'complete',
+        title: 'Worker completed',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, completed.id);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, completed.id);
+
+        const workerScope = resolveSessionNotificationClearScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
+        assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
+        assert.equal(service.getBySession('repo_worker').length, 1);
+        assert.equal(service.clear(workerScope.filters).cleared, 1);
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
+
+        const copilotScope = resolveSessionNotificationClearScope({ contextValue: 'copilotItem' }, 'repo_copilot');
+        assert.deepEqual(copilotScope.filters, { targetSession: 'repo_copilot' });
       } finally {
         service.dispose();
       }
@@ -493,9 +526,8 @@ async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
         );
 
         service.clear({ targetSession: 'repo_copilot' });
-        const projectedAttention = service.getLatestSourceAttention('repo_worker');
-        assert.equal(projectedAttention?.id, 'event-newer-error');
-        assert.equal(projectedAttention?.kind, 'error');
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
 
         await sleep(10);
         const latestComplete = store.create({
@@ -755,12 +787,8 @@ async function testCliEndToEnd(): Promise<void> {
           'hydra notify clear --json',
         );
         await waitFor(() => service.getSnapshot().totalCount === 0, 'CLI clear reflected in service');
-        assert.equal(
-          service.getLatestSourceAttention('repo_worker')?.id,
-          created.notification.id,
-          'worker source attention projection should survive notification clear',
-        );
-        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, created.notification.id);
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
       } finally {
         service.dispose();
       }
@@ -798,6 +826,7 @@ async function main(): Promise<void> {
   await testInitialLoadAndIndexes();
   await testServiceOperationsReloadSynchronously();
   await testTargetSessionOperationsIgnoreSourceOnlyNotifications();
+  await testWorkerClearScopeClearsSourceNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
   await testEventOnlyCompletionProjectionEmitsChange();

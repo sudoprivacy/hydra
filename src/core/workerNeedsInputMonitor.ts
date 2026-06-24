@@ -1,17 +1,22 @@
 import * as fs from 'fs';
 import { getHydraSessionsFile, resolveAgentSessionFile } from './path';
 import { logger } from './logger';
-import { classifyCodexNeedsInputTranscriptText } from './workerNeedsInputClassifier';
+import {
+  classifyCodexNeedsInputTranscriptText,
+  classifyCodexRuntimeTranscriptText,
+} from './workerNeedsInputClassifier';
 import { publishWorkerNeedsInputNotification } from './workerAttentionNotifications';
 import { readWorkerSessions } from './sessionStateReader';
 import type { NotificationStore } from './notifications';
 import type { WorkerInfo } from './sessionManager';
+import { setWorkerRuntimeState, WorkerRuntimeStateStore } from './workerRuntimeState';
 
 export interface WorkerNeedsInputMonitorOptions {
   readonly sessionsFile?: string;
   readonly pollIntervalMs?: number;
   readonly maxTranscriptBytes?: number;
   readonly store?: NotificationStore;
+  readonly runtimeStateStore?: WorkerRuntimeStateStore;
 }
 
 export interface Disposable {
@@ -26,6 +31,7 @@ export class WorkerNeedsInputMonitor implements Disposable {
   private readonly pollIntervalMs: number;
   private readonly maxTranscriptBytes: number;
   private readonly store?: NotificationStore;
+  private readonly runtimeStateStore?: WorkerRuntimeStateStore;
   private disposed = false;
   private scanTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -34,6 +40,7 @@ export class WorkerNeedsInputMonitor implements Disposable {
     this.pollIntervalMs = Math.max(250, Math.trunc(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS));
     this.maxTranscriptBytes = Math.max(4096, Math.trunc(options.maxTranscriptBytes ?? DEFAULT_TRANSCRIPT_BYTES));
     this.store = options.store;
+    this.runtimeStateStore = options.runtimeStateStore;
   }
 
   initialize(): void {
@@ -82,6 +89,29 @@ export class WorkerNeedsInputMonitor implements Disposable {
       return;
     }
 
+    const runtimeSignal = classifyCodexRuntimeTranscriptText(transcript);
+    if (runtimeSignal && runtimeSignal.state !== 'needs-input') {
+      try {
+        setWorkerRuntimeState({
+          sessionName: worker.sessionName,
+          state: runtimeSignal.state,
+          origin: 'codex-transcript',
+          reason: runtimeSignal.reason,
+          workerId: worker.workerId,
+          agent: worker.agent,
+          workdir: worker.workdir,
+        }, 'hook', this.runtimeStateStore ?? new WorkerRuntimeStateStore());
+      } catch (error) {
+        logger.warn('worker-needs-input-monitor.runtime-state', 'Failed to update Codex worker runtime state', {
+          sessionName: worker.sessionName,
+          transcriptPath,
+          state: runtimeSignal.state,
+          reason: runtimeSignal.reason,
+          error,
+        });
+      }
+    }
+
     const signal = classifyCodexNeedsInputTranscriptText(transcript);
     if (!signal) {
       return;
@@ -90,6 +120,7 @@ export class WorkerNeedsInputMonitor implements Disposable {
     const result = publishWorkerNeedsInputNotification(worker, signal, {
       eventSource: 'hook',
       store: this.store,
+      runtimeStateStore: this.runtimeStateStore,
     });
     if (result.created) {
       logger.info('worker-needs-input-monitor.created', 'Published Codex needs-input notification', {
