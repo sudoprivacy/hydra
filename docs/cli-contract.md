@@ -135,6 +135,119 @@ event and usually projects runtime to `idle`. When the tmux session is stopped,
 `runtimeState.state` is reported as `unknown` so stale agent state is not shown
 as current.
 
+### `hydra session list --json`
+
+Rebuilds `HYDRA_HOME/agent-sessions.json` from `sessions.json`, `archive.json`,
+`worker-runtime-state.json`, and the native agent session file resolvers, then
+returns the default active-wins view.
+
+Default list output includes active sessions plus the latest archived record for
+sessions that are not currently active. If an archived record has the same Hydra
+session name as an active session, the active record wins and the archive record
+is hidden from the default view. Use `--all` to include every archive history
+record.
+
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `file` | string | Effective `agent-sessions.json` path. |
+| `generatedAt` | string | ISO timestamp for the rebuild. |
+| `sessions` | array | Agent session index entries after view/filter selection. |
+| `count` | number | `sessions.length`. |
+
+Options:
+
+| Option | Contract |
+| --- | --- |
+| `--all` | Return every active and archived index record, including archive history. |
+| `--role worker\|copilot` | Filter by Hydra role. |
+| `--source active\|archive` | Filter by index source. |
+| `--lifecycle active\|archive` | Alias for `--source`. |
+| `--agent <agent>` | Filter by agent name. |
+| `--status running\|stopped\|archived` | Filter by lifecycle status. |
+
+Agent session entries include:
+
+| Field | Type |
+| --- | --- |
+| `schemaVersion` | `1` |
+| `recordId` | string |
+| `source` | `"active"` or `"archive"` |
+| `role` | `"worker"` or `"copilot"` |
+| `hydraSessionName` | string |
+| `displayName` | string or null |
+| `agent` | string |
+| `agentSessionId` | string or null |
+| `storedAgentSessionFile` | string or null |
+| `storedAgentSessionFileExists` | boolean |
+| `resolvedAgentSessionFile` | string or null |
+| `agentSessionFileExists` | boolean |
+| `workdir` | string or null |
+| `status` | `"running"`, `"stopped"`, or `"archived"` |
+| `createdAt` | string or null |
+| `lastSeenAt` | string or null |
+| `archivedAt` | string or null |
+| `archiveOrdinal` | number or null |
+| `worker` | object or undefined |
+| `copilot` | object or undefined |
+| `runtimeState` | object or undefined |
+
+Worker projections include `workerId`, `source` (`"repo"` or `"directory"`),
+`type` (`"code"` or `"task"`), `repo`, `repoRoot`, `branch`, `slug`,
+`managedWorkdir`, and `copilotSessionName`. Copilot projections include `mode`.
+`runtimeState` is emitted only for active workers; archived records never reuse
+runtime state keyed by a matching session name.
+
+`agent-sessions.json` is a rebuildable query surface, not a source of truth.
+Consumers should treat `sessions.json`, `archive.json`, runtime state, and native
+agent transcripts as authoritative.
+
+### `hydra session inspect <query> --json`
+
+Rebuilds `agent-sessions.json` and returns one matching index entry. The query
+can be a `recordId`, active Hydra session name, archived Hydra session name,
+native `agentSessionId`, or native session file path.
+
+Matching order is:
+
+| Order | Match |
+| --- | --- |
+| 1 | Exact `recordId`. |
+| 2 | Exact `hydraSessionName` across active and archived records. |
+| 3 | Exact `agentSessionId`. |
+| 4 | Exact `storedAgentSessionFile` or `resolvedAgentSessionFile`; equivalent canonical paths are accepted. |
+
+If a query matches multiple records at a given step, the command exits with code
+`5` and returns a JSON error containing `candidates` with stable `recordId`
+values. This includes a Hydra session name that exists in both active state and
+archive history. Callers can retry with a candidate `recordId`.
+
+Success returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `file` | string | Effective `agent-sessions.json` path. |
+| `generatedAt` | string | ISO timestamp for the rebuild. |
+| `session` | object | One agent session index entry. |
+
+### `hydra session rebuild --json`
+
+Rebuilds the complete `HYDRA_HOME/agent-sessions.json` index and returns every
+active and archived record.
+
+Returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"rebuilt"`. |
+| `file` | string | Effective `agent-sessions.json` path. |
+| `generatedAt` | string | ISO timestamp for the rebuild. |
+| `sessions` | array | Complete agent session index entries. |
+| `count` | number | `sessions.length`. |
+
 ### `hydra config get default-agent --json`
 
 Returns:
