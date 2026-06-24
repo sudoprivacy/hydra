@@ -13,6 +13,7 @@ import {
   type HydraNotification,
   type NotificationKind,
   type NotificationMarkSessionReadResult,
+  type NotificationClearReadResult,
   type NotificationClearResult,
   type NotificationListFilters,
   type NotificationOpenResult,
@@ -214,6 +215,15 @@ export class NotificationStateService implements Disposable {
     return result;
   }
 
+  clearRead(
+    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    eventSource: HydraEventSource = 'extension',
+  ): NotificationClearReadResult {
+    const result = this.store.clearRead(filters, eventSource);
+    this.reloadNow({ emit: true, reason: 'clear-read' });
+    return result;
+  }
+
   open(id: string, eventSource: HydraEventSource = 'extension'): NotificationOpenResult {
     const result = this.store.open(id, eventSource);
     this.reloadNow({ emit: true, reason: 'open' });
@@ -380,6 +390,15 @@ export class NotificationStateService implements Disposable {
         continue;
       }
 
+      if (event.type === 'notify.read') {
+        const id = getStringPayload(event.payload || {}, 'notificationId');
+        const existing = id ? eventOnlyNotifications.get(id) : undefined;
+        if (existing && existing.readAt === null) {
+          eventOnlyNotifications.set(id!, { ...existing, readAt: event.ts });
+        }
+        continue;
+      }
+
       if (event.type !== 'notify.cleared') {
         continue;
       }
@@ -514,6 +533,11 @@ function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | un
 
 function notificationMatchesClearEvent(notification: HydraNotification, event: HydraEvent): boolean {
   const payload = event.payload || {};
+  const readOnly = payload.readOnly === true;
+  if (readOnly && notification.readAt === null) {
+    return false;
+  }
+
   const session = getStringPayload(payload, 'session');
   const targetSession = getStringPayload(payload, 'targetSession');
   const sourceSession = getStringPayload(payload, 'sourceSession');

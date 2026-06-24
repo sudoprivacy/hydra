@@ -71,6 +71,10 @@
         {
           "id": "hydraWorkers",
           "name": "Workers"
+        },
+        {
+          "id": "hydraInbox",
+          "name": "Inbox"
         }
       ]
     },
@@ -103,6 +107,10 @@
         "view": "hydraCopilots",
         "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or Sudo Code.",
         "when": "hydra.noAgentsAvailable"
+      },
+      {
+        "view": "hydraInbox",
+        "contents": "No unread Hydra notifications."
       }
     ],
     "commands": [
@@ -173,12 +181,24 @@
         "title": "Hydra: Open Notification"
       },
       {
+        "command": "hydra.openInboxNotification",
+        "title": "Hydra: Open Inbox Notification"
+      },
+      {
+        "command": "hydra.markNotificationRead",
+        "title": "Hydra: Mark Notification Read"
+      },
+      {
         "command": "hydra.markSessionNotificationsRead",
         "title": "Hydra: Mark Notifications Read"
       },
       {
         "command": "hydra.clearSessionNotifications",
         "title": "Hydra: Clear Notifications"
+      },
+      {
+        "command": "hydra.clearReadNotifications",
+        "title": "Hydra: Clear Read Notifications"
       },
       {
         "command": "hydra.createCopilot",
@@ -304,16 +324,31 @@
       "view/title": [
         {
           "command": "tmux.refresh",
-          "when": "view == hydraCopilots || view == hydraWorkers",
+          "when": "view == hydraCopilots || view == hydraWorkers || view == hydraInbox",
           "group": "navigation"
         },
         {
           "command": "hydra.createCopilot",
           "when": "view == hydraCopilots",
           "group": "navigation"
+        },
+        {
+          "command": "hydra.clearReadNotifications",
+          "when": "view == hydraInbox",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
+        {
+          "command": "hydra.openInboxNotification",
+          "when": "view == hydraInbox && viewItem == 'inboxNotificationItem'",
+          "group": "1_open@1"
+        },
+        {
+          "command": "hydra.markNotificationRead",
+          "when": "view == hydraInbox && viewItem == 'inboxNotificationItem'",
+          "group": "5_notifications@1"
+        },
         {
           "command": "tmux.reviewChanges",
           "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
@@ -359,6 +394,7 @@
   },
   "activationEvents": [
     "onView:hydraCopilots",
+    "onView:hydraInbox",
     "onCommand:tmux.attachCreate",
     "onCommand:hydra.createWorker",
     "onCommand:tmux.removeTask",
@@ -374,6 +410,9 @@
     "onCommand:tmux.pasteImage",
     "onCommand:tmux.createWorktreeFromBranch",
     "onCommand:hydra.openPR",
+    "onCommand:hydra.openInboxNotification",
+    "onCommand:hydra.markNotificationRead",
+    "onCommand:hydra.clearReadNotifications",
     "onCommand:hydra.createCopilot",
     "onCommand:hydra.startPlanCopilot",
     "onCommand:hydra.startCopilotClaude",
@@ -417,6 +456,7 @@
     "smoke:worker-needs-input": "node out/smoke/workerNeedsInputSmoke.js",
     "smoke:worker-runtime-state": "node out/smoke/workerRuntimeStateSmoke.js",
     "smoke:notification-state": "node out/smoke/notificationStateServiceSmoke.js",
+    "smoke:notification-inbox-projection": "node out/smoke/notificationInboxProjectionSmoke.js",
     "smoke:session-notification-summary": "node out/smoke/sessionNotificationSummarySmoke.js",
     "smoke:agent-registry": "node out/smoke/agentRegistrySmoke.js",
     "smoke:share": "node out/smoke/shareBundleSmoke.js",
@@ -432,7 +472,7 @@
     "smoke:shell-target-e2e": "node out/smoke/shellTargetEndToEndSmoke.js",
     "smoke:pane-shell-probe": "node out/smoke/paneShellProbeSmoke.js",
     "smoke:enhanced-path-windows": "node out/smoke/enhancedPathWindowsSmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:agent-session-index && npm run smoke:resume-diagnostics && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
+    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:agent-session-index && npm run smoke:resume-diagnostics && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:notification-inbox-projection && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
     "smoke:windows-cli-wrapper": "node out/smoke/windowsCliWrapperSmoke.js"
   },
   "devDependencies": {

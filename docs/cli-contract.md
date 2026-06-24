@@ -355,7 +355,7 @@ Current event types:
 | --- | --- | --- | --- |
 | `notify.created` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `notificationId`, `kind`, `title`, redacted `body`, `targetSession`, `sourceSession`, optional `actionType`, `actionSession`, `workerId`, `branch`, `workdir`, `agent`. Emitted only when a new notification is stored; dedupe hits do not emit a duplicate event. |
 | `notify.read` | `cli`, `extension`, `session-manager`, or `hook` | undefined | Same notification reference fields as `notify.created`. Emitted only when the notification transitions from unread to read. |
-| `notify.cleared` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`. Emitted only when at least one notification is removed. |
+| `notify.cleared` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`, optional `readOnly`. Emitted only when at least one notification is removed. |
 | `worker.created` | `session-manager` | `worker` | `workerId`, `source`, optional `branch`, `repo`, `managedWorkdir`. Emitted for fresh code/task worker creation. |
 | `worker.started` | `session-manager` | `worker` | Worker identity fields plus `resumed`; existing-branch paths also include `alreadyRunning`. Emitted when an existing worker session is started or reused. |
 | `worker.runtime.changed` | `cli`, `extension`, `session-manager`, or `hook` | `worker` | `state`, optional `previousState`, `origin`, `reason`, `notificationId`, `workerId`, `updatedAt`. Emitted when the durable worker runtime projection changes. |
@@ -457,7 +457,9 @@ Returns:
 | `cleared` | number | Number of notifications removed. |
 
 `--session`, `--target`, and `--from` narrow which notifications are cleared.
-With no filter, all notifications are cleared.
+With no filter, all notifications are cleared. `--read` only removes
+notifications that already have `readAt` set; unread notifications are
+preserved. `--read` may be combined with the same session/source/target filters.
 
 ### `hydra notify open <id> --json`
 
@@ -537,7 +539,7 @@ Notify commands:
 | `notify create` | Create a structured local notification. Supports `--session`, `--from`, `--kind`, `--title`, `--body`, `--dedupe-key`, `--action`, and context flags. |
 | `notify list` | List structured notifications. Supports `--session`, `--target`, `--from`, `--kind`, `--unread`, and `--limit`. |
 | `notify read <id>` | Mark one notification read. |
-| `notify clear` | Clear all notifications, or a narrowed session/source/target subset. |
+| `notify clear` | Clear all notifications, a narrowed session/source/target subset, or only read notifications with `--read`. |
 | `notify open <id>` | Mark one notification read and return its suggested action. |
 
 Events command:

@@ -86,6 +86,10 @@ export interface NotificationClearResult {
   cleared: number;
 }
 
+export interface NotificationClearReadResult {
+  cleared: number;
+}
+
 export interface NotificationOpenResult {
   notification: HydraNotification;
   action: NotificationAction | null;
@@ -241,6 +245,25 @@ export class NotificationStore {
     });
   }
 
+  clearRead(
+    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    eventSource: HydraEventSource = 'cli',
+  ): NotificationClearReadResult {
+    return this.withLock(() => {
+      const store = this.readStore();
+      const before = store.notifications.length;
+      store.notifications = store.notifications.filter(notification =>
+        notification.readAt === null || !matchesFilters(notification, filters),
+      );
+      const cleared = before - store.notifications.length;
+      if (cleared > 0) {
+        this.writeStore(store);
+        this.emitClearEvent(cleared, filters, eventSource, true);
+      }
+      return { cleared };
+    });
+  }
+
   open(id: string, eventSource: HydraEventSource = 'cli'): NotificationOpenResult {
     const read = this.markRead(id, eventSource);
     return {
@@ -369,18 +392,23 @@ export class NotificationStore {
     cleared: number,
     filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'>,
     source: HydraEventSource,
+    readOnly = false,
   ): void {
     try {
+      const payload: Record<string, unknown> = {
+        cleared,
+        session: filters.session,
+        targetSession: filters.targetSession,
+        sourceSession: filters.sourceSession,
+      };
+      if (readOnly) {
+        payload.readOnly = true;
+      }
       this.eventLog.append({
         type: 'notify.cleared',
         source,
         session: filters.session || filters.targetSession || filters.sourceSession,
-        payload: {
-          cleared,
-          session: filters.session,
-          targetSession: filters.targetSession,
-          sourceSession: filters.sourceSession,
-        },
+        payload,
       });
     } catch (error) {
       logger.warn('notifications.event', 'Failed to append notification clear event', {

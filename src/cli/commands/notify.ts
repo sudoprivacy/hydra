@@ -38,6 +38,7 @@ interface NotifyClearOptions {
   session?: string;
   target?: string;
   from?: string;
+  read?: boolean;
 }
 
 export function registerNotifyCommands(program: Command): void {
@@ -184,14 +185,18 @@ export function registerNotifyCommands(program: Command): void {
     .option('--session <session>', 'Clear notifications for a target or source session')
     .option('--target <session>', 'Clear notifications for a target session')
     .option('--from <session>', 'Clear notifications from a source session')
+    .option('--read', 'Clear read notifications only')
     .action((opts: NotifyClearOptions) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
-        const result = new NotificationStore().clear({
+        const filters = {
           session: opts.session,
           targetSession: opts.target,
           sourceSession: opts.from,
-        });
+        };
+        const result = opts.read
+          ? new NotificationStore().clearRead(filters)
+          : new NotificationStore().clear(filters);
         outputResult(
           {
             status: 'ok',
@@ -199,7 +204,8 @@ export function registerNotifyCommands(program: Command): void {
           },
           globalOpts,
           () => {
-            console.log(`Cleared ${result.cleared} notification${result.cleared === 1 ? '' : 's'}.`);
+            const qualifier = opts.read ? ' read' : '';
+            console.log(`Cleared ${result.cleared}${qualifier} notification${result.cleared === 1 ? '' : 's'}.`);
           },
         );
       } catch (error) {

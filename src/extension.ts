@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CopilotProvider, WorkerProvider, TmuxItem } from './providers/tmuxSessionProvider';
+import { NotificationInboxProvider } from './providers/notificationInboxProvider';
 import { attachCreate } from './commands/attachCreate';
 import { newTask } from './commands/newTask';
 import { removeTask } from './commands/removeTask';
@@ -67,9 +68,11 @@ export function activate(context: vscode.ExtensionContext) {
   copilotProvider.setExtensionUri(context.extensionUri);
   const workerProvider = new WorkerProvider(notificationState, workerRuntimeState);
   workerProvider.setExtensionUri(context.extensionUri);
+  const inboxProvider = new NotificationInboxProvider(notificationState);
 
   const copilotView = vscode.window.createTreeView('hydraCopilots', { treeDataProvider: copilotProvider });
   const workerView = vscode.window.createTreeView('hydraWorkers', { treeDataProvider: workerProvider });
+  const inboxView = vscode.window.createTreeView('hydraInbox', { treeDataProvider: inboxProvider });
   let selectedHydraItem: TmuxItem | undefined;
   let selectedHydraItemAt = 0;
   const rememberHydraSelection = (event: vscode.TreeViewSelectionChangeEvent<TmuxItem>) => {
@@ -145,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   let syncWorkerGitHeadWatchers: () => void = () => {};
-  const refreshTreeViews = () => { copilotProvider.refresh(); workerProvider.refresh(); };
+  const refreshTreeViews = () => { copilotProvider.refresh(); workerProvider.refresh(); inboxProvider.refresh(); };
   const refreshAll = () => {
     refreshTreeViews();
     syncWorkerGitHeadWatchers();
@@ -155,6 +158,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     copilotView,
     workerView,
+    inboxView,
     vscode.commands.registerCommand('tmux.attachCreate', attachCreate),
     vscode.commands.registerCommand('hydra.createWorker', newTask),
     vscode.commands.registerCommand('tmux.removeTask', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], removeTask, ...args)),
@@ -167,8 +171,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tmux.newPane', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newPane, ...args)),
     vscode.commands.registerCommand('tmux.newWindow', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newWindow, ...args)),
     vscode.commands.registerCommand('hydra.openSessionNotification', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.openSessionNotification, ...args)),
+    vscode.commands.registerCommand('hydra.openInboxNotification', notificationCommands.openInboxNotification),
+    vscode.commands.registerCommand('hydra.markNotificationRead', notificationCommands.markNotificationRead),
     vscode.commands.registerCommand('hydra.markSessionNotificationsRead', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.markSessionNotificationsRead, ...args)),
     vscode.commands.registerCommand('hydra.clearSessionNotifications', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.clearSessionNotifications, ...args)),
+    vscode.commands.registerCommand('hydra.clearReadNotifications', notificationCommands.clearReadNotifications),
     vscode.commands.registerCommand('tmux.terminalPaste', terminalSmartPaste),
     vscode.commands.registerCommand('tmux.pasteImage', pasteImageForce),
     vscode.commands.registerCommand('tmux.createWorktreeFromBranch', (item) => createWorktreeFromBranch(item)),
