@@ -1033,6 +1033,7 @@ export class SessionManager {
     });
     const stoppedWorker = this.readSessionState().workers[sessionName];
     if (stoppedWorker) {
+      this.updateWorkerRuntimeState(stoppedWorker, 'stopped', 'worker-stopped');
       this.emitWorkerEvent('worker.stopped', stoppedWorker);
     }
   }

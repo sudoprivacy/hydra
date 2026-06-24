@@ -67,6 +67,7 @@ interface JsonError {
 }
 
 const ACTIVE_WORKER_SESSION = 'hydra-index-worker';
+const STOPPED_WORKER_SESSION = 'hydra-index-stopped-worker';
 const ACTIVE_COPILOT_SESSION = 'hydra-index-copilot';
 const ARCHIVED_SESSION = 'hydra-index-archived';
 const SUDO_ARCHIVED_SESSION = 'hydra-index-sudo-archived';
@@ -176,8 +177,29 @@ function seedSessions(hydraHome: string, workdir: string): void {
         agentSessionFile: null,
         copilotSessionName: ACTIVE_COPILOT_SESSION,
       },
+      [STOPPED_WORKER_SESSION]: {
+        source: 'repo',
+        sessionName: STOPPED_WORKER_SESSION,
+        displayName: 'index-stopped-worker',
+        workerId: 8,
+        repo: 'fixture',
+        repoRoot: workdir,
+        branch: 'feature/stopped-index',
+        slug: 'feature-stopped-index',
+        status: 'stopped',
+        attached: false,
+        agent: 'claude',
+        workdir,
+        managedWorkdir: false,
+        tmuxSession: STOPPED_WORKER_SESSION,
+        createdAt: now,
+        lastSeenAt: now,
+        sessionId: null,
+        agentSessionFile: null,
+        copilotSessionName: ACTIVE_COPILOT_SESSION,
+      },
     },
-    nextWorkerId: 8,
+    nextWorkerId: 9,
     updatedAt: now,
   };
   fs.writeFileSync(path.join(hydraHome, 'sessions.json'), `${JSON.stringify(sessions, null, 2)}\n`, 'utf-8');
@@ -295,6 +317,17 @@ function seedRuntimeState(hydraHome: string, workdir: string): void {
         agent: 'claude',
         workdir,
       },
+      [STOPPED_WORKER_SESSION]: {
+        sessionName: STOPPED_WORKER_SESSION,
+        state: 'needs-input',
+        updatedAt: new Date().toISOString(),
+        origin: 'hook',
+        reason: 'stale-permission-request',
+        notificationId: 'notification-stopped',
+        workerId: 8,
+        agent: 'claude',
+        workdir,
+      },
     },
   };
   fs.writeFileSync(path.join(hydraHome, 'worker-runtime-state.json'), `${JSON.stringify(runtime, null, 2)}\n`, 'utf-8');
@@ -388,12 +421,12 @@ async function main(): Promise<void> {
       runCli(['session', 'rebuild', '--json'], ctx.env),
     );
     assert.equal(rebuild.status, 'rebuilt');
-    assert.equal(rebuild.count, 6, 'rebuild includes active rows and all archive history');
+    assert.equal(rebuild.count, 7, 'rebuild includes active rows and all archive history');
     assert.equal(rebuild.file, path.join(ctx.hydraHome, 'agent-sessions.json'));
 
     const list = parseJson<SessionListJson>(runCli(['session', 'list', '--json'], ctx.env));
     assert.equal(list.status, 'ok');
-    assert.equal(list.count, 4, 'default list uses active-wins plus latest archived per inactive session');
+    assert.equal(list.count, 5, 'default list uses active-wins plus latest archived per inactive session');
     assert.ok(list.sessions.some(entry => entry.hydraSessionName === ACTIVE_WORKER_SESSION && entry.source === 'active'));
     assert.ok(!list.sessions.some(entry => entry.hydraSessionName === ACTIVE_WORKER_SESSION && entry.source === 'archive'));
     assert.equal(list.sessions.filter(entry => entry.hydraSessionName === ARCHIVED_SESSION).length, 1);
@@ -402,16 +435,22 @@ async function main(): Promise<void> {
     const worker = list.sessions.find(entry => entry.hydraSessionName === ACTIVE_WORKER_SESSION);
     assert.equal(worker?.runtimeState?.state, 'needs-input');
     assert.equal(worker?.runtimeState?.origin, 'hook');
+    const stoppedWorker = list.sessions.find(entry => entry.hydraSessionName === STOPPED_WORKER_SESSION);
+    assert.equal(stoppedWorker?.status, 'stopped');
+    assert.equal(stoppedWorker?.runtimeState?.state, 'stopped');
+    assert.equal(stoppedWorker?.runtimeState?.origin, 'session-manager');
+    assert.equal(stoppedWorker?.runtimeState?.reason, 'session-stopped');
     const archived = list.sessions.find(entry => entry.hydraSessionName === ARCHIVED_SESSION);
     assert.equal(archived?.runtimeState, undefined, 'archived rows must not reuse stale runtime state');
 
     const all = parseJson<SessionListJson>(runCli(['session', 'list', '--all', '--json'], ctx.env));
-    assert.equal(all.count, 6);
+    assert.equal(all.count, 7);
     assert.equal(all.sessions.filter(entry => entry.hydraSessionName === ARCHIVED_SESSION).length, 2);
 
     const workerOnly = parseJson<SessionListJson>(runCli(['session', 'list', '--role', 'worker', '--source', 'active', '--json'], ctx.env));
-    assert.equal(workerOnly.count, 1);
-    assert.equal(workerOnly.sessions[0].hydraSessionName, ACTIVE_WORKER_SESSION);
+    assert.equal(workerOnly.count, 2);
+    assert.ok(workerOnly.sessions.some(entry => entry.hydraSessionName === ACTIVE_WORKER_SESSION));
+    assert.ok(workerOnly.sessions.some(entry => entry.hydraSessionName === STOPPED_WORKER_SESSION));
 
     const inspectCopilotBySession = parseJson<InspectJson>(runCli(['session', 'inspect', ACTIVE_COPILOT_SESSION, '--json'], ctx.env));
     assert.equal(inspectCopilotBySession.session.recordId, `active:copilot:${ACTIVE_COPILOT_SESSION}`);

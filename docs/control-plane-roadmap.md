@@ -46,9 +46,16 @@ injecting messages.
    - Keep depth over breadth: Claude, Codex, Gemini, Sudo Code, and custom.
 
 6. **Agent lifecycle (#233)**
-   - Track `running`, `idle`, `needs-input`, `error`, `blocked`, and `unknown`.
+   - Track `unknown`, `starting`, `running`, `idle`, `needs-input`, `approving`,
+     `blocked`, `error`, and `stopped`.
+   - Keep the stored runtime snapshot separate from the visible projection used
+     by CLI, session index, and UI consumers.
+   - Treat `starting` and `approving` as reserved states until Feed and approval
+     producers can attach request identity, timeout, and resolution semantics.
    - Feed lifecycle changes from worker creation, hooks, notification events, and
-     stop/delete paths.
+     explicit stop/delete paths.
+   - Defer durable approval Feed, live event streaming, and daemon/socket APIs to
+     later control-plane layers.
 
 7. **Agent session index (#234)**
    - Persist the mapping between Hydra sessions, native agent sessions, transcript

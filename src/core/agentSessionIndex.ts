@@ -18,23 +18,16 @@ import {
   toCanonicalPath,
 } from './path';
 import {
+  projectWorkerRuntimeState,
   WorkerRuntimeStateStore,
-  type WorkerRuntimeSignalOrigin,
-  type WorkerRuntimeSnapshot,
-  type WorkerRuntimeState,
+  type WorkerRuntimeProjection,
 } from './workerRuntimeState';
 
 export type AgentSessionIndexSource = 'active' | 'archive';
 export type AgentSessionRole = 'worker' | 'copilot';
 export type AgentSessionStatus = 'running' | 'stopped' | 'archived';
 
-export interface AgentSessionRuntimeStateProjection {
-  state: WorkerRuntimeState;
-  updatedAt: string | null;
-  origin: WorkerRuntimeSignalOrigin;
-  reason?: string;
-  notificationId?: string;
-}
+export type AgentSessionRuntimeStateProjection = WorkerRuntimeProjection;
 
 export interface AgentSessionWorkerProjection {
   workerId: number | null;
@@ -197,7 +190,7 @@ export class AgentSessionIndexStore {
       archivedAt: null,
       archiveOrdinal: null,
       worker: projectWorker(worker),
-      runtimeState: projectRuntimeState(worker.status, this.runtimeStateStore.get(worker.sessionName)),
+      runtimeState: projectWorkerRuntimeState(worker.status, this.runtimeStateStore.get(worker.sessionName)),
     };
   }
 
@@ -457,37 +450,6 @@ function projectWorker(worker: WorkerInfo): AgentSessionWorkerProjection {
     slug: worker.slug || null,
     managedWorkdir: worker.managedWorkdir === true,
     copilotSessionName: worker.copilotSessionName || null,
-  };
-}
-
-function projectRuntimeState(
-  workerStatus: 'running' | 'stopped',
-  snapshot: WorkerRuntimeSnapshot | undefined,
-): AgentSessionRuntimeStateProjection {
-  if (workerStatus === 'stopped') {
-    return {
-      state: 'unknown',
-      updatedAt: null,
-      origin: 'session-manager',
-      reason: 'session-stopped',
-    };
-  }
-
-  if (!snapshot) {
-    return {
-      state: 'unknown',
-      updatedAt: null,
-      origin: 'session-manager',
-      reason: 'no-runtime-signal',
-    };
-  }
-
-  return {
-    state: snapshot.state,
-    updatedAt: snapshot.updatedAt,
-    origin: snapshot.origin,
-    reason: snapshot.reason,
-    notificationId: snapshot.notificationId,
   };
 }
 

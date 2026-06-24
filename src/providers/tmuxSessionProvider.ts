@@ -16,7 +16,12 @@ import {
 } from '../core/sessionNotificationSummary';
 import type { HydraNotification, NotificationKind } from '../core/notifications';
 import { getNotificationDecorationUri } from './notificationDecorationProvider';
-import type { WorkerRuntimeSnapshot, WorkerRuntimeState } from '../core/workerRuntimeState';
+import {
+  projectWorkerRuntimeState,
+  type WorkerRuntimeProjection,
+  type WorkerRuntimeSnapshot,
+  type WorkerRuntimeState,
+} from '../core/workerRuntimeState';
 import type { WorkerRuntimeStateSource } from '../core/workerRuntimeStateService';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
@@ -391,7 +396,7 @@ function applyNotificationSummary(
 
 function appendWorkerRuntimeTooltip(
   existing: string | vscode.MarkdownString | undefined,
-  runtimeState: WorkerRuntimeSnapshot | undefined,
+  runtimeState: WorkerRuntimeProjection | undefined,
 ): vscode.MarkdownString {
   const md = existing instanceof vscode.MarkdownString
     ? existing
@@ -527,21 +532,35 @@ function getWorkerRuntimeThemeIcon(state: WorkerRuntimeState | undefined): vscod
   switch (state) {
     case 'running':
       return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
+    case 'starting':
+      return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
     case 'idle':
       return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.green'));
+    case 'approving':
     case 'needs-input':
       return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+    case 'blocked':
+      return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.purple'));
     case 'error':
       return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+    case 'stopped':
+      return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('foreground'));
     case 'unknown':
     default:
       return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('foreground'));
   }
 }
 
-function formatWorkerRuntimeStateLabel(runtimeState: WorkerRuntimeSnapshot | undefined): string {
+function formatWorkerRuntimeStateLabel(runtimeState: WorkerRuntimeProjection | undefined): string {
   const state = runtimeState?.state ?? 'unknown';
-  return state === 'needs-input' ? 'needs input' : state;
+  switch (state) {
+    case 'needs-input':
+      return 'needs input';
+    case 'approving':
+      return 'approving';
+    default:
+      return state;
+  }
 }
 
 function formatNotificationDetailLabel(notification: HydraNotification): string {
@@ -798,7 +817,7 @@ export class WorktreeItem extends TmuxItem {
     isMainWorktree?: boolean;
     isTaskWorker?: boolean;
     notificationSummary?: SessionNotificationSummary;
-    runtimeState?: WorkerRuntimeSnapshot;
+    runtimeState?: WorkerRuntimeProjection;
   }) {
     const displayLabel = opts.isTaskWorker
       ? (opts.displayName || opts.branchLabel)
@@ -827,11 +846,11 @@ export class WorktreeItem extends TmuxItem {
     if (opts.hasTmux) {
       this.iconPath = getWorkerRuntimeThemeIcon(opts.runtimeState?.state);
     } else if (opts.isTaskWorker) {
-      this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.green'));
+      this.iconPath = getWorkerRuntimeThemeIcon(opts.runtimeState?.state ?? 'stopped');
     } else if (!opts.hasGit) {
       this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
     } else {
-      this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.green'));
+      this.iconPath = getWorkerRuntimeThemeIcon(opts.runtimeState?.state ?? 'stopped');
     }
     applyNotificationSummary(this, opts.sessionName, opts.notificationSummary);
   }
@@ -1007,7 +1026,7 @@ export class TmuxSessionItem extends WorktreeItem {
     isTaskWorker?: boolean,
     notificationSummary?: SessionNotificationSummary,
     sourceAttentionNotification?: HydraNotification,
-    runtimeState?: WorkerRuntimeSnapshot
+    runtimeState?: WorkerRuntimeProjection
   ) {
     const isRoot = Boolean(worktree?.isMain);
     const branchLabel = branchLabelOverride || worktree?.branch || (isRoot ? 'main' : session.slug);
@@ -1079,7 +1098,8 @@ export class InactiveWorktreeItem extends WorktreeItem {
     displayName?: string,
     isTaskWorker?: boolean,
     notificationSummary?: SessionNotificationSummary,
-    sourceAttentionNotification?: HydraNotification
+    sourceAttentionNotification?: HydraNotification,
+    runtimeState?: WorkerRuntimeProjection
   ) {
     const branchLabel = branchLabelOverride || worktree.branch || (worktree.isMain ? 'main' : path.basename(worktree.path));
 
@@ -1094,7 +1114,8 @@ export class InactiveWorktreeItem extends WorktreeItem {
       hasGit,
       hasTmux: false,
       isMainWorktree: worktree.isMain,
-      isTaskWorker
+      isTaskWorker,
+      runtimeState
     });
 
     this.contextValue = isTaskWorker ? 'inactiveTaskWorkerItem' : 'inactiveWorkerItem';
@@ -1102,15 +1123,16 @@ export class InactiveWorktreeItem extends WorktreeItem {
     this.targetSessionName = targetSessionName;
     this.detailItem = new InactiveDetailItem(worktree, repoName, targetSessionName, extensionUri);
     this.sourceAttentionNotification = sourceAttentionNotification;
+    const descParts = typeof this.description === 'string' && this.description.trim()
+      ? [this.description]
+      : [];
+    descParts.push(formatWorkerRuntimeStateLabel(runtimeState));
     if (notificationSummary || sourceAttentionNotification) {
-      const descParts = typeof this.description === 'string' && this.description.trim()
-        ? [this.description]
-        : [];
       descParts.push(notificationSummary
         ? formatWorkerStatusLabel(notificationSummary.kind)
         : formatWorkerStatusLabel(sourceAttentionNotification!.kind));
-      this.description = descParts.join(' ');
     }
+    this.description = descParts.join(' ');
     applyNotificationSummary(this, targetSessionName, notificationSummary);
     if (sourceAttentionNotification && !notificationSummary) {
       this.tooltip = buildNotificationTooltip(
@@ -1118,6 +1140,7 @@ export class InactiveWorktreeItem extends WorktreeItem {
         'This worker has a recent source notification for its copilot.',
       );
     }
+    this.tooltip = appendWorkerRuntimeTooltip(this.tooltip, runtimeState);
 
     if (gitStatusOverride) {
       const hasGitChanges = gitStatusOverride.commitsAhead > 0 || gitStatusOverride.gitModified > 0 ||
@@ -1556,6 +1579,10 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       const worktreeBranch = branchLabel;
 
       const pr = prMap.get(branchLabel);
+      const runtimeState = projectWorkerRuntimeState(
+        w.status,
+        getWorkerRuntimeState(this.runtimeStates, w.sessionName),
+      );
 
       if (w.status === 'running') {
         const status = await getSessionStatus(w.sessionName, w.workdir);
@@ -1579,7 +1606,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           this._extensionUri, branchLabel, w.agent, repoRoot, w.workerId, w.displayName, false,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
           getLatestSourceAttentionNotification(this.notifications, w.sessionName),
-          getWorkerRuntimeState(this.runtimeStates, w.sessionName)
+          runtimeState
         ));
       } else {
         const worktree: Worktree = { path: w.workdir, branch: worktreeBranch, isMain: false };
@@ -1602,7 +1629,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           worktree, repoName, w.sessionName, isCurrentWs, hasGit,
           this._extensionUri, branchLabel, stoppedStatus, repoRoot, w.displayName, false,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName),
+          runtimeState
         ));
       }
     }
@@ -1621,6 +1649,10 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         : false;
       const label = w.displayName || w.slug || path.basename(w.workdir);
       const worktree: Worktree = { path: w.workdir, branch: label, isMain: false };
+      const runtimeState = projectWorkerRuntimeState(
+        w.status,
+        getWorkerRuntimeState(this.runtimeStates, w.sessionName),
+      );
 
       if (w.status === 'running') {
         const status = await getSessionStatus(w.sessionName);
@@ -1639,7 +1671,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           this._extensionUri, label, w.agent, undefined, w.workerId, w.displayName, true,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
           getLatestSourceAttentionNotification(this.notifications, w.sessionName),
-          getWorkerRuntimeState(this.runtimeStates, w.sessionName)
+          runtimeState
         ));
       } else {
         const stoppedStatus: SessionStatus = {
@@ -1659,7 +1691,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
           worktree, repoName, w.sessionName, isCurrentWs, false,
           this._extensionUri, label, stoppedStatus, undefined, w.displayName, true,
           getTargetSessionNotificationSummary(this.notifications, w.sessionName),
-          getLatestSourceAttentionNotification(this.notifications, w.sessionName)
+          getLatestSourceAttentionNotification(this.notifications, w.sessionName),
+          runtimeState
         ));
       }
     }
