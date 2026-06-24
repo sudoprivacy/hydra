@@ -124,6 +124,7 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['config', 'get', '--help'], expected: 'Usage: hydra config get [options] <key>' },
     { args: ['session', 'list', '--help'], expected: 'Usage: hydra session list [options]' },
     { args: ['session', 'inspect', '--help'], expected: 'Usage: hydra session inspect [options] <query>' },
+    { args: ['session', 'diagnose', '--help'], expected: 'Usage: hydra session diagnose [options] <query>' },
     { args: ['session', 'rebuild', '--help'], expected: 'Usage: hydra session rebuild [options]' },
     { args: ['events', '--help'], expected: 'Usage: hydra events [options]' },
     { args: ['notify', 'create', '--help'], expected: 'Usage: hydra notify create [options]' },

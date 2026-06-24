@@ -233,6 +233,58 @@ Success returns:
 | `generatedAt` | string | ISO timestamp for the rebuild. |
 | `session` | object | One agent session index entry. |
 
+### `hydra session diagnose <query> --json`
+
+Builds an in-memory agent-session index snapshot from the current persisted
+`sessions.json` and `archive.json`, resolves one matching entry with the same
+query rules as `hydra session inspect`, and returns a read-only explanation of
+Hydra's resume decision for that entry. The command does not sync tmux state,
+write `agent-sessions.json`, update `sessions.json`, start tmux, create
+sessions, restore archives, or expose raw configured agent command strings.
+
+Diagnostics use the agent registry resume rules with a fixed `posix` shell
+target because no shell command preview is returned. This makes the output a
+decision summary, not a quoting or command-rendering contract.
+
+Success returns:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `file` | string | Effective `agent-sessions.json` path; not written by this command. |
+| `generatedAt` | string | ISO timestamp for the in-memory snapshot. |
+| `session` | object | One agent session index entry. |
+| `resume` | object | Resume diagnostic payload. |
+
+Resume diagnostic fields:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `schemaVersion` | `1` | Diagnostic schema version. |
+| `operation` | string | `"start-active"`, `"restore-archive"`, or `"none"`. |
+| `outcome` | string | `"already-running"`, `"resume"`, `"fresh-start"`, `"restore-will-attempt-resume"`, or `"blocked"`. |
+| `resumePlan` | object | Agent-registry resume-plan projection. |
+| `blockers` | array | Preconditions that prevent the operation from reaching resume/fresh-start. |
+| `warnings` | array | Non-blocking risks or behavior notes. |
+| `evidence` | object | Boolean facts used by the evaluator. |
+
+`resumePlan` includes `valid`, `strategy`, `requiresSessionFile`,
+`hasSessionId`, `hasResolvedSessionFile`, `commandKind`, and `reason`. It never
+includes the raw configured command, rendered shell command, slash command, env,
+tokens, or prompt text.
+
+For active stopped sessions, `outcome: "resume"` means Hydra has enough durable
+state for the current agent registry to resume; `outcome: "fresh-start"` means
+the current start path should launch a new agent session instead. Active running
+sessions report `operation: "none"` and `outcome: "already-running"`.
+
+For archived sessions, `outcome: "restore-will-attempt-resume"` means the
+archive restore entry point has enough metadata and a stored native session id
+to pass resume arguments into the create path. This is intentionally separate
+from `resumePlan.valid`: Sudo Code archives, for example, may attempt restore
+resume from a stored session id while the active-style resume plan is invalid
+because the native session file is missing.
+
 ### `hydra session rebuild --json`
 
 Rebuilds the complete `HYDRA_HOME/agent-sessions.json` index and returns every
