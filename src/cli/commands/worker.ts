@@ -12,6 +12,7 @@ import { agentSupportsCompletionNotification } from '../../core/agentConfig';
 import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
 import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
 import { setWorkerRuntimeState } from '../../core/workerRuntimeState';
+import { resolveEffectiveProjectConfig } from '../../core/projectPolicy';
 
 type WorkerCreateCliOpts = {
   repo?: string;
@@ -20,6 +21,8 @@ type WorkerCreateCliOpts = {
   temp?: boolean;
   name?: string;
   base?: string;
+  agent?: string;
+  notifyCopilot?: boolean;
 };
 
 type ResolvedCreateMode =
@@ -128,7 +131,7 @@ export function registerWorkerCommands(program: Command): void {
     .option('--task <prompt>', 'Task prompt for the agent')
     .option('--task-file <path>', 'Path to a file containing the task description')
     .option('--copilot <session>', 'Session name of the parent copilot (auto-detected if inside a copilot)')
-    .option('--notify-copilot', 'Notify parent copilot when worker completes (default: true)', true)
+    .option('--notify-copilot', 'Notify parent copilot when worker completes')
     .option('--no-notify-copilot', 'Disable completion notification to parent copilot')
     .action(async (opts: {
       repo?: string;
@@ -141,7 +144,7 @@ export function registerWorkerCommands(program: Command): void {
       task?: string;
       taskFile?: string;
       copilot?: string;
-      notifyCopilot: boolean;
+      notifyCopilot?: boolean;
     }) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
@@ -149,8 +152,6 @@ export function registerWorkerCommands(program: Command): void {
         if (identity?.role === 'worker') {
           throw new Error(getWorkerCreationBlockedMessage(identity));
         }
-
-        const agentType = opts.agent || getHydraGlobalDefaultAgent().agent;
 
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
@@ -176,32 +177,45 @@ export function registerWorkerCommands(program: Command): void {
           // comparison against ~/.hydra/repos/.
           const { path: repoPath, isManaged: isManagedRepo } = resolveRepoInput(mode.repo);
           const repoRoot = await getRepoRootFromPath(repoPath);
+          const { effective } = await resolveEffectiveProjectConfig({
+            anchorPath: repoRoot,
+            globalDefaultAgent: getHydraGlobalDefaultAgent(),
+            cliDefaultAgent: opts.agent,
+            cliBaseBranch: opts.base,
+            cliNotifyCopilot: opts.notifyCopilot,
+          });
           const branchExisted = await localBranchExists(repoRoot, mode.branch);
 
           const result = await sm.createWorker({
             repoRoot,
             branchName: mode.branch,
-            agentType,
-            baseBranchOverride: opts.base,
+            agentType: effective.defaultAgent.value,
+            baseBranchOverride: effective.baseBranch.value ?? undefined,
             task: opts.task,
             taskFile: opts.taskFile,
             copilotSessionName,
-            notifyCopilot: opts.notifyCopilot,
+            notifyCopilot: effective.worker.notifyCopilot.value,
             fetchMode: isManagedRepo ? 'required' : 'best-effort',
           });
           workerInfo = result.workerInfo;
           postCreatePromise = result.postCreatePromise;
           status = branchExisted ? 'exists' : 'created';
         } else {
+          const { effective } = await resolveEffectiveProjectConfig({
+            anchorPath: mode.workdir ?? process.cwd(),
+            globalDefaultAgent: getHydraGlobalDefaultAgent(),
+            cliDefaultAgent: opts.agent,
+            cliNotifyCopilot: opts.notifyCopilot,
+          });
           const result = await sm.createDirectoryWorker({
             workdir: mode.workdir,
             name: mode.name,
             managedWorkdir: mode.managedWorkdir,
-            agentType,
+            agentType: effective.defaultAgent.value,
             task: opts.task,
             taskFile: opts.taskFile,
             copilotSessionName,
-            notifyCopilot: opts.notifyCopilot,
+            notifyCopilot: effective.worker.notifyCopilot.value,
           });
           workerInfo = result.workerInfo;
           postCreatePromise = result.postCreatePromise;

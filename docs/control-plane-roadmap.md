@@ -68,8 +68,17 @@ injecting messages.
    - Use it to make `notify open` and future restore/reopen flows precise.
 
 8. **Project policy (#236)**
-   - Add trusted project-level policy only after notifications, events, and UI
-     consumers exist.
+   - Add a safe data-only `.hydra/config.json` MVP before executable project
+     automation.
+   - Borrow rmux's explicit effective-config shape: `worker create` resolves
+     CLI, project, global, and fallback values with source metadata.
+   - Borrow cmux's trust boundary, not its action executor: project-defined
+     `notifications.hooks` are reported by `config doctor` as requiring trust
+     but are not executed and do not write a trust store in this version.
+   - Apply only pure worker defaults now: `defaultAgent`, `baseBranch`, and
+     `worker.notifyCopilot`.
+   - Keep `worker.allowTaskWorkers` as a diagnostic preview until CLI and VS
+     Code task-worker creation can enforce the same rule.
    - Keep notification body storage, paste compatibility, and routing policy
      explicit and previewable.
 
