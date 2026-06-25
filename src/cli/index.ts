@@ -15,6 +15,7 @@ import { registerConfigCommands } from './commands/config';
 import { registerNotifyCommands } from './commands/notify';
 import { registerEventsCommand } from './commands/events';
 import { registerHooksCommands } from './commands/hooks';
+import { registerSessionCommands } from './commands/session';
 import { peekTelemetry } from '../core/telemetry';
 import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '../core/path';
 import { getHostSummary, logger } from '../core/logger';
@@ -91,5 +92,6 @@ registerConfigCommands(program);
 registerNotifyCommands(program);
 registerEventsCommand(program);
 registerHooksCommands(program);
+registerSessionCommands(program);
 
 program.parse();
