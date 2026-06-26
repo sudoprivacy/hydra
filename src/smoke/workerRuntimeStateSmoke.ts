@@ -13,6 +13,7 @@ import { EventLog } from '../core/events';
 import { NotificationStore } from '../core/notifications';
 import type { WorkerInfo } from '../core/sessionManager';
 import {
+  projectWorkerRuntimeState,
   WorkerRuntimeStateStore,
   type WorkerRuntimeSnapshot,
 } from '../core/workerRuntimeState';
@@ -137,6 +138,18 @@ async function testStoreEventsAndIdempotency(): Promise<void> {
         eventLog,
       );
 
+      const starting = store.set({
+        sessionName: 'repo_worker_runtime',
+        state: 'starting',
+        origin: 'session-manager',
+        reason: 'worker-starting',
+        workerId: 7,
+        agent: 'claude',
+        workdir: '/tmp/hydra-runtime-worktree',
+      }, 'session-manager');
+      assert.equal(starting.changed, true);
+      assert.equal(starting.snapshot.state, 'starting');
+
       const first = store.set({
         sessionName: 'repo_worker_runtime',
         state: 'running',
@@ -173,11 +186,38 @@ async function testStoreEventsAndIdempotency(): Promise<void> {
       assert.equal(changed.changed, true);
       assert.equal(store.get('repo_worker_runtime')?.state, 'idle');
 
+      const approving = store.set({
+        sessionName: 'repo_worker_runtime',
+        state: 'approving',
+        origin: 'hook',
+        reason: 'permission-request',
+        workerId: 7,
+        agent: 'claude',
+        workdir: '/tmp/hydra-runtime-worktree',
+      }, 'hook');
+      assert.equal(approving.changed, true);
+      assert.equal(store.get('repo_worker_runtime')?.state, 'approving');
+
+      const stopped = store.set({
+        sessionName: 'repo_worker_runtime',
+        state: 'stopped',
+        origin: 'session-manager',
+        reason: 'worker-stopped',
+        workerId: 7,
+        agent: 'claude',
+        workdir: '/tmp/hydra-runtime-worktree',
+      }, 'session-manager');
+      assert.equal(stopped.changed, true);
+      assert.equal(store.get('repo_worker_runtime')?.state, 'stopped');
+
       const events = readEvents(ctx).filter(event => event.type === 'worker.runtime.changed');
-      assert.equal(events.length, 2);
-      assert.equal(events[0].payload?.state, 'running');
-      assert.equal(events[1].payload?.state, 'idle');
-      assert.equal(events[1].payload?.previousState, 'running');
+      assert.equal(events.length, 5);
+      assert.equal(events[0].payload?.state, 'starting');
+      assert.equal(events[1].payload?.state, 'running');
+      assert.equal(events[2].payload?.state, 'idle');
+      assert.equal(events[2].payload?.previousState, 'running');
+      assert.equal(events[3].payload?.state, 'approving');
+      assert.equal(events[4].payload?.state, 'stopped');
     });
   } finally {
     fs.rmSync(ctx.tmp, { recursive: true, force: true });
@@ -237,6 +277,36 @@ async function testNotificationProjectionAndReadIsolation(): Promise<void> {
         'notify.read',
         'worker.runtime.changed',
       ]);
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testBlockedNotificationProjectsRuntime(): Promise<void> {
+  const ctx = setupContext();
+  try {
+    await withProcessEnv(ctx, () => {
+      const store = new NotificationStore();
+      const created = store.create({
+        kind: 'blocked',
+        title: 'Worker blocked',
+        body: 'Waiting on an external dependency',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker_runtime',
+        dedupeKey: 'blocked:repo_worker_runtime:abc',
+        context: {
+          workerId: 7,
+          branch: 'issue-233',
+          workdir: '/tmp/hydra-runtime-worktree',
+          agent: 'claude',
+        },
+        eventSource: 'hook',
+      });
+      assert.equal(created.created, true);
+      const snapshot = new WorkerRuntimeStateStore().get('repo_worker_runtime');
+      assertRuntime(snapshot, 'blocked', 'blocked');
+      assert.equal(snapshot?.notificationId, created.notification.id);
     });
   } finally {
     fs.rmSync(ctx.tmp, { recursive: true, force: true });
@@ -364,6 +434,148 @@ async function testCodexTranscriptRuntimeSignals(): Promise<void> {
   }
 }
 
+async function testStoppedProjectionOverridesStaleRuntime(): Promise<void> {
+  const ctx = setupContext();
+  try {
+    await withProcessEnv(ctx, () => {
+      const store = new WorkerRuntimeStateStore();
+      const stale = store.set({
+        sessionName: 'repo_worker_runtime',
+        state: 'needs-input',
+        origin: 'hook',
+        reason: 'permission-request',
+        workerId: 7,
+        agent: 'claude',
+        workdir: '/tmp/hydra-runtime-worktree',
+      }, 'hook').snapshot;
+      const projected = projectWorkerRuntimeState('stopped', stale);
+      assert.equal(projected.state, 'stopped');
+      assert.equal(projected.updatedAt, null);
+      assert.equal(projected.origin, 'session-manager');
+      assert.equal(projected.reason, 'session-stopped');
+      assert.equal(projected.notificationId, undefined);
+
+      const stopped = store.set({
+        sessionName: 'repo_worker_runtime',
+        state: 'stopped',
+        origin: 'session-manager',
+        reason: 'worker-stopped',
+        workerId: 7,
+        agent: 'claude',
+        workdir: '/tmp/hydra-runtime-worktree',
+      }, 'session-manager').snapshot;
+      const projectedStopped = projectWorkerRuntimeState('stopped', stopped);
+      assert.equal(projectedStopped.state, 'stopped');
+      assert.equal(projectedStopped.updatedAt, stopped.updatedAt);
+      assert.equal(projectedStopped.origin, 'session-manager');
+      assert.equal(projectedStopped.reason, 'worker-stopped');
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testStoppedReadPathsDoNotWriteRuntimeEvents(): Promise<void> {
+  if (!fs.existsSync(cliPath)) {
+    console.log(`workerRuntimeStateSmoke: skipped stopped read-path check (CLI not built at ${cliPath})`);
+    return;
+  }
+
+  const ctx = setupContext();
+  const stoppedWorker = createWorker({
+    sessionName: 'hydra-runtime-read-stopped-worker',
+    tmuxSession: 'hydra-runtime-read-stopped-worker',
+    status: 'stopped',
+    workdir: ctx.tmp,
+    copilotSessionName: null,
+  });
+  try {
+    await withProcessEnv(ctx, () => {
+      writeSessions(ctx, stoppedWorker);
+      new WorkerRuntimeStateStore().set({
+        sessionName: stoppedWorker.sessionName,
+        state: 'needs-input',
+        origin: 'hook',
+        reason: 'stale-permission-request',
+        workerId: stoppedWorker.workerId,
+        agent: stoppedWorker.agent,
+        workdir: stoppedWorker.workdir,
+      }, 'hook');
+    });
+
+    const beforeRuntimeEventCount = readEvents(ctx).filter(event => event.type === 'worker.runtime.changed').length;
+    assert.equal(beforeRuntimeEventCount, 1);
+
+    const listOutput = execFileSync(process.execPath, [cliPath, 'list', '--json'], {
+      env: ctx.env,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const list = JSON.parse(listOutput) as { workers: ListWorker[] };
+    const listedWorker = list.workers.find(entry => entry.session === stoppedWorker.sessionName);
+    assert.equal(listedWorker?.runtimeState?.state, 'stopped');
+    assert.equal(listedWorker?.runtimeState?.reason, 'session-stopped');
+
+    execFileSync(process.execPath, [cliPath, 'session', 'rebuild', '--json'], {
+      env: ctx.env,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const afterRuntimeEventCount = readEvents(ctx).filter(event => event.type === 'worker.runtime.changed').length;
+    assert.equal(afterRuntimeEventCount, beforeRuntimeEventCount, 'list/session rebuild must not write runtime events');
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testWorkerStopWritesStoppedRuntime(): Promise<void> {
+  if (!fs.existsSync(cliPath)) {
+    console.log(`workerRuntimeStateSmoke: skipped worker stop check (CLI not built at ${cliPath})`);
+    return;
+  }
+
+  const ctx = setupContext();
+  const worker = createWorker({
+    sessionName: 'hydra-runtime-stop-worker',
+    tmuxSession: 'hydra-runtime-stop-worker',
+    workdir: ctx.tmp,
+    copilotSessionName: null,
+  });
+  try {
+    await withProcessEnv(ctx, () => {
+      writeSessions(ctx, worker);
+    });
+
+    const output = execFileSync(process.execPath, [cliPath, 'worker', 'stop', worker.sessionName, '--json'], {
+      env: ctx.env,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const parsed = JSON.parse(output) as { status: string; session: string };
+    assert.equal(parsed.status, 'stopped');
+    assert.equal(parsed.session, worker.sessionName);
+
+    const sessions = JSON.parse(fs.readFileSync(path.join(ctx.hydraHome, 'sessions.json'), 'utf-8')) as {
+      workers: Record<string, { status: string; attached: boolean }>;
+    };
+    assert.equal(sessions.workers[worker.sessionName].status, 'stopped');
+    assert.equal(sessions.workers[worker.sessionName].attached, false);
+
+    const runtime = new WorkerRuntimeStateStore(path.join(ctx.hydraHome, 'worker-runtime-state.json')).get(worker.sessionName);
+    assertRuntime(runtime, 'stopped', 'worker-stopped');
+    assert.ok(runtime?.updatedAt, 'explicit stopped runtime should preserve updatedAt');
+    const projection = projectWorkerRuntimeState('stopped', runtime);
+    assert.equal(projection.updatedAt, runtime!.updatedAt);
+    assert.equal(projection.reason, 'worker-stopped');
+
+    const events = readEvents(ctx);
+    assert.deepEqual(events.map(event => event.type), ['worker.runtime.changed', 'worker.stopped']);
+    assert.equal(events[0].payload?.state, 'stopped');
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
 async function testListJsonRuntimeState(): Promise<void> {
   if (!fs.existsSync(cliPath)) {
     console.log(`workerRuntimeStateSmoke: skipped list check (CLI not built at ${cliPath})`);
@@ -382,9 +594,17 @@ async function testListJsonRuntimeState(): Promise<void> {
     workdir: ctx.tmp,
     copilotSessionName: null,
   });
+  const stoppedWorker = createWorker({
+    sessionName: 'hydra-runtime-list-stopped-worker',
+    tmuxSession: 'hydra-runtime-list-stopped-worker',
+    status: 'stopped',
+    workdir: ctx.tmp,
+    workerId: 8,
+    copilotSessionName: null,
+  });
   try {
     await withProcessEnv(ctx, () => {
-      writeSessions(ctx, worker);
+      writeSessions(ctx, [worker, stoppedWorker]);
       new WorkerRuntimeStateStore().set({
         sessionName: worker.sessionName,
         state: 'needs-input',
@@ -393,6 +613,15 @@ async function testListJsonRuntimeState(): Promise<void> {
         workerId: worker.workerId,
         agent: worker.agent,
         workdir: worker.workdir,
+      }, 'hook');
+      new WorkerRuntimeStateStore().set({
+        sessionName: stoppedWorker.sessionName,
+        state: 'needs-input',
+        origin: 'hook',
+        reason: 'stale-permission-request',
+        workerId: stoppedWorker.workerId,
+        agent: stoppedWorker.agent,
+        workdir: stoppedWorker.workdir,
       }, 'hook');
     });
 
@@ -414,21 +643,26 @@ async function testListJsonRuntimeState(): Promise<void> {
     assert.equal(listedWorker!.status, 'running');
     assert.equal(listedWorker!.runtimeState?.state, 'needs-input');
     assert.equal(listedWorker!.runtimeState?.reason, 'permission-request');
+    const listedStoppedWorker = list.workers.find(entry => entry.session === stoppedWorker.sessionName);
+    assert.ok(listedStoppedWorker, 'expected stopped worker in hydra list output');
+    assert.equal(listedStoppedWorker!.status, 'stopped');
+    assert.equal(listedStoppedWorker!.runtimeState?.state, 'stopped');
+    assert.equal(listedStoppedWorker!.runtimeState?.reason, 'session-stopped');
+    assert.equal(listedStoppedWorker!.runtimeState?.updatedAt, null);
   } finally {
     spawnSync('tmux', ['-L', tmuxSocket, 'kill-server'], { stdio: 'ignore' });
     fs.rmSync(ctx.tmp, { recursive: true, force: true });
   }
 }
 
-function writeSessions(ctx: TestContext, worker: WorkerInfo): void {
+function writeSessions(ctx: TestContext, workers: WorkerInfo | WorkerInfo[]): void {
   const now = new Date().toISOString();
+  const workerList = Array.isArray(workers) ? workers : [workers];
   fs.writeFileSync(
     path.join(ctx.hydraHome, 'sessions.json'),
     JSON.stringify({
       copilots: {},
-      workers: {
-        [worker.sessionName]: worker,
-      },
+      workers: Object.fromEntries(workerList.map(worker => [worker.sessionName, worker])),
       nextWorkerId: 8,
       updatedAt: now,
     }, null, 2),
@@ -453,9 +687,13 @@ function tmuxAvailable(): boolean {
 async function main(): Promise<void> {
   await testStoreEventsAndIdempotency();
   await testNotificationProjectionAndReadIsolation();
+  await testBlockedNotificationProjectsRuntime();
   await testNeedsInputWithoutNotificationTargetStillUpdatesRuntime();
   await testMonitorNeedsInputFallbackUsesInjectedRuntimeStore();
   await testCodexTranscriptRuntimeSignals();
+  await testStoppedProjectionOverridesStaleRuntime();
+  await testStoppedReadPathsDoNotWriteRuntimeEvents();
+  await testWorkerStopWritesStoppedRuntime();
   await testListJsonRuntimeState();
   console.log('workerRuntimeStateSmoke: ok');
 }

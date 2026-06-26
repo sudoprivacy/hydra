@@ -130,10 +130,14 @@ Worker entries include:
 
 `status` is the tmux/session lifecycle (`running` or `stopped`). `runtimeState`
 is the current worker runtime projection. Its `state` is one of `unknown`,
-`running`, `idle`, `needs-input`, or `error`; `complete` remains a notification
-event and usually projects runtime to `idle`. When the tmux session is stopped,
-`runtimeState.state` is reported as `unknown` so stale agent state is not shown
-as current.
+`starting`, `running`, `idle`, `needs-input`, `approving`, `blocked`, `error`, or
+`stopped`; `complete` remains a notification event and usually projects runtime
+to `idle`. When the tmux session is stopped, `runtimeState.state` is reported as
+`stopped` so stale agent hook state is not shown as current.
+
+`starting` and `approving` are reserved lifecycle states for future runtime Feed
+and approval integrations. Current PR3 producers primarily emit `running`,
+`idle`, `needs-input`, `blocked`, `error`, and `stopped`.
 
 ### `hydra session list --json`
 
@@ -198,7 +202,9 @@ Worker projections include `workerId`, `source` (`"repo"` or `"directory"`),
 `type` (`"code"` or `"task"`), `repo`, `repoRoot`, `branch`, `slug`,
 `managedWorkdir`, and `copilotSessionName`. Copilot projections include `mode`.
 `runtimeState` is emitted only for active workers; archived records never reuse
-runtime state keyed by a matching session name.
+runtime state keyed by a matching session name. Active stopped workers project to
+`runtimeState.state: "stopped"` even when the durable runtime store still has an
+older hook or notification state.
 
 `agent-sessions.json` is a rebuildable query surface, not a source of truth.
 Consumers should treat `sessions.json`, `archive.json`, runtime state, and native
@@ -412,7 +418,7 @@ Notification records include:
 
 `--dedupe-key` is an idempotency key. When it matches an existing notification,
 the command returns the existing record and does not append a duplicate.
-`complete`, `needs-input`, and `error` notifications also update
+`complete`, `needs-input`, `blocked`, and `error` notifications also update
 `HYDRA_HOME/worker-runtime-state.json` for the `sourceSession`; reading,
 opening, or clearing notifications does not clear runtime state.
 

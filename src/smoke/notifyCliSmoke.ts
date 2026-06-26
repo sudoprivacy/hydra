@@ -215,6 +215,53 @@ function main(): void {
     assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4]);
     assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
 
+    const blocked = parseStdoutJson<{
+      status: string;
+      created: boolean;
+      notification: {
+        id: string;
+        kind: string;
+        sourceSession: string | null;
+      };
+    }>(
+      runCli([
+        'notify',
+        'create',
+        '--session',
+        'blocked_copilot',
+        '--from',
+        'blocked_worker',
+        '--kind',
+        'blocked',
+        '--title',
+        'Worker is blocked',
+        '--body',
+        'Waiting on an external dependency',
+        '--worker-id',
+        '8',
+        '--branch',
+        'feat/blocked',
+        '--workdir',
+        ctx.tmp,
+        '--agent',
+        'claude',
+        '--json',
+      ], ctx.env),
+      'hydra notify create blocked --json',
+    );
+    assert.equal(blocked.status, 'created');
+    assert.equal(blocked.created, true);
+    assert.equal(blocked.notification.kind, 'blocked');
+    assert.equal(blocked.notification.sourceSession, 'blocked_worker');
+
+    const runtimePath = path.join(ctx.hydraHome, 'worker-runtime-state.json');
+    const runtime = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as {
+      workers: Record<string, { state: string; reason?: string; notificationId?: string }>;
+    };
+    assert.equal(runtime.workers.blocked_worker.state, 'blocked');
+    assert.equal(runtime.workers.blocked_worker.reason, 'blocked');
+    assert.equal(runtime.workers.blocked_worker.notificationId, blocked.notification.id);
+
     console.log('notifyCliSmoke: ok');
   } finally {
     fs.rmSync(ctx.tmp, { recursive: true, force: true });

@@ -5,7 +5,16 @@ import { EventLog, type HydraEventSource } from './events';
 import { getHydraHome } from './path';
 import { logger } from './logger';
 
-export type WorkerRuntimeState = 'unknown' | 'running' | 'idle' | 'needs-input' | 'error';
+export type WorkerRuntimeState =
+  | 'unknown'
+  | 'starting'
+  | 'running'
+  | 'idle'
+  | 'needs-input'
+  | 'approving'
+  | 'blocked'
+  | 'error'
+  | 'stopped';
 
 export type WorkerRuntimeSignalOrigin =
   | 'session-manager'
@@ -24,6 +33,14 @@ export interface WorkerRuntimeSnapshot {
   workerId?: number;
   agent?: string | null;
   workdir?: string | null;
+}
+
+export interface WorkerRuntimeProjection {
+  state: WorkerRuntimeState;
+  updatedAt: string | null;
+  origin: WorkerRuntimeSignalOrigin;
+  reason?: string;
+  notificationId?: string;
 }
 
 export interface SetWorkerRuntimeStateInput {
@@ -282,6 +299,8 @@ export function runtimeStateForNotificationKind(kind: string): WorkerRuntimeStat
       return 'idle';
     case 'needs-input':
       return 'needs-input';
+    case 'blocked':
+      return 'blocked';
     case 'error':
       return 'error';
     default:
@@ -291,6 +310,47 @@ export function runtimeStateForNotificationKind(kind: string): WorkerRuntimeStat
 
 export function cloneWorkerRuntimeSnapshot(snapshot: WorkerRuntimeSnapshot): WorkerRuntimeSnapshot {
   return cloneSnapshot(snapshot);
+}
+
+export function projectWorkerRuntimeState(
+  workerStatus: 'running' | 'stopped',
+  snapshot: WorkerRuntimeSnapshot | undefined,
+): WorkerRuntimeProjection {
+  if (workerStatus === 'stopped') {
+    if (snapshot?.state === 'stopped') {
+      return {
+        state: snapshot.state,
+        updatedAt: snapshot.updatedAt,
+        origin: snapshot.origin,
+        reason: snapshot.reason,
+        notificationId: snapshot.notificationId,
+      };
+    }
+
+    return {
+      state: 'stopped',
+      updatedAt: null,
+      origin: 'session-manager',
+      reason: 'session-stopped',
+    };
+  }
+
+  if (!snapshot) {
+    return {
+      state: 'unknown',
+      updatedAt: null,
+      origin: 'session-manager',
+      reason: 'no-runtime-signal',
+    };
+  }
+
+  return {
+    state: snapshot.state,
+    updatedAt: snapshot.updatedAt,
+    origin: snapshot.origin,
+    reason: snapshot.reason,
+    notificationId: snapshot.notificationId,
+  };
 }
 
 function normalizeInput(input: SetWorkerRuntimeStateInput): WorkerRuntimeSnapshot {
@@ -389,9 +449,13 @@ function cloneSnapshot(snapshot: WorkerRuntimeSnapshot): WorkerRuntimeSnapshot {
 
 function isWorkerRuntimeState(value: unknown): value is WorkerRuntimeState {
   return value === 'unknown'
+    || value === 'starting'
     || value === 'running'
     || value === 'idle'
     || value === 'needs-input'
+    || value === 'approving'
+    || value === 'blocked'
+    || value === 'stopped'
     || value === 'error';
 }
 
