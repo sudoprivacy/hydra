@@ -37,7 +37,12 @@ injecting messages.
 
 4. **Attention Inbox**
    - Add a user-facing notification surface in VS Code.
-   - Support unread-first navigation, mark-read, clear, and open-session actions.
+   - Build it as a pure projection over `NotificationStateService` snapshots;
+     opening the view must not mutate `notifications.json`.
+   - Support unread-first navigation, mark-read, clear-read, and open-session
+     actions. Use explicit commands for every write.
+   - Keep this smaller than cmux Feed: no approve/deny flow, blocking hook wait,
+     daemon, socket, or desktop notification in the first inbox version.
    - Only after this exists should paste-to-copilot become optional by default.
 
 5. **AgentRegistry (#230)**

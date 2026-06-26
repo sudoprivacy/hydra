@@ -112,7 +112,7 @@ function parseStdoutJson<T>(proc: SpawnSyncReturns<string>, label: string): T {
   return JSON.parse(proc.stdout) as T;
 }
 
-function readEventLines(ctx: TestContext): Array<{ type?: string; source?: string; payload?: { notificationId?: string } }> {
+function readEventLines(ctx: TestContext): Array<{ type?: string; source?: string; payload?: { notificationId?: string; readOnly?: boolean } }> {
   const eventsPath = path.join(ctx.hydraHome, 'events.jsonl');
   if (!fs.existsSync(eventsPath)) {
     return [];
@@ -413,13 +413,17 @@ async function testBatchReadAndClearEventSources(): Promise<void> {
         );
         assert.equal(readEvents.length, 2, 'batch read should emit one extension notify.read per notification');
 
-        const cleared = service.clear({ session: 'repo_worker' }, 'extension');
+        const cleared = service.clearRead({ session: 'repo_worker' }, 'extension');
         assert.equal(cleared.cleared, 2);
+        assert.equal(service.getById(first.id), undefined);
+        assert.equal(service.getById(second.id), undefined);
+        assert.equal(service.getUnreadCount(), 1, 'clearRead should preserve unread notifications');
         const clearEvents = readEventLines(ctx).filter(event =>
           event.type === 'notify.cleared' &&
-          event.source === 'extension'
+          event.source === 'extension' &&
+          event.payload?.readOnly === true
         );
-        assert.equal(clearEvents.length, 1, 'clear should emit an extension notify.cleared event');
+        assert.equal(clearEvents.length, 1, 'clearRead should emit an extension notify.cleared event');
       } finally {
         service.dispose();
       }
@@ -460,6 +464,73 @@ async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
         assert.ok(changes > 0, 'event-only completion projection should emit a change');
       } finally {
         listener.dispose();
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testEventOnlyClearReadPreservesUnreadProjection(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-event-clear-read-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const eventLog = new EventLog();
+      eventLog.append({
+        type: 'notify.created',
+        source: 'hook',
+        payload: {
+          notificationId: 'event-unread-complete',
+          kind: 'complete',
+          targetSession: 'repo_copilot',
+          sourceSession: 'unread_worker',
+          actionType: 'open-session',
+          actionSession: 'unread_worker',
+        },
+      });
+      eventLog.append({
+        type: 'notify.created',
+        source: 'hook',
+        payload: {
+          notificationId: 'event-read-complete',
+          kind: 'complete',
+          targetSession: 'repo_copilot',
+          sourceSession: 'read_worker',
+          actionType: 'open-session',
+          actionSession: 'read_worker',
+        },
+      });
+      eventLog.append({
+        type: 'notify.read',
+        source: 'extension',
+        payload: {
+          notificationId: 'event-read-complete',
+        },
+      });
+      eventLog.append({
+        type: 'notify.cleared',
+        source: 'extension',
+        payload: {
+          readOnly: true,
+          cleared: 1,
+        },
+      });
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(
+          service.getLatestSourceAttention('unread_worker')?.id,
+          'event-unread-complete',
+          'read-only clear must preserve unread event-only source attention',
+        );
+        assert.equal(
+          service.getLatestSourceAttention('read_worker'),
+          undefined,
+          'read-only clear should remove read event-only source attention',
+        );
+      } finally {
         service.dispose();
       }
     });
@@ -830,6 +901,7 @@ async function main(): Promise<void> {
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
   await testEventOnlyCompletionProjectionEmitsChange();
+  await testEventOnlyClearReadPreservesUnreadProjection();
   await testSourceAttentionProjectionUsesLatestStatus();
   await testEventOnlyErrorProjectionEmitsChange();
   await testStoredNotificationWinsOverDuplicateEventProjection();

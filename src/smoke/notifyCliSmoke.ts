@@ -215,6 +215,62 @@ function main(): void {
     assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4]);
     assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
 
+    const readClearTarget = parseStdoutJson<{ notification: { id: string } }>(
+      runCli([
+        'notify',
+        'create',
+        '--session',
+        'read_clear_target',
+        '--kind',
+        'info',
+        '--title',
+        'Read notification',
+        '--json',
+      ], ctx.env),
+      'hydra notify create read-clear target --json',
+    );
+    const unreadPreserved = parseStdoutJson<{ notification: { id: string } }>(
+      runCli([
+        'notify',
+        'create',
+        '--session',
+        'read_clear_target',
+        '--kind',
+        'info',
+        '--title',
+        'Unread notification',
+        '--json',
+      ], ctx.env),
+      'hydra notify create unread preserved --json',
+    );
+    parseStdoutJson<{ markedRead: number }>(
+      runCli(['notify', 'read', readClearTarget.notification.id, '--json'], ctx.env),
+      'hydra notify read read-clear target --json',
+    );
+    const readCleared = parseStdoutJson<{ status: string; cleared: number }>(
+      runCli(['notify', 'clear', '--target', 'read_clear_target', '--read', '--json'], ctx.env),
+      'hydra notify clear --read --json',
+    );
+    assert.equal(readCleared.status, 'ok');
+    assert.equal(readCleared.cleared, 1);
+    const preservedAfterReadClear = parseStdoutJson<{
+      notifications: Array<{ id: string; readAt: string | null }>;
+      count: number;
+      unreadCount: number;
+      totalCount: number;
+    }>(
+      runCli(['notify', 'list', '--target', 'read_clear_target', '--json'], ctx.env),
+      'hydra notify list after clear --read --json',
+    );
+    assert.equal(preservedAfterReadClear.count, 1);
+    assert.equal(preservedAfterReadClear.unreadCount, 1);
+    assert.equal(preservedAfterReadClear.notifications[0].id, unreadPreserved.notification.id);
+    assert.equal(preservedAfterReadClear.notifications[0].readAt, null);
+    parseStdoutJson<{ cleared: number }>(
+      runCli(['notify', 'clear', '--target', 'read_clear_target', '--json'], ctx.env),
+      'hydra notify clear read-clear target --json',
+    );
+
     const blocked = parseStdoutJson<{
       status: string;
       created: boolean;
