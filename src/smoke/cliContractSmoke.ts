@@ -122,6 +122,7 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['copilot', 'logs', '--help'], expected: 'Usage: hydra copilot logs [options] <session>' },
     { args: ['copilot', 'send', '--help'], expected: 'Usage: hydra copilot send [options] <session> <message>' },
     { args: ['config', 'get', '--help'], expected: 'Usage: hydra config get [options] <key>' },
+    { args: ['config', 'doctor', '--help'], expected: 'Usage: hydra config doctor [options]' },
     { args: ['session', 'list', '--help'], expected: 'Usage: hydra session list [options]' },
     { args: ['session', 'inspect', '--help'], expected: 'Usage: hydra session inspect [options] <query>' },
     { args: ['session', 'diagnose', '--help'], expected: 'Usage: hydra session diagnose [options] <query>' },
@@ -189,6 +190,16 @@ function assertErrorContracts(ctx: TestContext): void {
   assert.equal(missingBranchError.error.code, EXIT_VALIDATION);
   assert.equal(missingBranchError.error.message, '--branch is required when using --repo.');
   assert.equal(missingBranchError.error.retryable, false);
+
+  const invalidProject = path.join(ctx.tmp, 'invalid-project');
+  fs.mkdirSync(path.join(invalidProject, '.hydra'), { recursive: true });
+  fs.writeFileSync(path.join(invalidProject, '.hydra', 'config.json'), '{', 'utf-8');
+  const invalidPolicy = runCli(['worker', 'create', '--dir', invalidProject, '--json'], ctx.env);
+  assert.equal(invalidPolicy.status, EXIT_VALIDATION, 'invalid project policy exit code');
+  const invalidPolicyError = parseStderrJson<JsonError>(invalidPolicy, 'invalid project policy');
+  assert.equal(invalidPolicyError.error.code, EXIT_VALIDATION);
+  assert.match(invalidPolicyError.error.message, /Project Hydra policy is invalid/);
+  assert.equal(invalidPolicyError.error.retryable, false);
 }
 
 function main(): void {

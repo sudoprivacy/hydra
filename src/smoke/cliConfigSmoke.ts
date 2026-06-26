@@ -21,11 +21,20 @@ interface ConfigValueJson {
   path: string;
 }
 
-function runCli(args: string[], env: Record<string, string | undefined>): string {
+function runCli(args: string[], env: Record<string, string | undefined>, cwd?: string): string {
   return execFileSync('node', [cliPath, ...args], {
+    cwd,
     env,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function runGit(args: string[], cwd: string, env: Record<string, string | undefined>): void {
+  execFileSync('git', args, {
+    cwd,
+    env,
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
 }
 
@@ -72,14 +81,75 @@ function main(): void {
     assert.equal(get.value, 'codex');
     assert.equal(get.source, 'configured');
 
-    const listOut = runCli(['config', 'list', '--json'], env);
+    const project = path.join(tmp, 'project');
+    fs.mkdirSync(path.join(project, '.hydra'), { recursive: true });
+    runGit(['init', '-b', 'main'], project, env);
+    fs.writeFileSync(path.join(project, 'README.md'), '# Project\n', 'utf-8');
+    runGit(['add', 'README.md'], project, env);
+    runGit(['-c', 'user.name=Hydra Smoke', '-c', 'user.email=hydra-smoke@example.com', 'commit', '-m', 'initial'], project, env);
+    fs.writeFileSync(
+      path.join(project, '.hydra', 'config.json'),
+      `${JSON.stringify({
+        defaultAgent: 'gemini',
+        baseBranch: 'main',
+        worker: { notifyCopilot: false },
+        notifications: { hooks: [{ command: 'echo done' }] },
+      }, null, 2)}\n`,
+      'utf-8',
+    );
+
+    const listOut = runCli(['config', 'list', '--json'], env, project);
     const list = JSON.parse(listOut) as {
       status: string;
+      path: string;
       config: { defaultAgent: { value: string; source: string } };
+      projectPolicy: { found: boolean; path: string | null; requiresTrust: unknown[] };
+      effective: {
+        defaultAgent: { value: string; source: string };
+        baseBranch: { value: string | null; source: string };
+        worker: { notifyCopilot: { value: boolean; source: string } };
+      };
     };
     assert.equal(list.status, 'ok');
+    assert.equal(list.path, configPath);
     assert.equal(list.config.defaultAgent.value, 'codex');
     assert.equal(list.config.defaultAgent.source, 'configured');
+    assert.equal(list.projectPolicy.found, true);
+    assert.equal(list.projectPolicy.path, fs.realpathSync(path.join(project, '.hydra', 'config.json')));
+    assert.equal(list.projectPolicy.requiresTrust.length, 1);
+    assert.deepEqual(list.effective.defaultAgent, { value: 'gemini', source: 'project' });
+    assert.deepEqual(list.effective.baseBranch, { value: 'main', source: 'project' });
+    assert.deepEqual(list.effective.worker.notifyCopilot, { value: false, source: 'project' });
+
+    const doctorOut = runCli(['config', 'doctor', '--path', project, '--json'], env);
+    const doctor = JSON.parse(doctorOut) as {
+      status: string;
+      path: string;
+      projectPolicy: { found: boolean; blockers: unknown[]; warnings: unknown[] };
+      effective: { defaultAgent: { value: string; source: string } };
+      requiresTrust: unknown[];
+      blockers: unknown[];
+      warnings: unknown[];
+    };
+    assert.equal(doctor.status, 'ok');
+    assert.equal(doctor.path, configPath);
+    assert.equal(doctor.projectPolicy.found, true);
+    assert.equal(doctor.blockers.length, 0);
+    assert.equal(doctor.requiresTrust.length, 1);
+    assert.equal(doctor.warnings.length, 1);
+    assert.deepEqual(doctor.effective.defaultAgent, { value: 'gemini', source: 'project' });
+
+    const invalidProject = path.join(tmp, 'invalid-project');
+    fs.mkdirSync(path.join(invalidProject, '.hydra'), { recursive: true });
+    fs.writeFileSync(path.join(invalidProject, '.hydra', 'config.json'), '{', 'utf-8');
+    const invalidDoctor = JSON.parse(runCli(['config', 'doctor', '--path', invalidProject, '--json'], env)) as {
+      status: string;
+      effective: null;
+      blockers: Array<{ code: string }>;
+    };
+    assert.equal(invalidDoctor.status, 'blocked');
+    assert.equal(invalidDoctor.effective, null);
+    assert.equal(invalidDoctor.blockers[0].code, 'policy-invalid-json');
 
     const invalid = spawnSync('node', [cliPath, 'config', 'set', 'default-agent', 'codxe', '--json'], {
       env,

@@ -527,10 +527,48 @@ Config commands:
 
 | Command | Contract |
 | --- | --- |
-| `config list` | Print effective CLI settings. Supports `--json`. |
+| `config list` | Print global CLI settings plus project policy and effective settings for the current directory. Supports `--json`. |
+| `config doctor` | Validate `.hydra/config.json` from `--path` or the current directory. Supports `--json`; diagnostics return `status: "blocked"` instead of exiting nonzero. |
 | `config get <key>` | Print one setting. Currently supports `default-agent`. |
 | `config set <key> <value>` | Persist one setting. Currently supports `default-agent`. |
 | `config unset <key>` | Remove one setting and fall back to defaults. |
+
+### Project Policy
+
+Hydra discovers project policy from `.hydra/config.json`, starting at the
+requested anchor and walking upward until the nearest git root when one exists,
+or the filesystem root otherwise. The global Hydra config path is ignored even
+when it also ends in `.hydra/config.json`.
+
+Project policy is strict JSON intake: the file must be a regular file, not a
+symlink, must be smaller than 128 KiB, and must parse as a JSON object. Invalid
+types and invalid agent names are blockers. Unknown keys are reported as
+warnings and ignored.
+
+Supported project policy fields:
+
+| Field | Contract |
+| --- | --- |
+| `defaultAgent` | Default agent for `worker create` when `--agent` is not provided. |
+| `baseBranch` | Default base branch for code workers when `--base` is not provided. |
+| `worker.notifyCopilot` | Default worker completion notification behavior when neither `--notify-copilot` nor `--no-notify-copilot` is provided. |
+| `worker.allowTaskWorkers` | Diagnostic preview only in this version; reported in effective config but not enforced by CLI or VS Code clients. |
+| `notifications.hooks` | Doctor-only executable policy preview. Hydra reports `requiresTrust` and warnings, but does not execute project hooks and does not persist trust decisions. |
+
+Effective project config uses the precedence `CLI > project > global >
+fallback`. Each effective value includes `{ value, source }` so clients can
+explain why a worker was created with a given default.
+
+`hydra config list --json` keeps the existing top-level `path` and
+`config.defaultAgent` fields and adds:
+
+| Field | Type |
+| --- | --- |
+| `projectPolicy` | discovery, parsed policy, warnings, blockers, and trust requirements |
+| `effective.defaultAgent` | `{ value, source }` |
+| `effective.baseBranch` | `{ value, source }` |
+| `effective.worker.notifyCopilot` | `{ value, source }` |
+| `effective.worker.allowTaskWorkers` | `{ value, source }` |
 
 Notify commands:
 

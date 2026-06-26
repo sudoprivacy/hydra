@@ -76,6 +76,8 @@ export function classifyError(message: string): number {
     lower.includes('required option') ||
     lower.includes('missing required') ||
     lower.includes('unknown config key') ||
+    lower.includes('project hydra policy is invalid') ||
+    lower.includes('configured basebranch') ||
     lower.includes('workers cannot create other workers') ||
     lower.includes('cannot be used with') ||
     lower.includes('mutually exclusive') ||
