@@ -3,13 +3,20 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import {
   type ArchivedSessionInfo,
+  type ArchiveState,
   type CopilotInfo,
   getWorkerSource,
   isDirectoryWorker,
   type SessionState,
   type WorkerInfo,
 } from './sessionManager';
-import { getHydraAgentSessionsFile, resolveAgentSessionFile, toCanonicalPath } from './path';
+import {
+  getHydraAgentSessionsFile,
+  getHydraArchiveFile,
+  getHydraSessionsFile,
+  resolveAgentSessionFile,
+  toCanonicalPath,
+} from './path';
 import {
   WorkerRuntimeStateStore,
   type WorkerRuntimeSignalOrigin,
@@ -131,6 +138,11 @@ export class AgentSessionIndexStore {
 
   get path(): string {
     return this.filePath;
+  }
+
+  snapshot(input: RebuildAgentSessionIndexInput): AgentSessionIndexState {
+    this.resolveCache.clear();
+    return this.build(input);
   }
 
   rebuild(input: RebuildAgentSessionIndexInput): AgentSessionIndexState {
@@ -424,6 +436,15 @@ export function inspectAgentSessionIndex(
   throw new AgentSessionInspectNotFoundError(normalized);
 }
 
+export function readAgentSessionIndexSnapshot(
+  store: AgentSessionIndexStore = new AgentSessionIndexStore(),
+): AgentSessionIndexState {
+  return store.snapshot({
+    state: readSessionStateSnapshot(),
+    archiveEntries: readArchiveStateSnapshot().entries,
+  });
+}
+
 function projectWorker(worker: WorkerInfo): AgentSessionWorkerProjection {
   const source = getWorkerSource(worker);
   return {
@@ -490,6 +511,71 @@ function roleRank(role: AgentSessionRole): number {
 
 function normalizeCopilotMode(mode: string | undefined): string {
   return mode === 'plan' ? 'plan' : 'normal';
+}
+
+function readArchiveStateSnapshot(): ArchiveState {
+  const archiveFile = getHydraArchiveFile();
+  try {
+    if (fs.existsSync(archiveFile)) {
+      const parsed = JSON.parse(fs.readFileSync(archiveFile, 'utf-8'));
+      return { entries: parsed.entries || [] };
+    }
+  } catch {
+    // Corrupted files are ignored for a read-only diagnostic snapshot.
+  }
+  return { entries: [] };
+}
+
+function readSessionStateSnapshot(): SessionState {
+  const sessionsFile = getHydraSessionsFile();
+  try {
+    if (fs.existsSync(sessionsFile)) {
+      const parsed = JSON.parse(fs.readFileSync(sessionsFile, 'utf-8'));
+      const state: SessionState = {
+        copilots: parsed.copilots || {},
+        workers: parsed.workers || {},
+        nextWorkerId: parsed.nextWorkerId || 1,
+        updatedAt: parsed.updatedAt || new Date().toISOString(),
+      };
+
+      for (const worker of Object.values(state.workers)) {
+        const source = getWorkerSource(worker);
+        worker.source ??= source;
+        worker.sessionId ??= null;
+        worker.agentSessionFile ??= null;
+        worker.displayName ??= worker.slug || extractSlugFromSessionName(worker.sessionName);
+        worker.managedWorkdir ??= false;
+        if (source === 'directory') {
+          worker.repo ??= null;
+          worker.repoRoot ??= null;
+          worker.branch ??= null;
+        } else {
+          worker.repo ??= '';
+          worker.repoRoot ??= '';
+          worker.branch ??= '';
+        }
+      }
+      for (const copilot of Object.values(state.copilots)) {
+        copilot.sessionId ??= null;
+        copilot.agentSessionFile ??= null;
+        copilot.displayName ??= copilot.sessionName;
+        copilot.copilotMode = normalizeCopilotMode(copilot.copilotMode) as CopilotInfo['copilotMode'];
+      }
+
+      return state;
+    }
+  } catch {
+    // Corrupted files are ignored for a read-only diagnostic snapshot.
+  }
+  return { copilots: {}, workers: {}, nextWorkerId: 1, updatedAt: new Date().toISOString() };
+}
+
+function extractSlugFromSessionName(sessionName: string): string {
+  const underscoreIdx = sessionName.indexOf('_');
+  if (underscoreIdx >= 0) {
+    return sessionName.substring(underscoreIdx + 1);
+  }
+  return sessionName;
 }
 
 function pathMatchesQuery(entry: AgentSessionIndexEntry, query: string): boolean {

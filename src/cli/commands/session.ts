@@ -7,6 +7,7 @@ import {
   AgentSessionInspectNotFoundError,
   filterAgentSessionEntries,
   inspectAgentSessionIndex,
+  readAgentSessionIndexSnapshot,
   selectAgentSessionListEntries,
   type AgentSessionIndexEntry,
   type AgentSessionIndexSource,
@@ -14,6 +15,10 @@ import {
   type AgentSessionRole,
   type AgentSessionStatus,
 } from '../../core/agentSessionIndex';
+import {
+  diagnoseAgentSessionResume,
+  type ResumeDiagnostics,
+} from '../../core/resumeDiagnostics';
 import {
   EXIT_CONFLICT,
   EXIT_NOT_FOUND,
@@ -86,6 +91,31 @@ export function registerSessionCommands(program: Command): void {
           },
           globalOpts,
           () => printSessionDetail(found),
+        );
+      } catch (error) {
+        outputSessionInspectError(error, globalOpts);
+      }
+    });
+
+  session
+    .command('diagnose <query>')
+    .description('Explain whether an agent session would resume, fresh start, or block')
+    .action(async (query: string) => {
+      const globalOpts = program.opts() as OutputOpts;
+      try {
+        const index = readAgentSessionIndexSnapshot();
+        const found = inspectAgentSessionIndex(index, query);
+        const resume = diagnoseAgentSessionResume(found);
+        outputResult(
+          {
+            status: 'ok',
+            file: new AgentSessionIndexStore().path,
+            generatedAt: index.generatedAt,
+            session: found,
+            resume,
+          },
+          globalOpts,
+          () => printResumeDiagnostics(found, resume),
         );
       } catch (error) {
         outputSessionInspectError(error, globalOpts);
@@ -191,6 +221,29 @@ function printSessionDetail(session: AgentSessionIndexEntry): void {
   }
   if (session.workdir) {
     console.log(`  Workdir:       ${session.workdir}`);
+  }
+}
+
+function printResumeDiagnostics(session: AgentSessionIndexEntry, resume: ResumeDiagnostics): void {
+  console.log(`${session.hydraSessionName}`);
+  console.log(`  Operation:     ${resume.operation}`);
+  console.log(`  Outcome:       ${resume.outcome}`);
+  console.log(`  Resume plan:   ${resume.resumePlan.valid ? 'valid' : 'invalid'}`);
+  console.log(`  Strategy:      ${resume.resumePlan.strategy || 'none'}`);
+  if (resume.resumePlan.reason) {
+    console.log(`  Reason:        ${resume.resumePlan.reason}`);
+  }
+  if (resume.blockers.length > 0) {
+    console.log('  Blockers:');
+    for (const blocker of resume.blockers) {
+      console.log(`    - ${blocker.code}: ${blocker.message}`);
+    }
+  }
+  if (resume.warnings.length > 0) {
+    console.log('  Warnings:');
+    for (const warning of resume.warnings) {
+      console.log(`    - ${warning.code}: ${warning.message}`);
+    }
   }
 }
 
