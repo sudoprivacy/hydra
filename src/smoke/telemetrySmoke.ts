@@ -598,7 +598,7 @@ async function testFlushTimeoutOnHungBackend(): Promise<void> {
 
 async function testNormalizeAgent(): Promise<void> {
   const telemetry = await import('../core/telemetry');
-  for (const known of ['claude', 'codex', 'gemini']) {
+  for (const known of ['claude', 'codex', 'gemini', 'antigravity']) {
     assert.equal(telemetry.normalizeAgentForTelemetry(known), known);
   }
   assert.equal(telemetry.normalizeAgentForTelemetry('custom'), 'custom');

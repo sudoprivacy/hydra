@@ -34,6 +34,9 @@ export function expandAndResolvePath(targetPath: string): string {
  *   - gemini:  ~/.gemini/tmp/<projectName>/logs.json
  *              (projectName looked up by workdir in ~/.gemini/projects.json;
  *              the file is per-project and may contain multiple sessions)
+ *   - antigravity:
+ *              ~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript_full.jsonl
+ *              (full per-conversation transcript written by the agy CLI)
  *   - sudocode:
  *              <workdir>/.scode/sessions/<workspace-hash>/<sessionId>.jsonl
  * Returns null when the agent is unknown, required inputs are missing, or the
@@ -58,11 +61,28 @@ export function resolveAgentSessionFile(
       return resolveCodexSessionFile(sessionId);
     case 'gemini':
       return resolveGeminiSessionFile(workdir);
+    case 'antigravity':
+      return resolveAntigravitySessionFile(sessionId);
     case 'sudocode':
       return resolveSudoCodeSessionFile(workdir, sessionId);
     default:
       return null;
   }
+}
+
+function resolveAntigravitySessionFile(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  const file = path.join(
+    os.homedir(),
+    '.gemini',
+    'antigravity-cli',
+    'brain',
+    sessionId,
+    '.system_generated',
+    'logs',
+    'transcript_full.jsonl',
+  );
+  return fs.existsSync(file) ? file : null;
 }
 
 function resolveClaudeSessionFile(workdir: string, sessionId: string | null): string | null {

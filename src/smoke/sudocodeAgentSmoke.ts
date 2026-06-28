@@ -187,7 +187,22 @@ function testAgentConfig(): void {
   assert.equal(agentSupportsCompletionNotification('claude'), true);
   assert.equal(agentSupportsCompletionNotification('codex'), true);
   assert.equal(agentSupportsCompletionNotification('gemini'), true);
+  assert.equal(agentSupportsCompletionNotification('antigravity'), true);
   assert.equal(agentSupportsCompletionNotification('sudocode'), false);
+
+  // Antigravity launches with the yolo flag and resumes via --conversation.
+  assert.equal(
+    buildAgentLaunchCommand('antigravity', 'agy'),
+    'agy --dangerously-skip-permissions',
+  );
+  assert.equal(
+    buildAgentResumeCommand('antigravity', 'agy', '8e31e789-b449-4b5e-9143-85ae158fe6f5'),
+    "agy --dangerously-skip-permissions --conversation '8e31e789-b449-4b5e-9143-85ae158fe6f5'",
+  );
+  assert.throws(
+    () => buildAgentLaunchCommand('antigravity', 'agy', undefined, undefined, { copilotMode: 'plan' }),
+    /Planner mode is currently supported for Claude and Codex only/,
+  );
 }
 
 async function testSudoCodeSessionCapture(): Promise<void> {

@@ -117,6 +117,9 @@ export const CODEX_HOOK_REVIEW_PROMPT_PATTERN = /Hooks need review|hook needs re
 /** Gemini asks before loading project-local settings/hooks from a new worktree. */
 export const GEMINI_TRUST_PROMPT_PATTERN = /Do you trust the files in this folder\?|Trust folder/i;
 
+/** Antigravity (agy) asks before reading/editing files in a new workspace. */
+export const ANTIGRAVITY_TRUST_PROMPT_PATTERN = /Do you trust the contents of this project\?|Yes, I trust this folder/i;
+
 /** Sudo Code asks for explicit confirmation when launched from a broad directory. */
 export const SUDOCODE_BROAD_DIRECTORY_PROMPT_PATTERN = /Continue anyway\?\s+\[y\/N\]:/i;
 
@@ -128,7 +131,7 @@ const PLAN_UNSAFE_FLAGS = [
   '--skip-trust',
 ];
 
-const AGENT_DEFINITION_ORDER: AgentType[] = ['claude', 'codex', 'gemini', 'sudocode', 'custom'];
+const AGENT_DEFINITION_ORDER: AgentType[] = ['claude', 'codex', 'gemini', 'antigravity', 'sudocode', 'custom'];
 
 export const GLOBAL_READY_PROMPT_HANDLERS: AgentPromptHandler[] = [
   {
@@ -397,6 +400,55 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
       readyDelayMs: 15000,
       captureDelayMs: 2000,
     },
+  },
+  antigravity: {
+    id: 'antigravity',
+    label: 'Antigravity',
+    defaultCommand: 'agy',
+    yoloFlags: '--dangerously-skip-permissions',
+    supportsPlanMode: false,
+    supportsCompletionNotification: true,
+    launch: {
+      buildCommand: (context) => buildAgentBaseCommand(
+        BUILT_IN_AGENT_DEFINITIONS.antigravity,
+        context.agentCommand,
+        context,
+      ),
+    },
+    resume: {
+      buildPlan: (context) => {
+        if (isPlanCopilot(context)) {
+          throw new Error(getUnsupportedCopilotModeMessage('antigravity', 'plan'));
+        }
+        return {
+          strategy: 'command',
+          command: appendCommandArgs(
+            buildAgentBaseCommand(BUILT_IN_AGENT_DEFINITIONS.antigravity, context.agentCommand, context),
+            `--conversation ${shellQuoteForDisplay(context.sessionId, context.shellTarget)}`,
+          ),
+        };
+      },
+    },
+    ready: {
+      // agy's status bar shows "? for shortcuts" only at the idle prompt;
+      // while it is busy the bar reads "esc to cancel" instead.
+      pattern: /\?\s+for\s+shortcuts/,
+      fallbackDelayMs: CLAUDE_READY_DELAY_MS,
+      timeoutMs: AGENT_READY_TIMEOUT_MS,
+      pollIntervalMs: AGENT_READY_POLL_INTERVAL_MS,
+      promptHandlers: [
+        {
+          id: 'antigravity-trust-folder',
+          pattern: ANTIGRAVITY_TRUST_PROMPT_PATTERN,
+          once: true,
+          blocksReadiness: true,
+          handle: () => ({ kind: 'sendKeys', keys: '' }),
+        },
+      ],
+    },
+    // No slash command surfaces the conversation ID, so we cannot capture a
+    // sessionId at startup. Resume still works via --conversation, and the
+    // transcript path resolves from sessionId in src/core/path.ts.
   },
   sudocode: {
     id: 'sudocode',
