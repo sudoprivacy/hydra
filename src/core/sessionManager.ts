@@ -994,6 +994,14 @@ export class SessionManager {
           state.updatedAt = new Date().toISOString();
         }
       });
+
+      // agy stores completion hooks in a single global file; removing the
+      // worker means its named entry there is dead weight that fires (as a
+      // no-op) on every Stop turn of every other agy run. Strip it now.
+      if (archivedWorker?.agent === 'antigravity' || worker?.agent === 'antigravity') {
+        this.removeAntigravityHook(sessionName);
+      }
+
       logger.info('session.delete', 'Deleted worker session', {
         ...context,
         phase: 'complete',
@@ -2228,6 +2236,11 @@ export class SessionManager {
     if (preAssignedSessionId) {
       // Claude (or resume): sessionId already known — just wait for TUI readiness
       await this.waitForAgentReady(sessionName, agentType);
+    } else if (agentType === 'antigravity') {
+      // Antigravity has no slash command that prints the conversation id, so
+      // there is nothing to capture — but we still must wait for the TUI to
+      // become ready (and handle the trust prompt) before the task is sent.
+      await this.waitForAgentReady(sessionName, agentType);
     } else {
       // Codex/Gemini/Sudo Code: capture sessionId via slash command or startup banner
       const session = await this.captureAgentSessionInfo(sessionName, agentType, workdir, launchStartedAt);
@@ -2574,6 +2587,23 @@ export class SessionManager {
     };
 
     fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+  }
+
+  private removeAntigravityHook(sessionName: string): void {
+    const hooksPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
+    if (!fs.existsSync(hooksPath)) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const config: any = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
+      if (!config || typeof config !== 'object') return;
+      const hookName = `hydra-notify-${sessionName}`;
+      if (Object.prototype.hasOwnProperty.call(config, hookName)) {
+        delete config[hookName];
+        fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+      }
+    } catch {
+      // Best-effort cleanup; leave a stale (harmless) entry rather than corrupt the file.
+    }
   }
 
   private withCodexCompletionHookOverrides(
