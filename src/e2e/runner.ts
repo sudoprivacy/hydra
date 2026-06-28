@@ -135,7 +135,11 @@ async function sleep(ms: number): Promise<void> {
 
 async function detectAgent(preferredAgent?: string): Promise<string> {
   if (preferredAgent) {
-    const command = preferredAgent === 'sudocode' ? 'scode' : preferredAgent;
+    const command = preferredAgent === 'sudocode'
+      ? 'scode'
+      : preferredAgent === 'antigravity'
+        ? 'agy'
+        : preferredAgent;
     try {
       await exec(`which ${command}`);
       return preferredAgent;
@@ -148,6 +152,7 @@ async function detectAgent(preferredAgent?: string): Promise<string> {
     { type: 'claude', command: 'claude' },
     { type: 'codex', command: 'codex' },
     { type: 'gemini', command: 'gemini' },
+    { type: 'antigravity', command: 'agy' },
     { type: 'sudocode', command: 'scode' },
   ]) {
     try {
@@ -158,7 +163,7 @@ async function detectAgent(preferredAgent?: string): Promise<string> {
     }
   }
 
-  throw new Error('No agent CLI found. Install one of: claude, codex, gemini, scode');
+  throw new Error('No agent CLI found. Install one of: claude, codex, gemini, agy, scode');
 }
 
 async function checkPrerequisites(): Promise<void> {

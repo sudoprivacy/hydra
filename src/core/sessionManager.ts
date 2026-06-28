@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
@@ -2298,7 +2299,7 @@ export class SessionManager {
           : this.buildNotifyScript(info);
         fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
 
-        hookCommand = this.buildNotifyHookCommand(scriptPath, agentType);
+        hookCommand = this.buildNotifyHookCommand(scriptPath, agentType, worktreePath);
       }
 
       // 2. Merge the completion hook into the agent's config
@@ -2348,6 +2349,15 @@ export class SessionManager {
                 }],
               },
             );
+          }
+          break;
+        case 'antigravity':
+          if (hookCommand) {
+            // agy's hooks live in a single global file ~/.gemini/config/hooks.json
+            // keyed by hook name. We register a unique-per-worker name so other
+            // hydra workers' hooks don't collide, and the command itself filters
+            // by workspace path so only the originating worker fires.
+            this.mergeAntigravityHook(info.sessionName, hookCommand);
           }
           break;
         // custom: no known hook system — skip
@@ -2454,7 +2464,7 @@ export class SessionManager {
     fs.writeFileSync(configTomlPath, nextContent, 'utf-8');
   }
 
-  private buildNotifyHookCommand(scriptPath: string, agentType: string): string {
+  private buildNotifyHookCommand(scriptPath: string, agentType: string, worktreePath?: string): string {
     if (process.platform === 'win32') {
       return this.buildNotifyHookCommandPowerShell(scriptPath, agentType);
     }
@@ -2468,6 +2478,22 @@ export class SessionManager {
         // Gemini hooks expect JSON on stdout. The notification remains
         // best-effort, and the hook command reports a successful no-op payload.
         return `${command} >/dev/null; printf '{}'`;
+      case 'antigravity': {
+        // agy hooks live in one global file shared across every agy process,
+        // so the command must filter by workspace to avoid notifying siblings.
+        // The Stop hook receives a JSON payload on stdin whose workspacePaths
+        // array contains the active workspace; pattern-matching on the quoted
+        // workdir string is sufficient because the path appears verbatim.
+        if (!worktreePath) {
+          return `${command} >/dev/null; printf '{}'`;
+        }
+        const quotedWorkdir = shellQuote(worktreePath);
+        return [
+          `payload=$(cat 2>/dev/null || true)`,
+          `case "$payload" in *'"'${quotedWorkdir}'"'*) ${command} >/dev/null ;; esac`,
+          `printf '{}'`,
+        ].join('; ');
+      }
       default:
         return command;
     }
@@ -2516,6 +2542,38 @@ export class SessionManager {
       `if ($hydraPath) { & $hydraPath hooks needs-input --agent ${psq(agentType)} --session ${psq(sessionName)} --event ${psq(eventName)} --json *> $null }`,
       'exit 0',
     ].join('; ');
+  }
+
+  /**
+   * agy reads hooks from a single global file at ~/.gemini/config/hooks.json
+   * keyed by hook name. Each entry maps hook event types (Stop, PreToolUse,
+   * etc.) to a list of {type, command, timeout} objects.
+   */
+  private mergeAntigravityHook(sessionName: string, hookCommand: string): void {
+    const hooksPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
+    fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let config: any = {};
+    try {
+      if (fs.existsSync(hooksPath)) {
+        const parsed = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
+        if (parsed && typeof parsed === 'object') {
+          config = parsed;
+        }
+      }
+    } catch { /* start fresh */ }
+
+    const hookName = `hydra-notify-${sessionName}`;
+    config[hookName] = {
+      PreInvocation: null,
+      PostInvocation: null,
+      Stop: [{ type: 'command', command: hookCommand, timeout: 0 }],
+      PreToolUse: null,
+      PostToolUse: null,
+    };
+
+    fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
   }
 
   private withCodexCompletionHookOverrides(

@@ -11,7 +11,7 @@ export function registerTestCommand(program: Command): void {
     .command('test')
     .description('Run Hydra E2E scenario tests inside an isolated environment')
     .option('--filter <pattern>', 'Run only tests matching this substring')
-    .option('--agent <type>', 'Force a specific agent CLI (claude, codex, gemini)')
+    .option('--agent <type>', 'Force a specific agent CLI (claude, codex, gemini, antigravity)')
     .action(async (opts: { filter?: string; agent?: string }) => {
       const globalOpts = program.opts() as OutputOpts;
 

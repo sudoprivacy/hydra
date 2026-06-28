@@ -178,6 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hydra.startCopilotClaude', () => createCopilotWithAgent('claude')),
     vscode.commands.registerCommand('hydra.startCopilotCodex', () => createCopilotWithAgent('codex')),
     vscode.commands.registerCommand('hydra.startCopilotGemini', () => createCopilotWithAgent('gemini')),
+    vscode.commands.registerCommand('hydra.startCopilotAntigravity', () => createCopilotWithAgent('antigravity')),
     vscode.commands.registerCommand('hydra.startCopilotSudoCode', () => createCopilotWithAgent('sudocode')),
     copilotView.onDidChangeSelection(rememberHydraSelection),
     workerView.onDidChangeSelection(rememberHydraSelection),
@@ -485,6 +486,7 @@ async function detectAndSetAgentContext(): Promise<void> {
     vscode.commands.executeCommand('setContext', 'hydra.claudeAvailable', available.includes('claude'));
     vscode.commands.executeCommand('setContext', 'hydra.codexAvailable', available.includes('codex'));
     vscode.commands.executeCommand('setContext', 'hydra.geminiAvailable', available.includes('gemini'));
+    vscode.commands.executeCommand('setContext', 'hydra.antigravityAvailable', available.includes('antigravity'));
     vscode.commands.executeCommand('setContext', 'hydra.sudocodeAvailable', available.includes('sudocode'));
     vscode.commands.executeCommand('setContext', 'hydra.noAgentsAvailable', available.length === 0);
   } catch {
