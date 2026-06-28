@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026062800] - 2026-06-28
+
+### Added
+- Add Antigravity (`agy`) as a first-class agent type for copilots and workers, including ready-state and trust-prompt handling, `--conversation` resume, and per-worker completion-notify hooks isolated by workspace path
+
 ## [0.3.2026062400] - 2026-06-24
 
 ### Added
