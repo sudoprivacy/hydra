@@ -175,6 +175,11 @@ async function main(): Promise<void> {
   }
 
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-terminal-'));
+  // A SHORT tmpdir for the tmux socket (macOS caps Unix socket paths at ~104
+  // chars — the /var/folders HOME above is far too deep). The bridge inherits
+  // TMUX_TMPDIR, so its tmux calls resolve the SAME isolated socket; teardown
+  // rms this dir, so no stray socket files accumulate across runs.
+  const tmuxTmp = fs.mkdtempSync('/tmp/hydra-m3-');
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
   process.env.HYDRA_HOME = path.join(tempHome, '.hydra');
@@ -182,6 +187,7 @@ async function main(): Promise<void> {
   // Route the bridge's tmux calls (getTmuxSocketArgs reads this) to our isolated
   // server, so it attaches to the SAME throwaway server we create below.
   process.env.HYDRA_TMUX_SOCKET = SOCKET;
+  process.env.TMUX_TMPDIR = tmuxTmp;
   delete process.env.HYDRA_CONFIG_PATH;
 
   // Throwaway target session on the isolated socket.
@@ -190,6 +196,7 @@ async function main(): Promise<void> {
     console.error(`terminalSmoke: could not create tmux session: ${created.stderr?.trim()}`);
     tmux(['kill-server']);
     fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(tmuxTmp, { recursive: true, force: true });
     process.exit(1);
   }
 
@@ -274,6 +281,7 @@ async function main(): Promise<void> {
     tmux(['kill-session', '-t', SESSION]);
     tmux(['kill-server']);
     fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(tmuxTmp, { recursive: true, force: true });
   }
 
   process.exit(failures === 0 ? 0 : 1);
