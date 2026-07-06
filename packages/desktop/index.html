@@ -9,8 +9,10 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:"
     />
+    <!-- xterm.js styles, bundled by esbuild from @xterm/xterm/css/xterm.css. -->
+    <link rel="stylesheet" href="./out/renderer.css" />
     <title>Hydra</title>
     <style>
       :root {
@@ -70,6 +72,51 @@
       }
       .hydra-empty {
         opacity: 0.7;
+      }
+      /* Terminal view — self-contained height so it fills the content area
+         without altering the shared .hydra-content layout (2.5rem = its
+         top+bottom padding). */
+      .hydra-terminal {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        height: calc(100vh - 2.5rem);
+      }
+      .hydra-terminal__header {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+      .hydra-terminal__header h1 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+      .hydra-terminal__session {
+        opacity: 0.8;
+      }
+      .hydra-terminal__status {
+        margin-left: auto;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.85;
+      }
+      .hydra-terminal__status--connected {
+        color: #2e7d32;
+      }
+      .hydra-terminal__status--connecting {
+        color: #b8860b;
+      }
+      .hydra-terminal__status--exited {
+        color: #c0392b;
+      }
+      .hydra-terminal__surface {
+        flex: 1;
+        min-height: 0;
+        background: #1e1e1e;
+        padding: 0.5rem;
+        border-radius: 6px;
+        overflow: hidden;
       }
     </style>
   </head>
