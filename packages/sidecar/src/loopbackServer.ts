@@ -7,8 +7,8 @@
 //
 //   POST /v1/rpc          → appService.request(op, payload)   (control plane)
 //   WS   /v1/stream       → appService.stream(topic, payload) (events / notifs)
+//   WS   /v1/terminal     → TerminalBridge (node-pty ⇄ tmux attach)   (M3)
 //   GET  /v1/health       → { status: 'ok' }                  (liveness)
-//   */   /v1/terminal     → 501 "not implemented (M3)"         (node-pty is M3)
 //
 // Security posture (FINAL §Security), enforced from day one:
 //   • bind 127.0.0.1 only — never a LAN interface, no LAN-listen flag
@@ -31,6 +31,8 @@ import {
   type RpcRequestBody,
   type StreamFrame,
 } from '@hydra/transport-loopback/wire';
+
+import { TerminalBridge } from './terminalBridge';
 
 const DEFAULT_HOST = '127.0.0.1';
 const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
@@ -93,24 +95,30 @@ export function createLoopbackServer(
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  // One bridge per server owns the interactive-owner registry (one owner per
+  // worker); each `/v1/terminal` socket is handed to `bridge.handle`.
+  const terminalBridge = new TerminalBridge();
 
   server.on('upgrade', (req, socket, head) => {
     const url = parseUrl(req);
-    if (url.pathname === LOOPBACK_ROUTES.terminal) {
-      rejectUpgrade(socket, 501, 'openTerminal (node-pty ⇄ tmux bridge) is milestone M3');
+    if (url.pathname !== LOOPBACK_ROUTES.stream && url.pathname !== LOOPBACK_ROUTES.terminal) {
+      rejectUpgrade(socket, 404, `no ws route for ${url.pathname}`);
       return;
     }
-    if (url.pathname !== LOOPBACK_ROUTES.stream) {
-      rejectUpgrade(socket, 404, `no stream route for ${url.pathname}`);
-      return;
-    }
+    // Auth (bearer token + local origin) runs BEFORE the upgrade completes, so
+    // the high-privilege terminal endpoint is never unauthenticated (FINAL
+    // §Security: "no unauthenticated terminal endpoint").
     const denial = authorize(req, url, token);
     if (denial) {
       rejectUpgrade(socket, denial.status, denial.message);
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleStream(ws, url);
+      if (url.pathname === LOOPBACK_ROUTES.terminal) {
+        terminalBridge.handle(ws, url);
+      } else {
+        void handleStream(ws, url);
+      }
     });
   });
 
@@ -163,9 +171,8 @@ export function createLoopbackServer(
     }
 
     if (url.pathname === LOOPBACK_ROUTES.terminal) {
-      respond(501, {
-        error: { message: 'openTerminal (node-pty ⇄ tmux bridge) is milestone M3 (not implemented)' },
-      });
+      // The terminal is a WebSocket endpoint; a plain HTTP hit is a client bug.
+      respond(426, { error: { message: 'terminal requires a WebSocket upgrade' } });
       return;
     }
 
