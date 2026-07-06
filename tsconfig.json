@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
+    { "path": "packages/protocol" },
+    { "path": "packages/sidecar" },
     { "path": "packages/cli" },
     { "path": "packages/extension" }
   ]
