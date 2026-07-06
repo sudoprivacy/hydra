@@ -51,8 +51,6 @@ export function WorkerTerminal(): JSX.Element {
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(surface);
-    safeFit();
 
     let channel: TerminalChannel | null = null;
     let dataSub: Disposable | null = null;
@@ -124,12 +122,25 @@ export function WorkerTerminal(): JSX.Element {
       term.focus();
     };
 
-    // Refit whenever the surface changes size (window resize, panel layout, …);
-    // term.onResize then propagates the new geometry to the channel.
-    const observer = new ResizeObserver(() => safeFit());
-    observer.observe(surface);
+    // Defer open + fit + attach until the surface actually has a non-zero size.
+    // Opening/writing xterm into a 0×0 flex child leaves its render service
+    // without dimensions and throws an async, UNCAUGHT "reading 'dimensions'" on
+    // the first render. ResizeObserver fires once layout gives the surface a real
+    // size; it also drives refits on later window/panel resizes.
+    let started = false;
+    const start = (): void => {
+      if (disposed || started || surface.clientWidth === 0 || surface.clientHeight === 0) {
+        return;
+      }
+      started = true;
+      term.open(surface);
+      safeFit();
+      connect();
+    };
 
-    connect();
+    const observer = new ResizeObserver(() => (started ? safeFit() : start()));
+    observer.observe(surface);
+    start();
 
     return () => {
       disposed = true;

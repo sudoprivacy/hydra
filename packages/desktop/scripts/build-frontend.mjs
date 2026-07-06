@@ -9,6 +9,12 @@ import * as path from 'node:path';
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Ship a PRODUCTION React bundle by default. Dev mode + <StrictMode> double-
+// invokes effects, which races xterm's async render against the terminal
+// effect's cleanup-dispose and throws an uncaught "reading 'dimensions'".
+// Set NODE_ENV=development explicitly for a dev build.
+const mode = process.env.NODE_ENV === 'development' ? 'development' : 'production';
+
 await build({
   entryPoints: [path.join(packageDir, 'src', 'renderer', 'index.tsx')],
   outfile: path.join(packageDir, 'out', 'renderer.js'),
@@ -19,7 +25,8 @@ await build({
   jsx: 'automatic',
   sourcemap: 'linked',
   // React reads process.env.NODE_ENV; provide it for the browser bundle.
-  define: { 'process.env.NODE_ENV': '"development"' },
+  define: { 'process.env.NODE_ENV': JSON.stringify(mode) },
+  minify: mode === 'production',
   logLevel: 'info',
 });
 
