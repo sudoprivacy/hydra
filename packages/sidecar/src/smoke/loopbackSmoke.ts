@@ -22,7 +22,7 @@ import * as path from 'node:path';
 
 import { createHydraControlClient } from '@hydra/protocol';
 import type { HydraControlClient, HydraEvent } from '@hydra/protocol';
-import { LoopbackHttpWsTransport, NotImplementedError } from '@hydra/transport-loopback';
+import { LoopbackHttpWsTransport } from '@hydra/transport-loopback';
 import { FakeBackend } from './fakeBackend';
 
 interface RawResponse {
@@ -166,12 +166,16 @@ async function main(): Promise<void> {
     assert.equal(event.session, session, 'streamed event carries the created session');
     assert.ok(Number.isInteger(event.seq) && event.seq > 0, 'streamed event carries a seq cursor');
 
-    // ── openTerminal is shaped but deferred to M3 ──
-    assert.throws(
-      () => client.attachTerminal({ session, mode: 'interactive' }),
-      (error: unknown) => error instanceof NotImplementedError && /M3/.test((error as Error).message),
-      'attachTerminal throws NotImplemented (node-pty bridge is M3)',
-    );
+    // ── openTerminal now returns a live channel (node-pty ⇄ tmux is M3) ──
+    // The full node-pty bridge is exercised against a real tmux session in
+    // smoke:terminal; here we just assert the transport hands back a well-formed
+    // TerminalChannel (no NotImplemented throw) and can be torn down cleanly.
+    const channel = client.attachTerminal({ session, mode: 'mirror' });
+    assert.equal(channel.session, session, 'channel carries the session');
+    assert.equal(channel.mode, 'mirror', 'channel carries the requested mode');
+    assert.equal(typeof channel.write, 'function', 'channel exposes write');
+    assert.equal(typeof channel.resize, 'function', 'channel exposes resize');
+    channel.close();
 
     // ── auth is ENFORCED (FINAL security posture) ──
     const rpcUrl = `${server.url}/v1/rpc`;

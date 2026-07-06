@@ -4,7 +4,7 @@
 // HTTP/WS loopback:
 //   • request      — POST /v1/rpc          (global `fetch`)
 //   • stream       — WS  /v1/stream        (global `WebSocket`)
-//   • openTerminal — throws NotImplemented (node-pty bridge is M3)
+//   • openTerminal — WS  /v1/terminal      (global `WebSocket`, node-pty ⇄ tmux)
 //
 // It uses ONLY global `fetch` + `WebSocket`, both present in Node ≥ 22 and in
 // the Electron/Chromium renderer, so the exact same class runs headless in the
@@ -13,7 +13,7 @@
 // carry the token (Authorization header for HTTP, `?token=` for the WS
 // handshake, which cannot set headers in a browser).
 
-import type { AuthContext, TerminalAttachInput, TerminalChannel } from '@hydra/protocol';
+import type { AuthContext, Disposable, TerminalAttachInput, TerminalChannel } from '@hydra/protocol';
 import type { HydraTransport } from '@hydra/protocol';
 import {
   BEARER_PREFIX,
@@ -23,6 +23,8 @@ import {
   type RpcErrorBody,
   type RpcSuccessBody,
   type StreamFrame,
+  type TerminalClientFrame,
+  type TerminalControlFrame,
 } from './wire';
 
 // Local readyState constants — portable across the browser `WebSocket` and
@@ -35,14 +37,6 @@ export interface LoopbackTransportOptions {
   url: string;
   /** Per-launch bearer token minted by the parent process. */
   token: string;
-}
-
-/** Thrown by `openTerminal` until the node-pty ⇄ tmux bridge lands in M3. */
-export class NotImplementedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NotImplemented';
-  }
 }
 
 export class LoopbackHttpWsTransport implements HydraTransport {
@@ -80,12 +74,16 @@ export class LoopbackHttpWsTransport implements HydraTransport {
     return this.openStream<TReq, TEvt>(topic, payload, auth?.token ?? this.token);
   }
 
-  openTerminal(input: TerminalAttachInput): TerminalChannel {
-    // Matches HydraAppService.openTerminal: the shape is fixed in @hydra/protocol
-    // but the node-pty ⇄ tmux bridge is milestone M3. Throw synchronously so the
-    // client never opens a socket it cannot use.
-    throw new NotImplementedError(
-      `attachTerminal (node-pty ⇄ tmux bridge) is implemented in milestone M3; requested session "${input.session}"`,
+  openTerminal(input: TerminalAttachInput, auth?: AuthContext): TerminalChannel {
+    // A duplex `TerminalChannel` over a `/v1/terminal` WebSocket. The sidecar
+    // spawns node-pty ⇄ `tmux attach` on the other end (interactive owner) or a
+    // read-only capture-pane mirror. Framing (see wire.ts): binary frames are
+    // terminal output, text frames are JSON control.
+    const token = input.auth?.token ?? auth?.token ?? this.token;
+    return new LoopbackTerminalChannel(
+      this.buildTerminalUrl(input, token),
+      input.session,
+      input.mode ?? 'interactive',
     );
   }
 
@@ -179,6 +177,21 @@ export class LoopbackHttpWsTransport implements HydraTransport {
     return url.toString();
   }
 
+  private buildTerminalUrl(input: TerminalAttachInput, token: string): string {
+    const url = new URL(`${this.baseUrl}${LOOPBACK_ROUTES.terminal}`);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.searchParams.set(WIRE_PARAMS.session, input.session);
+    url.searchParams.set(WIRE_PARAMS.mode, input.mode ?? 'interactive');
+    if (input.cols !== undefined) {
+      url.searchParams.set(WIRE_PARAMS.cols, String(input.cols));
+    }
+    if (input.rows !== undefined) {
+      url.searchParams.set(WIRE_PARAMS.rows, String(input.rows));
+    }
+    url.searchParams.set(WIRE_PARAMS.token, token);
+    return url.toString();
+  }
+
   private waitForOpen(socket: WebSocket, topic: string): Promise<void> {
     if (socket.readyState === WS_OPEN) {
       return Promise.resolve();
@@ -202,4 +215,155 @@ export class LoopbackHttpWsTransport implements HydraTransport {
 /** Build a `HydraTransport` bound to a sidecar loopback URL + token. */
 export function createLoopbackTransport(options: LoopbackTransportOptions): HydraTransport {
   return new LoopbackHttpWsTransport(options);
+}
+
+// ── terminal channel ──
+
+/**
+ * A `TerminalChannel` backed by one `/v1/terminal` WebSocket. It decodes the
+ * wire framing (binary → output, text → control), buffers outbound frames until
+ * the socket opens, and delivers a single `onExit`:
+ *   • a numeric `code` — the server sent a clean `exit` control frame (the PTY /
+ *     session genuinely ended; the caller should NOT reconnect).
+ *   • `code === null` — the socket dropped with no `exit` frame (a transient
+ *     network drop or error; the caller may reconnect with backoff).
+ *
+ * Reconnect itself is a caller concern (the renderer owns the backoff loop and
+ * opens a fresh channel): tmux repaints the current screen on every reattach, so
+ * a new channel is all that's needed — no client-side replay.
+ */
+class LoopbackTerminalChannel implements TerminalChannel {
+  readonly session: string;
+  readonly mode: TerminalChannel['mode'];
+
+  private readonly socket: WebSocket;
+  private readonly decoder = new TextDecoder();
+  private readonly dataListeners = new Set<(chunk: string) => void>();
+  private readonly exitListeners = new Set<(info: { code: number | null }) => void>();
+  /** Frames requested before the socket opened; flushed on 'open'. */
+  private readonly outbound: TerminalClientFrame[] = [];
+  /** Output that arrived before any onData listener registered. */
+  private pendingData = '';
+  /** Numeric code from a clean `exit` control frame, else null (transient). */
+  private exitCode: number | null = null;
+  private exited = false;
+  private closedByCaller = false;
+
+  constructor(url: string, session: string, mode: TerminalChannel['mode']) {
+    this.session = session;
+    this.mode = mode;
+
+    const socket = new WebSocket(url);
+    this.socket = socket;
+    // Terminal output rides binary frames — take it as ArrayBuffer so we can
+    // decode synchronously (a Blob would force an async read).
+    socket.binaryType = 'arraybuffer';
+
+    socket.addEventListener('open', () => {
+      for (const frame of this.outbound.splice(0)) {
+        socket.send(JSON.stringify(frame));
+      }
+    });
+    socket.addEventListener('message', (event) => this.onMessage(event.data));
+    socket.addEventListener('close', () => this.finish());
+    socket.addEventListener('error', () => this.finish());
+  }
+
+  onData(listener: (chunk: string) => void): Disposable {
+    this.dataListeners.add(listener);
+    if (this.pendingData) {
+      const buffered = this.pendingData;
+      this.pendingData = '';
+      listener(buffered);
+    }
+    return { dispose: () => this.dataListeners.delete(listener) };
+  }
+
+  onExit(listener: (info: { code: number | null }) => void): Disposable {
+    if (this.exited) {
+      listener({ code: this.exitCode });
+      return { dispose: () => undefined };
+    }
+    this.exitListeners.add(listener);
+    return { dispose: () => this.exitListeners.delete(listener) };
+  }
+
+  write(data: string): void {
+    this.send({ t: 'i', d: data });
+  }
+
+  resize(cols: number, rows: number): void {
+    this.send({ t: 'r', c: cols, r: rows });
+  }
+
+  close(): void {
+    this.closedByCaller = true;
+    if (this.socket.readyState < WS_CLOSING) {
+      this.socket.close();
+    }
+  }
+
+  private send(frame: TerminalClientFrame): void {
+    if (this.socket.readyState === WS_OPEN) {
+      this.socket.send(JSON.stringify(frame));
+    } else if (!this.closedByCaller && this.socket.readyState < WS_CLOSING) {
+      // Not open yet (still CONNECTING): queue and flush on 'open'.
+      this.outbound.push(frame);
+    }
+  }
+
+  private onMessage(data: unknown): void {
+    if (typeof data === 'string') {
+      this.onControl(data);
+      return;
+    }
+    // Binary frame → terminal output. `data` is an ArrayBuffer (binaryType).
+    if (!(data instanceof ArrayBuffer)) {
+      return;
+    }
+    // stream:true so a multibyte char split across frames still decodes cleanly.
+    const text = this.decoder.decode(new Uint8Array(data), { stream: true });
+    if (text) {
+      this.emitData(text);
+    }
+  }
+
+  private onControl(raw: string): void {
+    let frame: TerminalControlFrame;
+    try {
+      frame = JSON.parse(raw) as TerminalControlFrame;
+    } catch {
+      return; // ignore malformed control frames
+    }
+    if (frame.t === 'exit') {
+      // A clean end — remember the code so the eventual 'close' reports it as a
+      // real exit (not a transient drop).
+      this.exitCode = frame.code ?? 0;
+    } else if (frame.t === 'error') {
+      // Surface the server's reason as terminal output; 'close' follows.
+      this.emitData(`\r\n\x1b[31m[hydra] ${frame.message}\x1b[0m\r\n`);
+    }
+    // 'hello' is informational; the caller learns readiness from live output.
+  }
+
+  private emitData(chunk: string): void {
+    if (this.dataListeners.size === 0) {
+      this.pendingData += chunk;
+      return;
+    }
+    for (const listener of this.dataListeners) {
+      listener(chunk);
+    }
+  }
+
+  private finish(): void {
+    if (this.exited) {
+      return;
+    }
+    this.exited = true;
+    for (const listener of this.exitListeners) {
+      listener({ code: this.exitCode });
+    }
+    this.exitListeners.clear();
+  }
 }

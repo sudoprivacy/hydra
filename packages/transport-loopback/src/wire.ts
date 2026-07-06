@@ -10,9 +10,11 @@
 // @hydra/sidecar imports the constants from `@hydra/transport-loopback/wire` —
 // a lightweight, engine-free edge that pulls in NO client runtime.
 //
-// It contains only string constants and interfaces — zero http/ws/engine
-// imports — so both this package and @hydra/protocol stay free of transport
-// *code*.
+// It contains only string constants and interfaces (plus one type-only import
+// of `TerminalMode`) — zero http/ws/engine imports — so both this package and
+// @hydra/protocol stay free of transport *code*.
+
+import type { TerminalMode } from '@hydra/protocol';
 
 /** Route paths, all namespaced under `/v1`. */
 export const LOOPBACK_ROUTES = {
@@ -22,11 +24,11 @@ export const LOOPBACK_ROUTES = {
   rpc: '/v1/rpc',
   /** WS upgrade — the `stream` subscription (`?topic=&payload=&token=`). */
   stream: '/v1/stream',
-  /** WS/GET — the terminal attach. M3 stub: responds 501. */
+  /** WS upgrade — the terminal attach (`?session=&mode=&cols=&rows=&token=`). */
   terminal: '/v1/terminal',
 } as const;
 
-/** Query-param names used on the stream / (future) terminal handshake URLs. */
+/** Query-param names used on the stream + terminal handshake URLs. */
 export const WIRE_PARAMS = {
   topic: 'topic',
   /** URL-encoded JSON of the stream payload (e.g. `{ after }`). */
@@ -37,6 +39,15 @@ export const WIRE_PARAMS = {
    * per-launch token make a query-string token acceptable here (FINAL §Security).
    */
   token: 'token',
+  // ── terminal handshake (/v1/terminal) ──
+  /** Target tmux session name to attach. */
+  session: 'session',
+  /** `interactive` (owns the tmux grid) or `mirror` (read-only observer). */
+  mode: 'mode',
+  /** Initial terminal width, in columns. */
+  cols: 'cols',
+  /** Initial terminal height, in rows. */
+  rows: 'rows',
 } as const;
 
 /** HTTP `Authorization` scheme. */
@@ -79,3 +90,31 @@ export interface StreamFrame<T = unknown> {
   error?: { message: string };
   done?: true;
 }
+
+// ── terminal wire (/v1/terminal) ──────────────────────────────────────────
+//
+// The framing is role-asymmetric AND channel-typed so control and data can
+// never collide (the spike's leading-`{` heuristic is replaced by real frame
+// typing):
+//   • client → server : JSON **text** frames — `TerminalClientFrame`
+//     (input keystrokes + resize).
+//   • server → client : raw PTY output as **binary** frames (UTF-8 bytes, fed
+//     straight to xterm), plus one-line JSON **text** control frames
+//     (`TerminalControlFrame`: hello / exit / error). A text frame is always
+//     control; a binary frame is always terminal output.
+
+/** Client → server terminal frames (JSON text). */
+export type TerminalClientFrame =
+  /** Keystrokes typed into the interactive owner (ignored for mirrors). */
+  | { t: 'i'; d: string }
+  /** Resize request: `c` columns × `r` rows. */
+  | { t: 'r'; c: number; r: number };
+
+/** Server → client terminal control frames (JSON text). */
+export type TerminalControlFrame =
+  /** Sent once on attach, after the PTY (or mirror) is live. */
+  | { t: 'hello'; session: string; mode: TerminalMode; cols: number; rows: number }
+  /** The PTY exited / the session ended — a *clean* end (do not reconnect). */
+  | { t: 'exit'; code: number | null; signal?: number | null }
+  /** A hard error (bad session, spawn failure) — the socket then closes. */
+  | { t: 'error'; message: string };
