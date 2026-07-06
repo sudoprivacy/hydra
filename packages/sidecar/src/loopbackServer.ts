@@ -289,14 +289,22 @@ function authorize(req: IncomingMessage, url: URL, expectedToken: string): Denia
 }
 
 function isLocalOrigin(origin: string | undefined): boolean {
-  // Absent (a Node client / same-origin navigation) or `null` (a file:// or
-  // sandboxed renderer) is allowed — the bearer token is the real gate. Any
-  // concrete cross-origin host must be loopback.
+  // Absent (a Node client / same-origin navigation) or `null` is allowed — the
+  // bearer token is the real gate. Any concrete cross-origin host must be
+  // loopback.
   if (!origin || origin === 'null') {
     return true;
   }
   try {
-    return LOCAL_HOSTNAMES.has(new URL(origin).hostname);
+    const parsed = new URL(origin);
+    // The Electron renderer loads from file://, and Chromium sends the WS
+    // handshake with `Origin: file://` (empty host) — NOT the string `null` that
+    // fetch sends. Allow any file: origin, else the terminal + event-stream
+    // WebSockets get 403'd while RPC (Origin: null) slips through.
+    if (parsed.protocol === 'file:') {
+      return true;
+    }
+    return LOCAL_HOSTNAMES.has(parsed.hostname);
   } catch {
     return false;
   }
