@@ -50,6 +50,19 @@ for (const doc of ['README.md', 'LICENSE.md', 'CHANGELOG.md']) {
 // package.json without scripts/devDependencies: nothing for vsce to run, and the
 // dependency list resolves entirely against the local (complete) node_modules.
 const pkg = JSON.parse(fs.readFileSync(path.join(extDir, 'package.json'), 'utf8'));
+
+// Fail closed: the packaged .vsix version must equal the single source of truth
+// (root package.json). Guards against shipping a version that disagrees with the
+// tag produced by auto-tag-release.yml. Run `npm run sync-version` to reconcile.
+const rootVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+if (pkg.version !== rootVersion) {
+  console.error(
+    `package-vsix: version mismatch — extension is ${pkg.version}, root is ${rootVersion}. ` +
+    'Run `npm run sync-version` before packaging.',
+  );
+  process.exit(1);
+}
+
 delete pkg.scripts;
 delete pkg.devDependencies;
 fs.writeFileSync(path.join(stageExt, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
