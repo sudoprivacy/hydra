@@ -17,6 +17,7 @@
     "desktop:build": "npm run build -w @hydra/desktop",
     "desktop:start": "npm run start -w @hydra/desktop",
     "desktop:boot-check": "npm run boot-check -w @hydra/desktop",
+    "smoke:desktop-diff": "node packages/desktop/out/smoke/diffModelSmoke.js",
     "verify:shell-quoting": "node scripts/verify-shell-quoting.js",
     "e2e:isolated": "node scripts/e2e-isolated-runner.js",
     "e2e:isolated:shell": "node scripts/e2e-isolated-runner.js --shell --keep",

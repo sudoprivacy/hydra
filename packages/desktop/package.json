@@ -11,7 +11,8 @@
     "build:renderer": "node scripts/build-frontend.mjs",
     "build": "npm run build:main && npm run typecheck:renderer && npm run build:renderer",
     "start": "electron out/main.js",
-    "boot-check": "node out/bootCheck.js"
+    "boot-check": "node out/bootCheck.js",
+    "smoke:diff": "node out/smoke/diffModelSmoke.js"
   },
   "dependencies": {
     "@hydra/protocol": "*",
@@ -22,6 +23,7 @@
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
+    "@hydra/core": "*",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "electron": "^33.0.0",
