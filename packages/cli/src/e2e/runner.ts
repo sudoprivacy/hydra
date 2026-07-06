@@ -2,11 +2,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, spawnSync } from 'child_process';
-import { exec as execCore } from '../core/exec';
-import { shellQuote } from '../core/shell';
-import { TmuxBackendCore } from '../core/tmux';
-import { SessionManager } from '../core/sessionManager';
-import { getHydraArchiveFile, getHydraSessionsFile } from '../core/path';
+import { exec as execCore } from '@hydra/core/exec';
+import { shellQuote } from '@hydra/core/shell';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { SessionManager } from '@hydra/core/sessionManager';
+import { getHydraArchiveFile, getHydraSessionsFile } from '@hydra/core/path';
 
 export interface TestResult {
   name: string;

@@ -162,8 +162,8 @@ async function main(): Promise<void> {
   }));
 
   // Dynamic import so HOME override is in effect when modules resolve paths
-  const { SessionManager } = await import('../core/sessionManager');
-  const { TmuxBackendCore } = await import('../core/tmux');
+  const { SessionManager } = await import('@hydra/core/sessionManager');
+  const { TmuxBackendCore } = await import('@hydra/core/tmux');
 
   const backend = new TmuxBackendCore();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

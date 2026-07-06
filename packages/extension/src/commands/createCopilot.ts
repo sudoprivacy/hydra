@@ -2,9 +2,9 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import { getActiveBackend, MultiplexerBackend } from '../utils/multiplexer';
 import { getAgentCommand, pickAgentType, AgentType, AGENT_LABELS } from '../utils/agentConfig';
-import { CopilotMode } from '../core/types';
-import { TmuxBackendCore } from '../core/tmux';
-import { SessionManager } from '../core/sessionManager';
+import { CopilotMode } from '@hydra/core/types';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { SessionManager } from '@hydra/core/sessionManager';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { showHydraCommandError } from './logs';
 

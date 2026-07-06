@@ -1,15 +1,15 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { SessionManager } from '../core/sessionManager';
-import { getRepoRootFromPath } from '../core/git';
-import { TmuxBackendCore } from '../core/tmux';
+import { SessionManager } from '@hydra/core/sessionManager';
+import { getRepoRootFromPath } from '@hydra/core/git';
+import { TmuxBackendCore } from '@hydra/core/tmux';
 import { validateBranchName, localBranchExists, getRepoRoot } from '../utils/git';
 import { pickAgentType } from '../utils/agentConfig';
 import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
-import { detectIdentity, getWorkerCreationBlockedMessage } from '../core/sessionIdentity';
+import { detectIdentity, getWorkerCreationBlockedMessage } from '@hydra/core/sessionIdentity';
 import { showHydraCommandError } from './logs';
-import { awaitWorkerPostCreateOrPublishError } from '../core/workerAttentionNotifications';
+import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
 
 function getBaseBranchOverride(): string | undefined {
   const hydraOverride = vscode.workspace.getConfiguration('hydra').get<string>('baseBranch');

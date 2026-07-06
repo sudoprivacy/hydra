@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { outputError, outputResult, type OutputOpts } from '../output';
-import { classifyWorkerNeedsInputEvent } from '../../core/workerNeedsInputClassifier';
-import { publishWorkerNeedsInputNotification } from '../../core/workerAttentionNotifications';
-import { readWorkerSessionByName } from '../../core/sessionStateReader';
+import { classifyWorkerNeedsInputEvent } from '@hydra/core/workerNeedsInputClassifier';
+import { publishWorkerNeedsInputNotification } from '@hydra/core/workerAttentionNotifications';
+import { readWorkerSessionByName } from '@hydra/core/sessionStateReader';
 
 interface NeedsInputHookOptions {
   agent?: string;

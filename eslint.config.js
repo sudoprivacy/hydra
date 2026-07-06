@@ -6,7 +6,7 @@ const globals = require("globals");
 module.exports = [
     js.configs.recommended,
     {
-        files: ["src/**/*.ts"],
+        files: ["packages/*/src/**/*.ts"],
         languageOptions: {
             parser: typescriptParser,
             parserOptions: {
@@ -28,6 +28,6 @@ module.exports = [
         },
     },
     {
-        ignores: ["out/", "dist/", "**/*.d.ts"],
+        ignores: ["**/out/", "**/dist/", "**/*.d.ts"],
     }
 ];

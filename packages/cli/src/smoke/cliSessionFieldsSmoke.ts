@@ -17,7 +17,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { encodeClaudeWorkdir } from '../core/path';
+import { encodeClaudeWorkdir } from '@hydra/core/path';
 
 const cliPath = path.resolve(__dirname, '..', 'cli', 'index.js');
 

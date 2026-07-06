@@ -1,8 +1,8 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveAgentSessionFile } from '../core/path';
-import { isDirectoryWorker, type CopilotInfo, type WorkerInfo } from '../core/sessionManager';
+import { resolveAgentSessionFile } from '@hydra/core/path';
+import { isDirectoryWorker, type CopilotInfo, type WorkerInfo } from '@hydra/core/sessionManager';
 import { exportCodexNativeSession } from './codexAdapter';
 import { collectRepoInfo } from './repo';
 import type { HydraShareBundle, ShareHydraSessionInfo } from './types';

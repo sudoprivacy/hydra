@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..');
-const providerPath = path.join(repoRoot, 'src', 'providers', 'tmuxSessionProvider.ts');
+const providerPath = path.join(repoRoot, 'packages', 'extension', 'src', 'providers', 'tmuxSessionProvider.ts');
 const providerSource = fs.readFileSync(providerPath, 'utf8');
 
 assert.equal(

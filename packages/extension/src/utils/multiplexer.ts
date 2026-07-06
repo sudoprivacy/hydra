@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { createBackendFromConfig } from './backendFactory';
-import { MultiplexerBackendCore, HydraRole } from '../core/types';
+import { MultiplexerBackendCore, HydraRole } from '@hydra/core/types';
 
 // ─── Re-export shared types from core ─────────────────────
-export { MultiplexerType, HydraRole, MultiplexerSession, SessionStatusInfo } from '../core/types';
+export { MultiplexerType, HydraRole, MultiplexerSession, SessionStatusInfo } from '@hydra/core/types';
 
 // ─── Backend Interface (extends core with vscode-specific attachSession) ──
 

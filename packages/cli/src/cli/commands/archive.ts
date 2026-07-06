@@ -1,8 +1,8 @@
 import { Command } from 'commander';
-import { TmuxBackendCore } from '../../core/tmux';
-import { isDirectoryWorker, SessionManager, ArchivedSessionInfo, type WorkerInfo } from '../../core/sessionManager';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { isDirectoryWorker, SessionManager, ArchivedSessionInfo, type WorkerInfo } from '@hydra/core/sessionManager';
 import { outputResult, outputError, type OutputOpts } from '../output';
-import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
+import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
 
 function formatEntry(entry: ArchivedSessionInfo): Record<string, unknown> {
   const worker = entry.type === 'worker' ? entry.data as WorkerInfo : null;

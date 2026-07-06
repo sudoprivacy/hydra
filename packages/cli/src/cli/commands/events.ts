@@ -4,7 +4,7 @@ import {
   readCursorFile,
   writeCursorFile,
   type HydraEvent,
-} from '../../core/events';
+} from '@hydra/core/events';
 import { outputError, outputResult, type OutputOpts } from '../output';
 
 interface EventsOptions {

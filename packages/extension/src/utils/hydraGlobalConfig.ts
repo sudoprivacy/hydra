@@ -1,1 +1,1 @@
-export { ensureHydraGlobalConfig } from '../core/hydraGlobalConfig';
+export { ensureHydraGlobalConfig } from '@hydra/core/hydraGlobalConfig';

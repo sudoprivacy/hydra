@@ -20,7 +20,7 @@ import { terminalSmartPaste, pasteImageForce, cleanupTempImages } from './comman
 import { createWorktreeFromBranch } from './commands/createWorktreeFromBranch';
 import { createCopilot, createCopilotWithAgent, createPlanCopilot } from './commands/createCopilot';
 import { ensureHydraGlobalConfig } from './utils/hydraGlobalConfig';
-import { installCli, ensurePathInShellProfile } from './core/cliInstaller';
+import { installCli, ensurePathInShellProfile } from '@hydra/core/cliInstaller';
 import {
   detectAvailableAgents,
   seedDefaultAgentToHydraConfig,
@@ -28,16 +28,16 @@ import {
   syncDefaultAgentToHydraConfig,
 } from './utils/agentConfig';
 import { HYDRA_PREFIX_COPILOT, HYDRA_PREFIX_WORKER, buildHydraTerminalName } from './utils/hydraEditorGroup';
-import { lookupWorkerId } from './core/sessionManager';
-import { getHydraSessionsFile } from './core/path';
-import { NotificationStateService } from './core/notificationStateService';
+import { lookupWorkerId } from '@hydra/core/sessionManager';
+import { getHydraSessionsFile } from '@hydra/core/path';
+import { NotificationStateService } from '@hydra/core/notificationStateService';
 import { HydraSessionKind, hasHydraItemIdentity, listHydraSessionChoices } from './commands/treeItemResolver';
 import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogCommands } from './commands/logs';
 import { exec } from './utils/exec';
 import { NotificationDecorationProvider } from './providers/notificationDecorationProvider';
 import { createNotificationTreeCommands } from './commands/notificationTreeCommands';
-import { WorkerNeedsInputMonitor } from './core/workerNeedsInputMonitor';
-import { WorkerRuntimeStateService } from './core/workerRuntimeStateService';
+import { WorkerNeedsInputMonitor } from '@hydra/core/workerNeedsInputMonitor';
+import { WorkerRuntimeStateService } from '@hydra/core/workerRuntimeStateService';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
 const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;

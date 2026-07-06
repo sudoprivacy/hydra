@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { resolve } from 'path';
 import { type OutputOpts, outputResult } from '../output';
-import { SessionManager, type WorkerInfo } from '../../core/sessionManager';
-import { TmuxBackendCore } from '../../core/tmux';
+import { SessionManager, type WorkerInfo } from '@hydra/core/sessionManager';
+import { TmuxBackendCore } from '@hydra/core/tmux';
 
 interface WhoamiResult {
   role: 'worker';

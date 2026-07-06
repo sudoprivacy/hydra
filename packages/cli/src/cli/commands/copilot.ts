@@ -1,14 +1,14 @@
 import * as path from 'path';
 import { Command } from 'commander';
-import { TmuxBackendCore } from '../../core/tmux';
-import { SessionManager } from '../../core/sessionManager';
-import { toCanonicalPath, resolveAgentSessionFile } from '../../core/path';
-import { resolveRepoInput } from '../../core/repoRegistry';
-import { fetchOriginRequired } from '../../core/git';
-import type { CopilotMode } from '../../core/types';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { SessionManager } from '@hydra/core/sessionManager';
+import { toCanonicalPath, resolveAgentSessionFile } from '@hydra/core/path';
+import { resolveRepoInput } from '@hydra/core/repoRegistry';
+import { fetchOriginRequired } from '@hydra/core/git';
+import type { CopilotMode } from '@hydra/core/types';
 import { outputResult, outputError, type OutputOpts } from '../output';
-import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
-import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
+import { getTelemetry, normalizeAgentForTelemetry } from '@hydra/core/telemetry';
+import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 
 function expandPath(p: string): string {
   const canonical = toCanonicalPath(p);

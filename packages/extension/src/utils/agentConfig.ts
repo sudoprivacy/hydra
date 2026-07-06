@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import { AgentType } from '../core/types';
-import { AGENT_LABELS, extractAgentCommandExecutable } from '../core/agentConfig';
-import { resolveCommandPath } from '../core/exec';
+import { AgentType } from '@hydra/core/types';
+import { AGENT_LABELS, extractAgentCommandExecutable } from '@hydra/core/agentConfig';
+import { resolveCommandPath } from '@hydra/core/exec';
 import {
   hasHydraGlobalDefaultAgent,
   setHydraGlobalDefaultAgent,
   updateHydraGlobalAgentCommands,
-} from '../core/hydraGlobalConfig';
+} from '@hydra/core/hydraGlobalConfig';
 
-export type { AgentType } from '../core/types';
-export { AGENT_LABELS, DEFAULT_AGENT_COMMANDS, buildAgentLaunchCommand } from '../core/agentConfig';
+export type { AgentType } from '@hydra/core/types';
+export { AGENT_LABELS, DEFAULT_AGENT_COMMANDS, buildAgentLaunchCommand } from '@hydra/core/agentConfig';
 
 export async function detectAvailableAgents(): Promise<AgentType[]> {
   const agents: AgentType[] = ['claude', 'codex', 'gemini', 'sudocode'];

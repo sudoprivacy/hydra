@@ -1,17 +1,17 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { TmuxBackendCore } from '../../core/tmux';
-import { isDirectoryWorker, SessionManager, type WorkerInfo } from '../../core/sessionManager';
-import { getRepoRootFromPath, localBranchExists } from '../../core/git';
-import { expandAndResolvePath, resolveAgentSessionFile } from '../../core/path';
-import { resolveRepoInput } from '../../core/repoRegistry';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { isDirectoryWorker, SessionManager, type WorkerInfo } from '@hydra/core/sessionManager';
+import { getRepoRootFromPath, localBranchExists } from '@hydra/core/git';
+import { expandAndResolvePath, resolveAgentSessionFile } from '@hydra/core/path';
+import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMessage } from '../identity';
-import { getTelemetry, normalizeAgentForTelemetry } from '../../core/telemetry';
-import { agentSupportsCompletionNotification } from '../../core/agentConfig';
-import { getHydraGlobalDefaultAgent } from '../../core/hydraGlobalConfig';
-import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
-import { setWorkerRuntimeState } from '../../core/workerRuntimeState';
+import { getTelemetry, normalizeAgentForTelemetry } from '@hydra/core/telemetry';
+import { agentSupportsCompletionNotification } from '@hydra/core/agentConfig';
+import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
+import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
+import { setWorkerRuntimeState } from '@hydra/core/workerRuntimeState';
 
 type WorkerCreateCliOpts = {
   repo?: string;

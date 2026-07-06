@@ -3,7 +3,7 @@ import { execFile as execFileCallback } from 'child_process';
 import * as fs from 'fs/promises';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
-import { resolveCommandPath } from '../core/exec';
+import { resolveCommandPath } from '@hydra/core/exec';
 import { HYDRA_PREFIX_REVIEW, findReviewGroupColumn, focusEditorGroup } from '../utils/hydraEditorGroup';
 
 const execFile = promisify(execFileCallback);

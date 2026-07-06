@@ -1,4 +1,4 @@
-import { logger } from '../core/logger';
+import { logger } from '@hydra/core/logger';
 
 // Exit codes following agent-friendly CLI conventions
 export const EXIT_OK = 0;

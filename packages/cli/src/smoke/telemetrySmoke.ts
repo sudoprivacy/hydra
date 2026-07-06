@@ -99,7 +99,7 @@ function captureStderr(): { restore: () => string } {
 
 async function testPostHogBackendIsDefault(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     const backend = telemetry.selectBackend();
@@ -112,7 +112,7 @@ async function testPostHogBackendIsDefault(): Promise<void> {
 
 async function testPostHogBackendCaptureShape(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     interface CapturedCall {
@@ -182,7 +182,7 @@ async function testPostHogBackendEnvOverrides(): Promise<void> {
     process.env.HYDRA_POSTHOG_API_KEY = 'phc_env_key';
     process.env.HYDRA_POSTHOG_HOST = 'https://eu.i.posthog.example';
     try {
-      const telemetry = await import('../core/telemetry');
+      const telemetry = await import('@hydra/core/telemetry');
       telemetry.resetTelemetryForTesting();
 
       let factoryArgs: { apiKey: string; host: string } | null = null;
@@ -229,7 +229,7 @@ async function testPostHogBackendEnvOverrides(): Promise<void> {
 async function testConsoleBackendWritesJsonLine(): Promise<void> {
   await withTempHome(async hydraHome => {
     process.env.HYDRA_TELEMETRY_DEBUG = '1';
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     const backend = telemetry.selectBackend();
@@ -289,7 +289,7 @@ async function testOptOutForcesNullBackend(): Promise<void> {
     await withTempHome(async hydraHome => {
       process.env.HYDRA_TELEMETRY = value;
       process.env.HYDRA_TELEMETRY_DEBUG = '1';
-      const telemetry = await import('../core/telemetry');
+      const telemetry = await import('@hydra/core/telemetry');
       telemetry.resetTelemetryForTesting();
 
       const backend = telemetry.selectBackend();
@@ -318,7 +318,7 @@ async function testOptOutForcesNullBackend(): Promise<void> {
 
 async function testAnonymousIdLifecycle(): Promise<void> {
   await withTempHome(async hydraHome => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     const idPath = path.join(hydraHome, 'anonymous-id');
@@ -344,7 +344,7 @@ async function testAnonymousIdLifecycle(): Promise<void> {
 
 async function testInvalidUuidIsReplaced(): Promise<void> {
   await withTempHome(async hydraHome => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     fs.mkdirSync(hydraHome, { recursive: true });
@@ -365,7 +365,7 @@ async function testNonV4UuidIsReplaced(): Promise<void> {
   // are derived from a name+namespace and would not be anonymous.
   const v3Uuid = '00000000-0000-3000-8000-000000000000';
   await withTempHome(async hydraHome => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     fs.mkdirSync(hydraHome, { recursive: true });
@@ -382,7 +382,7 @@ async function testNonV4UuidIsReplaced(): Promise<void> {
 
 async function testEexistRace(): Promise<void> {
   await withTempHome(async hydraHome => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     fs.mkdirSync(hydraHome, { recursive: true });
@@ -425,7 +425,7 @@ async function testEexistRace(): Promise<void> {
 
 async function testFirstRunNoticeFiresOnce(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     const recorder = captureStderr();
@@ -448,10 +448,10 @@ async function testFirstRunNoticeFiresOnce(): Promise<void> {
 
 async function testCaptureIsNonBlocking(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
-    const slowBackend: import('../core/telemetry').TelemetryBackend = {
+    const slowBackend: import('@hydra/core/telemetry').TelemetryBackend = {
       capture(_event, _properties, signal): Promise<void> {
         return new Promise<void>(resolve => {
           // Refed timer — abort signal MUST clear it so the test process
@@ -499,7 +499,7 @@ async function testCaptureIsNonBlocking(): Promise<void> {
       `flush() must respect timeoutMs (elapsed=${flushElapsedMs.toFixed(2)}ms)`,
     );
 
-    const throwingBackend: import('../core/telemetry').TelemetryBackend = {
+    const throwingBackend: import('@hydra/core/telemetry').TelemetryBackend = {
       capture(): never {
         throw new Error('intentional backend explosion');
       },
@@ -516,11 +516,11 @@ async function testCaptureIsNonBlocking(): Promise<void> {
 
 async function testFlushAwaitsInflight(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     let observed = 0;
-    const recordingBackend: import('../core/telemetry').TelemetryBackend = {
+    const recordingBackend: import('@hydra/core/telemetry').TelemetryBackend = {
       async capture(): Promise<void> {
         await new Promise<void>(resolve => {
           setTimeout(() => {
@@ -552,13 +552,13 @@ async function testFlushAwaitsInflight(): Promise<void> {
 
 async function testFlushTimeoutOnHungBackend(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     // Backend whose flush() never resolves — simulates a stuck HTTP
     // request after the SDK's request timeout fails to fire. The
     // TelemetryClient.flush() race must still return within ~1500ms.
-    const hungBackend: import('../core/telemetry').TelemetryBackend = {
+    const hungBackend: import('@hydra/core/telemetry').TelemetryBackend = {
       capture(): void {
         /* no-op */
       },
@@ -597,7 +597,7 @@ async function testFlushTimeoutOnHungBackend(): Promise<void> {
 }
 
 async function testNormalizeAgent(): Promise<void> {
-  const telemetry = await import('../core/telemetry');
+  const telemetry = await import('@hydra/core/telemetry');
   for (const known of ['claude', 'codex', 'gemini']) {
     assert.equal(telemetry.normalizeAgentForTelemetry(known), known);
   }
@@ -614,7 +614,7 @@ async function testHydraDirIsTightened(): Promise<void> {
     return; // POSIX-only: Windows does not honor numeric modes
   }
   await withTempHome(async hydraHome => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     fs.mkdirSync(hydraHome, { recursive: true, mode: 0o755 });
@@ -637,7 +637,7 @@ async function testPeekTelemetryStaysNullWithoutCapture(): Promise<void> {
     // The lazy-instantiation contract is independent of backend; pin to
     // NullBackend so this test never attempts a real PostHog network call.
     process.env.HYDRA_TELEMETRY = '0';
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
 
     assert.equal(telemetry.peekTelemetry(), null, 'fresh process should have no client');
@@ -704,7 +704,7 @@ async function testHelpDoesNotCreateAnonymousId(): Promise<void> {
 
 async function testGeneratedUuidIsRfcShape(): Promise<void> {
   await withTempHome(async () => {
-    const telemetry = await import('../core/telemetry');
+    const telemetry = await import('@hydra/core/telemetry');
     telemetry.resetTelemetryForTesting();
     const id = telemetry.getAnonymousId();
     assert.match(id, UUID_RE, 'generated id must be a UUID');

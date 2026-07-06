@@ -9,7 +9,7 @@ import {
   TmuxSessionItem,
   WorktreeItem,
 } from '../providers/tmuxSessionProvider';
-import { getHydraSessionsFile } from '../core/path';
+import { getHydraSessionsFile } from '@hydra/core/path';
 import { getActiveBackend } from '../utils/multiplexer';
 
 interface SessionStateEntry {

@@ -5,13 +5,13 @@ import {
   InactiveWorktreeItem,
   TmuxItem,
 } from '../providers/tmuxSessionProvider';
-import { SessionManager } from '../core/sessionManager';
-import { TmuxBackendCore } from '../core/tmux';
+import { SessionManager } from '@hydra/core/sessionManager';
+import { TmuxBackendCore } from '@hydra/core/tmux';
 import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { sendCopilotOnboarding } from './createCopilot';
 import { openChangesReview } from './reviewChanges';
-import { awaitWorkerPostCreateOrPublishError } from '../core/workerAttentionNotifications';
+import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
 
 export async function openHydraSessionByItem(item: TmuxItem): Promise<void> {
   const backend = getActiveBackend();

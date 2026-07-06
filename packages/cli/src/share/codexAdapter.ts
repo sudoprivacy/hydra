@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveAgentSessionFile } from '../core/path';
+import { resolveAgentSessionFile } from '@hydra/core/path';
 import type { CodexNativeSessionPayload, NativeSessionFile } from './types';
 
 export interface ImportCodexSessionOptions {

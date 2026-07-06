@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { MultiplexerBackend } from '../utils/multiplexer';
-import { logger } from '../core/logger';
+import { logger } from '@hydra/core/logger';
 
 const INSTALL_PSMUX_ACTION = 'Install psmux';
 const COPY_COMMAND_ACTION = 'Copy command';

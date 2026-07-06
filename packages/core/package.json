@@ -1,0 +1,27 @@
+{
+  "name": "@hydra/core",
+  "version": "0.3.2026062200",
+  "description": "Hydra headless engine — worker lifecycle, tmux/git, sessions, telemetry (vscode-free)",
+  "license": "MIT",
+  "private": true,
+  "main": "./out/index.js",
+  "types": "./out/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./out/index.d.ts",
+      "default": "./out/index.js"
+    },
+    "./*": {
+      "types": "./out/core/*.d.ts",
+      "default": "./out/core/*.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "compile": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.2",
+    "posthog-node": "^5.33.3"
+  }
+}

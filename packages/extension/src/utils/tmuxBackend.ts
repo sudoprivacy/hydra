@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { exec, execPowerShell } from './exec';
-import { TmuxBackendCore, buildStoredTmuxEnvScrubCommand } from '../core/tmux';
-import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
-import { getIsolatedEnv, getTmuxCommand } from '../core/path';
+import { TmuxBackendCore, buildStoredTmuxEnvScrubCommand } from '@hydra/core/tmux';
+import { buildTmuxMouseScrollbackCommand } from '@hydra/core/tmuxAttach';
+import { getIsolatedEnv, getTmuxCommand } from '@hydra/core/path';
 import { MultiplexerBackend, HydraRole } from './multiplexer';
 import { getHydraEditorLocation, buildHydraTerminalName, getHydraTerminalIcon, getHydraTerminalColor, HYDRA_PREFIX_WORKER } from './hydraEditorGroup';
-import { lookupWorkerId } from '../core/sessionManager';
+import { lookupWorkerId } from '@hydra/core/sessionManager';
 
 function getShortName(sessionName: string): string {
   const parts = sessionName.split('_');

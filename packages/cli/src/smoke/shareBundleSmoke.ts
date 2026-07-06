@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { WorkerInfo } from '../core/sessionManager';
+import type { WorkerInfo } from '@hydra/core/sessionManager';
 import { createShareBundle, readBundle, writeBundle } from '../share/bundle';
 import { importCodexNativeSession } from '../share/codexAdapter';
 import { buildDefaultPublicBaseUrl, buildPublicHttpBundleUrl, downloadHttpBundle } from '../share/gcpStorage';

@@ -10,14 +10,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { EXIT_OK } from '../cli/output';
-import { resolveSessionNotificationClearScope } from '../commands/notificationScope';
-import { EventLog } from '../core/events';
-import { NotificationStateService } from '../core/notificationStateService';
+import { resolveSessionNotificationClearScope } from '@hydra/core/notificationScope';
+import { EventLog } from '@hydra/core/events';
+import { NotificationStateService } from '@hydra/core/notificationStateService';
 import {
   NotificationStore,
   type NotificationListFilters,
   type NotificationListResult,
-} from '../core/notifications';
+} from '@hydra/core/notifications';
 
 const cliPath = path.resolve(__dirname, '..', 'cli', 'index.js');
 

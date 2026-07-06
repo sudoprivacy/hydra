@@ -1,14 +1,14 @@
 import { Command } from 'commander';
-import { TmuxBackendCore } from '../../core/tmux';
-import { isDirectoryWorker, isRepoWorker, SessionManager } from '../../core/sessionManager';
-import { resolveAgentSessionFile } from '../../core/path';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { isDirectoryWorker, isRepoWorker, SessionManager } from '@hydra/core/sessionManager';
+import { resolveAgentSessionFile } from '@hydra/core/path';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import {
   WorkerRuntimeStateStore,
   type WorkerRuntimeSnapshot,
   type WorkerRuntimeSignalOrigin,
   type WorkerRuntimeState,
-} from '../../core/workerRuntimeState';
+} from '@hydra/core/workerRuntimeState';
 
 interface WorkerRuntimeCliSnapshot {
   state: WorkerRuntimeState;

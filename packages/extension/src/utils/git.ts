@@ -1,17 +1,17 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as coreGit from '../core/git';
-import { exec } from '../core/exec';
-import { toCanonicalPath } from '../core/path';
+import * as coreGit from '@hydra/core/git';
+import { exec } from '@hydra/core/exec';
+import { toCanonicalPath } from '@hydra/core/path';
 import { getActiveBackend } from './multiplexer';
 
 // Re-export pure functions directly
-export { isGitRepo, findGitReposInDir, validateBranchName, localBranchExists } from '../core/git';
-export { getRepoName, getManagedWorktreesRoot, getManagedRepoWorktreesDir, getRepoIdentifier } from '../core/git';
-export { getInRepoWorktreesDir, resolveRepoRootFromWorktreePath } from '../core/git';
-export { ensureWorktreesDir, listWorktrees, getWorktreeBranch } from '../core/git';
-export { addWorktree, removeWorktree } from '../core/git';
-export type { Worktree } from '../core/types';
+export { isGitRepo, findGitReposInDir, validateBranchName, localBranchExists } from '@hydra/core/git';
+export { getRepoName, getManagedWorktreesRoot, getManagedRepoWorktreesDir, getRepoIdentifier } from '@hydra/core/git';
+export { getInRepoWorktreesDir, resolveRepoRootFromWorktreePath } from '@hydra/core/git';
+export { ensureWorktreesDir, listWorktrees, getWorktreeBranch } from '@hydra/core/git';
+export { addWorktree, removeWorktree } from '@hydra/core/git';
+export type { Worktree } from '@hydra/core/types';
 
 // Wrappers that inject the active backend
 export function branchNameToSlug(branchName: string): string {

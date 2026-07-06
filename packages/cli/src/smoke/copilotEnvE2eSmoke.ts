@@ -13,7 +13,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { HYDRA_COPILOT_SESSION_ENV } from '../core/env';
+import { HYDRA_COPILOT_SESSION_ENV } from '@hydra/core/env';
 
 interface WorkerEntry {
   sessionName?: string;

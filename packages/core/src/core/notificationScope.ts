@@ -1,4 +1,4 @@
-import type { NotificationListFilters } from '../core/notifications';
+import type { NotificationListFilters } from './notifications';
 
 export interface SessionNotificationScopeItem {
   contextValue?: string;

@@ -1,1 +1,1 @@
-export { exec, execPowerShell, ExecOptions } from '../core/exec';
+export { exec, execPowerShell, ExecOptions } from '@hydra/core/exec';

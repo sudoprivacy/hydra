@@ -9,15 +9,15 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NotificationStore } from '../core/notifications';
-import type { WorkerInfo } from '../core/sessionManager';
+import { NotificationStore } from '@hydra/core/notifications';
+import type { WorkerInfo } from '@hydra/core/sessionManager';
 import {
   classifyCodexNeedsInputTranscriptText,
   classifyWorkerNeedsInputEvent,
   type WorkerNeedsInputSignal,
-} from '../core/workerNeedsInputClassifier';
-import { publishWorkerNeedsInputNotification } from '../core/workerAttentionNotifications';
-import { WorkerNeedsInputMonitor } from '../core/workerNeedsInputMonitor';
+} from '@hydra/core/workerNeedsInputClassifier';
+import { publishWorkerNeedsInputNotification } from '@hydra/core/workerAttentionNotifications';
+import { WorkerNeedsInputMonitor } from '@hydra/core/workerNeedsInputMonitor';
 
 interface TestContext {
   tmp: string;

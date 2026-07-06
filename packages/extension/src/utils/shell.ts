@@ -1,1 +1,1 @@
-export { shellQuote } from '../core/shell';
+export { shellQuote } from '@hydra/core/shell';

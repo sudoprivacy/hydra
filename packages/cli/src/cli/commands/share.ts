@@ -2,19 +2,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Command } from 'commander';
-import { TmuxBackendCore } from '../../core/tmux';
-import { isDirectoryWorker, SessionManager, type CopilotInfo, type WorkerInfo } from '../../core/sessionManager';
+import { TmuxBackendCore } from '@hydra/core/tmux';
+import { isDirectoryWorker, SessionManager, type CopilotInfo, type WorkerInfo } from '@hydra/core/sessionManager';
 import {
   branchNameToSlug,
   ensureWorktreesDir,
   getRepoName,
   getRepoRootFromPath,
   listWorktrees,
-} from '../../core/git';
-import { exec } from '../../core/exec';
-import { shellQuote } from '../../core/shell';
-import { getHydraConfig, resolveAgentSessionFile, toCanonicalPath, writeHydraConfig } from '../../core/path';
-import { resolveRepoInput } from '../../core/repoRegistry';
+} from '@hydra/core/git';
+import { exec } from '@hydra/core/exec';
+import { shellQuote } from '@hydra/core/shell';
+import { getHydraConfig, resolveAgentSessionFile, toCanonicalPath, writeHydraConfig } from '@hydra/core/path';
+import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { createShareBundle, readBundle, writeBundle, type ShareableSession } from '../../share/bundle';
 import {
   buildDefaultPublicBaseUrl,
@@ -32,7 +32,7 @@ import { importCodexNativeSession } from '../../share/codexAdapter';
 import { ensureLocalBranchFromRemote, validateRepoMatch } from '../../share/repo';
 import type { HydraShareBundle, ShareHydraWorkerInfo } from '../../share/types';
 import { outputError, outputResult, type OutputOpts } from '../output';
-import { awaitWorkerPostCreateOrPublishError } from '../../core/workerAttentionNotifications';
+import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
 
 interface CreateShareOpts {
   bucket?: string;

@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import {
   buildSessionNotificationSummary,
   type SessionNotificationSource,
-} from '../core/sessionNotificationSummary';
-import type { NotificationKind } from '../core/notifications';
+} from '@hydra/core/sessionNotificationSummary';
+import type { NotificationKind } from '@hydra/core/notifications';
 
 const NOTIFICATION_DECORATION_SCHEME = 'hydra-notification';
 const NOTIFICATION_DECORATION_AUTHORITY = 'session';

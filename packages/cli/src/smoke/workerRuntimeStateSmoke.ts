@@ -9,19 +9,19 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { EventLog } from '../core/events';
-import { NotificationStore } from '../core/notifications';
-import type { WorkerInfo } from '../core/sessionManager';
+import { EventLog } from '@hydra/core/events';
+import { NotificationStore } from '@hydra/core/notifications';
+import type { WorkerInfo } from '@hydra/core/sessionManager';
 import {
   WorkerRuntimeStateStore,
   type WorkerRuntimeSnapshot,
-} from '../core/workerRuntimeState';
+} from '@hydra/core/workerRuntimeState';
 import {
   classifyCodexRuntimeTranscriptText,
   classifyWorkerNeedsInputEvent,
-} from '../core/workerNeedsInputClassifier';
-import { publishWorkerNeedsInputNotification } from '../core/workerAttentionNotifications';
-import { WorkerNeedsInputMonitor } from '../core/workerNeedsInputMonitor';
+} from '@hydra/core/workerNeedsInputClassifier';
+import { publishWorkerNeedsInputNotification } from '@hydra/core/workerAttentionNotifications';
+import { WorkerNeedsInputMonitor } from '@hydra/core/workerNeedsInputMonitor';
 
 const cliPath = path.resolve(__dirname, '..', 'cli', 'index.js');
 

@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
 import * as path from 'path';
-import { exec, resolveCommandPath } from '../core/exec';
-import { shellQuote } from '../core/shell';
+import { exec, resolveCommandPath } from '@hydra/core/exec';
+import { shellQuote } from '@hydra/core/shell';
 
 export interface GcsLocationOptions {
   bucket: string;

@@ -8,9 +8,9 @@ import {
   logger,
   type LogContext,
   type LogLevel,
-} from '../core/logger';
-import { getHydraConfigPath, getHydraHome, getTmuxCommand } from '../core/path';
-import { getHydraGlobalDefaultAgent } from '../core/hydraGlobalConfig';
+} from '@hydra/core/logger';
+import { getHydraConfigPath, getHydraHome, getTmuxCommand } from '@hydra/core/path';
+import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 
 export const HYDRA_SHOW_LOGS_COMMAND = 'hydra.showLogs';
 export const HYDRA_OPEN_LOGS_FOLDER_COMMAND = 'hydra.openLogsFolder';

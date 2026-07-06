@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { NotificationStateService } from '../core/notificationStateService';
-import { buildSessionNotificationSummary } from '../core/sessionNotificationSummary';
+import { NotificationStateService } from '@hydra/core/notificationStateService';
+import { buildSessionNotificationSummary } from '@hydra/core/sessionNotificationSummary';
 import { TmuxItem } from '../providers/tmuxSessionProvider';
-import { resolveSessionNotificationClearScope } from './notificationScope';
+import { resolveSessionNotificationClearScope } from '@hydra/core/notificationScope';
 import { resolveSessionName } from './treeItemResolver';
 import { openHydraSessionByName, reviewHydraSessionByName } from './openHydraSession';
 

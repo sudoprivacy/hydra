@@ -4,8 +4,8 @@ import {
   setHydraGlobalDefaultAgent,
   unsetHydraGlobalDefaultAgent,
   type HydraDefaultAgentResolution,
-} from '../../core/hydraGlobalConfig';
-import { getHydraConfigPath } from '../../core/path';
+} from '@hydra/core/hydraGlobalConfig';
+import { getHydraConfigPath } from '@hydra/core/path';
 import { outputError, outputResult, type OutputOpts } from '../output';
 
 type ConfigKey = 'default-agent';

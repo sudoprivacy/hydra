@@ -7,7 +7,7 @@ import {
   listRegisteredRepos,
   parseRepoIdentifier,
   removeRepo,
-} from '../../core/repoRegistry';
+} from '@hydra/core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
 
 interface GlobalOpts extends OutputOpts {

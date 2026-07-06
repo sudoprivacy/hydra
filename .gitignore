@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 out/
+packages/*/out/
+*.tsbuildinfo
 *.vsix
 
 # System files

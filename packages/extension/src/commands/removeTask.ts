@@ -9,8 +9,8 @@ import {
   GitStatusItem,
   CopilotItem,
 } from "../providers/tmuxSessionProvider";
-import { isDirectoryWorker, SessionManager } from "../core/sessionManager";
-import { TmuxBackendCore } from "../core/tmux";
+import { isDirectoryWorker, SessionManager } from "@hydra/core/sessionManager";
+import { TmuxBackendCore } from "@hydra/core/tmux";
 import { resolveSessionKind, resolveSessionName } from "./treeItemResolver";
 
 function isMainWorktreeItem(item: TmuxItem): boolean {

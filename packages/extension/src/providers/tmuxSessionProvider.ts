@@ -3,21 +3,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from '../utils/exec';
 import { getRepoRoot, getBaseBranch } from '../utils/git';
-import { getRepoIdentifier } from '../core/git';
+import { getRepoIdentifier } from '@hydra/core/git';
 import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multiplexer';
 import { toCanonicalPath } from '../utils/path';
 import { parseCpuPercentSum } from '../utils/cpuPercent';
-import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '../core/sessionManager';
-import { CopilotMode, Worktree } from '../core/types';
+import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '@hydra/core/sessionManager';
+import { CopilotMode, Worktree } from '@hydra/core/types';
 import {
   buildSessionNotificationSummary,
   type SessionNotificationSource,
   type SessionNotificationSummary,
-} from '../core/sessionNotificationSummary';
-import type { HydraNotification, NotificationKind } from '../core/notifications';
+} from '@hydra/core/sessionNotificationSummary';
+import type { HydraNotification, NotificationKind } from '@hydra/core/notifications';
 import { getNotificationDecorationUri } from './notificationDecorationProvider';
-import type { WorkerRuntimeSnapshot, WorkerRuntimeState } from '../core/workerRuntimeState';
-import type { WorkerRuntimeStateSource } from '../core/workerRuntimeStateService';
+import type { WorkerRuntimeSnapshot, WorkerRuntimeState } from '@hydra/core/workerRuntimeState';
+import type { WorkerRuntimeStateSource } from '@hydra/core/workerRuntimeStateService';
 
 export type Classification = 'attached' | 'alive' | 'idle' | 'stopped' | 'orphan';
 

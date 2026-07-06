@@ -1,1 +1,1 @@
-export { toCanonicalPath } from '../core/path';
+export { toCanonicalPath } from '@hydra/core/path';

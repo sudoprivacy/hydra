@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, constants, accessSync } from 'fs';
 import { join, delimiter } from 'path';
-import { getHydraBinDir, getHydraConfigPath, getHydraHome, getHydraLogFile, getHydraLogsDir } from '../../core/path';
+import { getHydraBinDir, getHydraConfigPath, getHydraHome, getHydraLogFile, getHydraLogsDir } from '@hydra/core/path';
 import { type OutputOpts } from '../output';
 
 interface CheckResult {

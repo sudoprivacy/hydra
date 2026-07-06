@@ -12,11 +12,11 @@ import {
   validateBranchName
 } from '../utils/git';
 import { exec } from '../utils/exec';
-import { shellQuote } from '../core/shell';
+import { shellQuote } from '@hydra/core/shell';
 import { getActiveBackend } from '../utils/multiplexer';
 import { WorktreeItem } from '../providers/tmuxSessionProvider';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
-import { detectIdentity, getWorkerCreationBlockedMessage } from '../core/sessionIdentity';
+import { detectIdentity, getWorkerCreationBlockedMessage } from '@hydra/core/sessionIdentity';
 
 function formatFileStatusCounts(nameStatusOutput: string): string {
   const lines = nameStatusOutput.trim().split('\n').filter(l => l.length > 0);

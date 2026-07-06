@@ -1,12 +1,12 @@
 import { Command, Option } from 'commander';
-import { isHydraEventSource, type HydraEventSource } from '../../core/events';
+import { isHydraEventSource, type HydraEventSource } from '@hydra/core/events';
 import {
   isNotificationKind,
   NotificationStore,
   type NotificationAction,
   type NotificationKind,
   type NotificationListFilters,
-} from '../../core/notifications';
+} from '@hydra/core/notifications';
 import { outputError, outputResult, type OutputOpts } from '../output';
 
 interface NotifyCreateOptions {

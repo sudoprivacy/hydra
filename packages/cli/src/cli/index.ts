@@ -15,9 +15,9 @@ import { registerConfigCommands } from './commands/config';
 import { registerNotifyCommands } from './commands/notify';
 import { registerEventsCommand } from './commands/events';
 import { registerHooksCommands } from './commands/hooks';
-import { peekTelemetry } from '../core/telemetry';
-import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '../core/path';
-import { getHostSummary, logger } from '../core/logger';
+import { peekTelemetry } from '@hydra/core/telemetry';
+import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '@hydra/core/path';
+import { getHostSummary, logger } from '@hydra/core/logger';
 
 const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
 logger.debug('cli.start', 'Hydra CLI started', {

@@ -4,4 +4,4 @@ export {
   detectIdentityBySessionName,
   getWorkerCreationBlockedMessage,
   type HydraIdentity,
-} from '../core/sessionIdentity';
+} from '@hydra/core/sessionIdentity';

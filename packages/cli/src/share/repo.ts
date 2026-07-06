@@ -1,6 +1,6 @@
-import { exec } from '../core/exec';
-import { getRepoName, getRepoRootFromPath, localBranchExists, validateBranchName } from '../core/git';
-import { shellQuote } from '../core/shell';
+import { exec } from '@hydra/core/exec';
+import { getRepoName, getRepoRootFromPath, localBranchExists, validateBranchName } from '@hydra/core/git';
+import { shellQuote } from '@hydra/core/shell';
 import type { ShareRepoInfo } from './types';
 
 function emptyRepoInfo(): ShareRepoInfo {
