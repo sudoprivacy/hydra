@@ -1,0 +1,21 @@
+{
+  "name": "hydra-terminal-bridge-spike",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Spike: tmux <-> WebSocket <-> xterm.js terminal bridge for the Hydra desktop-app migration.",
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "node ./scripts/ensure-pty-helper.js",
+    "start": "node server.js",
+    "smoke": "node smoke-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  }
+}
