@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@hydra/core": "*",
-    "@hydra/protocol": "*"
+    "@hydra/protocol": "*",
+    "@hydra/transport-loopback": "*",
+    "ws": "^8.18.0"
   }
 }
