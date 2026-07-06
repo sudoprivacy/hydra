@@ -296,7 +296,11 @@ function sessionExists(session: string): boolean {
 
 /** process.env minus the VSCODE_ / Electron keys that would poison the pane. */
 function buildPtyEnv(): { [key: string]: string | undefined } {
-  const strip = new Set(getTmuxSanitizedEnvKeys());
+  // Also strip TMUX / TMUX_PANE. If the desktop app was itself launched from
+  // inside a tmux session, that $TMUX would leak into the pty and `tmux
+  // attach-session` would refuse to nest — the user sees a blank, uninteractive
+  // pane with no history. Unsetting them lets the attach connect normally.
+  const strip = new Set([...getTmuxSanitizedEnvKeys(), 'TMUX', 'TMUX_PANE']);
   const env: { [key: string]: string | undefined } = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (!strip.has(key)) {
