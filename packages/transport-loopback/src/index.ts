@@ -34,7 +34,6 @@ export * from './wire';
 export {
   LoopbackHttpWsTransport,
   createLoopbackTransport,
-  NotImplementedError,
   type LoopbackTransportOptions,
 } from './loopbackTransport';
 
