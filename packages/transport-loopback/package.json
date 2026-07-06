@@ -1,7 +1,7 @@
 {
-  "name": "@hydra/sidecar",
+  "name": "@hydra/transport-loopback",
   "version": "0.3.2026062200",
-  "description": "Hydra sidecar — the server side of the seam. HydraAppService imports @hydra/core in-process (loopback HTTP/WS server lands in M1).",
+  "description": "Hydra loopback transport — LoopbackHttpWsTransport (renderer → sidecar over 127.0.0.1 HTTP/WS) + the shared loopback wire vocabulary. Engine-free: depends only on @hydra/protocol types and global fetch/WebSocket.",
   "license": "MIT",
   "private": true,
   "main": "./out/index.js",
@@ -21,9 +21,6 @@
     "compile": "tsc -b tsconfig.json"
   },
   "dependencies": {
-    "@hydra/core": "*",
-    "@hydra/protocol": "*",
-    "@hydra/transport-loopback": "*",
-    "ws": "^8.18.0"
+    "@hydra/protocol": "*"
   }
 }

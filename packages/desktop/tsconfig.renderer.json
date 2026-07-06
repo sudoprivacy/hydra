@@ -1,0 +1,16 @@
+{
+  // Renderer typecheck (esbuild does the bundling). Browser/DOM context + React
+  // JSX, deliberately separate from the Node/Electron `tsconfig.json`.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": "src",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["react", "react-dom"],
+    "jsx": "react-jsx",
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "include": ["src/renderer/**/*", "src/bootstrap.ts"]
+}

@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/protocol" },
+    { "path": "packages/transport-loopback" },
     { "path": "packages/sidecar" },
     { "path": "packages/cli" },
     { "path": "packages/extension" }

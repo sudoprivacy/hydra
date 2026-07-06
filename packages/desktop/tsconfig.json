@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "out",
+    "types": ["node"]
+  },
+  "include": [
+    "src/bootstrap.ts",
+    "src/sidecarLauncher.ts",
+    "src/main.ts",
+    "src/preload.ts",
+    "src/bootCheck.ts"
+  ],
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../transport-loopback" },
+    { "path": "../sidecar" }
+  ]
+}
