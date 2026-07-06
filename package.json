@@ -42,6 +42,7 @@
     "smoke:seam": "node packages/sidecar/out/smoke/seamSmoke.js",
     "smoke:protocol-contract": "node packages/sidecar/out/smoke/protocolContractSmoke.js",
     "smoke:loopback": "node packages/sidecar/out/smoke/loopbackSmoke.js",
+    "smoke:mission-control": "node packages/desktop/scripts/missionControlBoardSmoke.mjs",
     "smoke:events-cli": "node packages/cli/out/smoke/eventsCliSmoke.js",
     "smoke:notify-cli": "node packages/cli/out/smoke/notifyCliSmoke.js",
     "smoke:worker-attention-notification": "node packages/core/out/smoke/workerAttentionNotificationSmoke.js",
