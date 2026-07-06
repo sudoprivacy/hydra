@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Locked down: no remote content. Scripts are the local bundle only; the
+      renderer's data plane connects to the loopback sidecar over http/ws on
+      127.0.0.1 (any port), which is what connect-src allows.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:"
+    />
+    <title>Hydra</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      body {
+        margin: 0;
+      }
+      .hydra-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .hydra-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 190px;
+        padding: 1rem;
+        border-right: 1px solid rgba(128, 128, 128, 0.3);
+      }
+      .hydra-brand {
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+      }
+      .hydra-content {
+        flex: 1;
+        padding: 1.25rem 1.75rem;
+      }
+      .hydra-status--error,
+      .hydra-list__meta {
+        opacity: 0.85;
+      }
+      .hydra-status--error {
+        color: #c0392b;
+      }
+      .hydra-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .hydra-list__item {
+        display: flex;
+        gap: 0.75rem;
+        align-items: baseline;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+      }
+      .hydra-list__title {
+        font-weight: 600;
+      }
+      .hydra-list__actions {
+        margin-left: auto;
+        display: flex;
+        gap: 0.75rem;
+      }
+      .hydra-empty {
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./out/renderer.js"></script>
+  </body>
+</html>
