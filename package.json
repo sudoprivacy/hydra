@@ -14,6 +14,9 @@
     "lint": "eslint packages/*/src --ext ts",
     "package:vsix": "node scripts/package-vsix.js",
     "sync-version": "node scripts/sync-version.js",
+    "desktop:build": "npm run build -w @hydra/desktop",
+    "desktop:start": "npm run start -w @hydra/desktop",
+    "desktop:boot-check": "npm run boot-check -w @hydra/desktop",
     "verify:shell-quoting": "node scripts/verify-shell-quoting.js",
     "e2e:isolated": "node scripts/e2e-isolated-runner.js",
     "e2e:isolated:shell": "node scripts/e2e-isolated-runner.js --shell --keep",
@@ -38,6 +41,7 @@
     "smoke:cli-contract": "node packages/cli/out/smoke/cliContractSmoke.js",
     "smoke:seam": "node packages/sidecar/out/smoke/seamSmoke.js",
     "smoke:protocol-contract": "node packages/sidecar/out/smoke/protocolContractSmoke.js",
+    "smoke:loopback": "node packages/sidecar/out/smoke/loopbackSmoke.js",
     "smoke:events-cli": "node packages/cli/out/smoke/eventsCliSmoke.js",
     "smoke:notify-cli": "node packages/cli/out/smoke/notifyCliSmoke.js",
     "smoke:worker-attention-notification": "node packages/core/out/smoke/workerAttentionNotificationSmoke.js",
@@ -61,11 +65,12 @@
     "smoke:enhanced-path-windows": "node packages/core/out/smoke/enhancedPathWindowsSmoke.js",
     "smoke:send-message": "node packages/core/out/smoke/sendMessageSmoke.js",
     "smoke:windows-cli-wrapper": "node packages/core/out/smoke/windowsCliWrapperSmoke.js",
-    "test": "npm run compile && npm run smoke:version-consistency && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:seam && npm run smoke:protocol-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows"
+    "test": "npm run compile && npm run smoke:version-consistency && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:seam && npm run smoke:protocol-contract && npm run smoke:loopback && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",
