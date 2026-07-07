@@ -177,6 +177,20 @@ async function main(): Promise<void> {
       'subscribeEvents streams the worker.created event for the created worker',
     );
 
+    // ── git status: the porcelain change count backing the sidebar `U:N` ──
+    const { countChangedFiles } = await import('../gitStatus');
+    assert.equal(
+      await countChangedFiles(repoRoot),
+      2,
+      'countChangedFiles counts the modified + untracked files in the worktree',
+    );
+    // The verb reports CODE workers only — the directory (task) worker is skipped.
+    const gitStatuses = await client.listGitStatus();
+    assert.ok(
+      !(diffSession in gitStatuses),
+      'listGitStatus skips task/directory workers (code workers only)',
+    );
+
     // ── openTerminal: shape wired, bridge deferred to M3 ──
     assert.throws(
       () => client.attachTerminal({ session: diffSession, mode: 'interactive' }),

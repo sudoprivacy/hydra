@@ -27,6 +27,7 @@ import type {
   FileSnapshotInput,
   GetDiffPayload,
   GetLogsPayload,
+  GitStatusMap,
   HydraEvent,
   HydraSessionList,
   LogResult,
@@ -72,6 +73,9 @@ export interface HydraControlClient {
   // Diff review (path-constrained)
   getDiff(session: string): Promise<DiffSummary>;
   getFileSnapshot(input: FileSnapshotInput): Promise<FileSnapshot>;
+
+  // Git change counts for the sidebar (app-internal; code workers only, batched)
+  listGitStatus(): Promise<GitStatusMap>;
 
   // Live push
   subscribeEvents(input?: EventSubscribeInput): AsyncIterable<HydraEvent>;
@@ -144,6 +148,9 @@ export function createHydraControlClient(
 
     getFileSnapshot: (input) =>
       transport.request<FileSnapshotInput, FileSnapshot>(Op.getFileSnapshot, input, auth),
+
+    listGitStatus: () =>
+      transport.request<undefined, GitStatusMap>(Op.getGitStatus, undefined, auth),
 
     subscribeEvents: (input) =>
       transport.stream<EventSubscribeInput, HydraEvent>(Topic.events, input ?? {}, auth),

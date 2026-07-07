@@ -27,6 +27,7 @@
 //  Op.clearNotifications    NotificationStore.clear
 //  Op.getDiff               DiffService.getDiff (workdir from SessionManager)
 //  Op.getFileSnapshot       DiffService.getFileSnapshot (path-constrained)
+//  Op.getGitStatus          SessionManager.sync + git status --porcelain        (sidebar U:N)
 //  Topic.events             EventLog.read (poll — EventBus push is M2)           (events.ts)
 //  Topic.notifications      NotificationStateService.onDidChange
 //  openTerminal             node-pty ⇄ tmux attach (M3 — not yet implemented)
@@ -49,6 +50,8 @@ import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
 
+import { collectCodeWorkerGitStatus } from './gitStatus';
+
 import {
   Op,
   Topic,
@@ -66,6 +69,7 @@ import {
   type FileSnapshotInput,
   type GetDiffPayload,
   type GetLogsPayload,
+  type GitStatusMap,
   type HydraEvent,
   type HydraSessionList,
   type LogResult,
@@ -192,6 +196,8 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.getDiff(payload as GetDiffPayload);
       case Op.getFileSnapshot:
         return this.getFileSnapshot(payload as FileSnapshotInput);
+      case Op.getGitStatus:
+        return this.listGitStatus();
       default:
         throw new Error(`HydraAppService: unknown op "${op}"`);
     }
@@ -508,6 +514,16 @@ export class HydraAppService implements HydraAppServiceApi {
       content: snapshot.content,
       exists: snapshot.exists,
     };
+  }
+
+  /**
+   * SessionManager.sync + `git status --porcelain` per code worker — the change
+   * counts that back the sidebar `U:N`. App-internal (not a CLI verb): batched
+   * into one sync + concurrent git probes, skipping task workers and copilots.
+   */
+  private async listGitStatus(): Promise<GitStatusMap> {
+    const state = await this.sessionManager.sync();
+    return collectCodeWorkerGitStatus(Object.values(state.workers));
   }
 
   // ── streams ──

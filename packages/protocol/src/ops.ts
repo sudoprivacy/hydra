@@ -25,6 +25,9 @@ export const Op = {
   clearNotifications: 'notifications.clear',
   getDiff: 'diff.get',
   getFileSnapshot: 'diff.fileSnapshot',
+  // App-internal — NOT a CLI verb (absent from docs/cli-contract.md). Powers the
+  // sidebar's per-code-worker `git status --porcelain` change count (`U:N`).
+  getGitStatus: 'gitStatus.get',
 } as const;
 
 export type OpName = (typeof Op)[keyof typeof Op];
