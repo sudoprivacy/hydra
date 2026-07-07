@@ -12,6 +12,12 @@ const MIN_WIDTH = 220;
 const MAX_WIDTH = 480;
 const DEFAULT_WIDTH = 300;
 const STORAGE_KEY = 'hydra.sidebarWidth';
+interface DragState {
+  readonly x: number;
+  readonly width: number;
+  readonly pointerId: number;
+  readonly handle: HTMLDivElement;
+}
 
 const clampWidth = (px: number): number => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(px)));
 
@@ -27,7 +33,7 @@ function loadWidth(): number {
 
 export function AppLayout(): JSX.Element {
   const [width, setWidth] = useState(loadWidth);
-  const dragStart = useRef<{ x: number; width: number } | null>(null);
+  const dragStart = useRef<DragState | null>(null);
 
   // Persist width whenever it settles (cheap; the app writes one small number).
   useEffect(() => {
@@ -47,21 +53,39 @@ export function AppLayout(): JSX.Element {
   }, []);
 
   const stopDrag = useCallback(() => {
-    if (!dragStart.current) {
+    const start = dragStart.current;
+    if (!start) {
       return;
     }
     dragStart.current = null;
+    try {
+      if (start.handle.hasPointerCapture(start.pointerId)) {
+        start.handle.releasePointerCapture(start.pointerId);
+      }
+    } catch {
+      // The browser may already have released capture after pointer cancellation.
+    }
     document.body.classList.remove('hydra-resizing');
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', stopDrag);
+    window.removeEventListener('pointercancel', stopDrag);
+    window.removeEventListener('blur', stopDrag);
   }, [onPointerMove]);
 
   const startDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      dragStart.current = { x: event.clientX, width };
+      dragStart.current = {
+        x: event.clientX,
+        width,
+        pointerId: event.pointerId,
+        handle: event.currentTarget,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
       document.body.classList.add('hydra-resizing');
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', stopDrag);
+      window.addEventListener('pointercancel', stopDrag);
+      window.addEventListener('blur', stopDrag);
       event.preventDefault();
     },
     [width, onPointerMove, stopDrag],

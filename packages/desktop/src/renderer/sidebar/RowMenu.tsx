@@ -1,6 +1,7 @@
 // The per-row ⋮ action menu. Opens the same session verbs the Overview tiles use
 // (via the shared session actions) plus tab navigation (Open Terminal / Diff).
-// Diff and Stop are worker-only; Start appears when the session is stopped.
+// Diff and Stop are worker-only; stopped copilots hide Terminal because there is
+// no live tmux session to attach to. Start appears when a session is stopped.
 
 import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
@@ -11,16 +12,19 @@ export function RowMenu({ tile }: { tile: TileModel }): JSX.Element {
   const tabs = useTabs();
   const { actions } = useSessions();
 
-  const items: MenuItem[] = [
-    {
+  const items: MenuItem[] = [];
+  const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
+
+  if (canOpenTerminal) {
+    items.push({
       key: 'terminal',
       label: 'Open Terminal',
       onSelect: () => {
         tabs.openTab(tile.session, tile.kind);
         tabs.setView(tile.session, 'terminal');
       },
-    },
-  ];
+    });
+  }
 
   if (tile.kind === 'worker') {
     items.push({

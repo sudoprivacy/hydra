@@ -4,7 +4,7 @@
 
 import type { TileModel } from '../missionControl/boardModel';
 import { useSessions } from '../sessions/SessionsProvider';
-import { isAttention, tileStatus, type SessionStatus } from '../status';
+import { isAttention, STATUS_LABELS, tileStatus, type SessionStatus } from '../status';
 import { useTabs } from './TabsProvider';
 
 export function TabBar(): JSX.Element {
@@ -50,13 +50,23 @@ export function TabBar(): JSX.Element {
             key={tab.id}
             role="tab"
             aria-selected={active}
+            tabIndex={0}
             title={tab.session}
             className={`hydra-tab${active ? ' hydra-tab--active' : ''}${
               isAttention(status) ? ' hydra-tab--attention' : ''
             }`}
             onClick={() => tabs.focusTab(tab.id)}
+            onKeyDown={(event) => {
+              if (event.currentTarget !== event.target) {
+                return;
+              }
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                tabs.focusTab(tab.id);
+              }
+            }}
           >
-            <span className={`hydra-sdot hydra-sdot--${status}`} />
+            <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
             <span className="hydra-tab__label">{label}</span>
             <button
               type="button"

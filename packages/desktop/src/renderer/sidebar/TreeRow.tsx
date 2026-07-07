@@ -1,7 +1,8 @@
 // One session row in the sidebar tree. Shows a status dot + name + #number +
 // [agent], with a muted second line (e.g. `idle · U:2` for workers, or a
-// relative time for copilots). Clicking the row opens/focuses its tab; the ⋮
-// menu carries the per-row actions. The row is highlighted when its tab is active.
+// relative time for copilots). Clicking the row opens/focuses its tab when the
+// session has an attachable terminal; the ⋮ menu carries the per-row actions.
+// The row is highlighted when its tab is active.
 
 import type { TileModel } from '../missionControl/boardModel';
 import { relativeTime } from '../missionControl/format';
@@ -13,6 +14,7 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
   const tabs = useTabs();
   const status = tileStatus(tile);
   const selected = tabs.activeId === tile.session;
+  const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
 
   const subline =
     tile.kind === 'worker'
@@ -23,16 +25,27 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
 
   return (
     <div
-      className={`hydra-row${selected ? ' hydra-row--selected' : ''}`}
+      className={`hydra-row${selected ? ' hydra-row--selected' : ''}${
+        canOpenTerminal ? '' : ' hydra-row--no-open'
+      }`}
       role="treeitem"
       aria-selected={selected}
       tabIndex={0}
       title={tile.session}
-      onClick={() => tabs.openTab(tile.session, tile.kind)}
+      onClick={() => {
+        if (canOpenTerminal) {
+          tabs.openTab(tile.session, tile.kind);
+        }
+      }}
       onKeyDown={(event) => {
+        if (event.currentTarget !== event.target) {
+          return;
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          tabs.openTab(tile.session, tile.kind);
+          if (canOpenTerminal) {
+            tabs.openTab(tile.session, tile.kind);
+          }
         }
       }}
     >

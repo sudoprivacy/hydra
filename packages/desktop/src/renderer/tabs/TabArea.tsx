@@ -13,7 +13,7 @@ import { TabBar } from './TabBar';
 import { useTabs } from './TabsProvider';
 
 export function TabArea(): JSX.Element {
-  const tabs = useTabs();
+  const { tabs, activeId, pruneTabs } = useTabs();
   const { board } = useSessions();
 
   // Close tabs whose session was deleted elsewhere. `pruneTabs` is a no-op when
@@ -30,15 +30,15 @@ export function TabArea(): JSX.Element {
         valid.add(tile.session);
       }
     }
-    tabs.pruneTabs(valid);
-  }, [view, tabs]);
+    pruneTabs(valid);
+  }, [view, pruneTabs]);
 
   return (
     <div className="hydra-tabarea">
       <TabBar />
       <div className="hydra-tabarea__panes">
-        {tabs.tabs.map((tab) => {
-          const active = tab.id === tabs.activeId;
+        {tabs.map((tab) => {
+          const active = tab.id === activeId;
           return (
             <div key={tab.id} className="hydra-pane" hidden={!active}>
               {tab.kind === 'overview' ? (

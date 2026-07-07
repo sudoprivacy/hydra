@@ -806,9 +806,16 @@
       .hydra-row:hover {
         background: var(--hy-tile);
       }
+      .hydra-row:focus-visible {
+        outline: 2px solid var(--hy-accent);
+        outline-offset: -2px;
+      }
       .hydra-row--selected {
         background: var(--hy-tile);
         box-shadow: inset 2px 0 0 var(--hy-accent);
+      }
+      .hydra-row--no-open {
+        cursor: default;
       }
       .hydra-row__main {
         min-width: 0;
@@ -850,6 +857,7 @@
         opacity: 0;
       }
       .hydra-row:hover .hydra-row__menu,
+      .hydra-row:focus-within .hydra-row__menu,
       .hydra-row--selected .hydra-row__menu,
       .hydra-row__menu.hydra-menu--open {
         opacity: 1;
@@ -950,6 +958,10 @@
       }
       .hydra-tab:hover {
         background: var(--hy-panel);
+      }
+      .hydra-tab:focus-visible {
+        outline: 2px solid var(--hy-accent);
+        outline-offset: -2px;
       }
       .hydra-tab--active {
         background: var(--hy-panel);

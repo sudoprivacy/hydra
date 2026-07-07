@@ -10,6 +10,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useReducer,
@@ -78,8 +79,8 @@ function reducer(state: TabsState, action: Action): TabsState {
       const tabs = state.tabs.filter((tab) => tab.id !== action.id);
       let activeId = state.activeId;
       if (activeId === action.id) {
-        // Focus the neighbour we were sitting next to, else fall back to Overview.
-        const neighbour = state.tabs[index - 1] ?? state.tabs[index + 1];
+        // Prefer the tab to the right, matching editor/browser tab closing.
+        const neighbour = state.tabs[index + 1] ?? state.tabs[index - 1];
         activeId = neighbour ? neighbour.id : OVERVIEW_TAB_ID;
       }
       return { tabs, activeId };
@@ -130,17 +131,37 @@ const TabsContext = createContext<TabsApi | null>(null);
 export function TabsProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
 
+  const openTab = useCallback((session: string, sessionKind: TabSessionKind) => {
+    dispatch({ type: 'open', session, sessionKind });
+  }, []);
+
+  const focusTab = useCallback((id: string) => {
+    dispatch({ type: 'focus', id });
+  }, []);
+
+  const closeTab = useCallback((id: string) => {
+    dispatch({ type: 'close', id });
+  }, []);
+
+  const setView = useCallback((id: string, view: TabView) => {
+    dispatch({ type: 'setView', id, view });
+  }, []);
+
+  const pruneTabs = useCallback((valid: ReadonlySet<string>) => {
+    dispatch({ type: 'prune', valid });
+  }, []);
+
   const api = useMemo<TabsApi>(
     () => ({
       tabs: state.tabs,
       activeId: state.activeId,
-      openTab: (session, sessionKind) => dispatch({ type: 'open', session, sessionKind }),
-      focusTab: (id) => dispatch({ type: 'focus', id }),
-      closeTab: (id) => dispatch({ type: 'close', id }),
-      setView: (id, view) => dispatch({ type: 'setView', id, view }),
-      pruneTabs: (valid) => dispatch({ type: 'prune', valid }),
+      openTab,
+      focusTab,
+      closeTab,
+      setView,
+      pruneTabs,
     }),
-    [state],
+    [state.tabs, state.activeId, openTab, focusTab, closeTab, setView, pruneTabs],
   );
 
   return <TabsContext.Provider value={api}>{children}</TabsContext.Provider>;
