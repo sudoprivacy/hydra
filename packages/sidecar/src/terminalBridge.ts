@@ -308,6 +308,15 @@ function buildPtyEnv(): { [key: string]: string | undefined } {
     }
   }
   env.TERM = 'xterm-256color';
+  // tmux (and the programs inside the pane) detect the attaching client's UTF-8
+  // support from LC_ALL / LC_CTYPE / LANG. A GUI-launched sidecar frequently has
+  // none of them (or an empty LC_CTYPE), so `tmux attach` decides the client is
+  // not UTF-8 and renders every wide/CJK character as `_`. Guarantee a UTF-8
+  // locale so Chinese/Japanese/Korean (and box-drawing) come through intact.
+  if (!/utf-?8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) {
+    env.LC_CTYPE = 'UTF-8';
+    env.LANG = env.LANG || 'en_US.UTF-8';
+  }
   return env;
 }
 
