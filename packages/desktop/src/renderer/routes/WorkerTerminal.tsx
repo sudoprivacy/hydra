@@ -14,6 +14,7 @@ import { useParams } from 'react-router-dom';
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 
 import type { Disposable, TerminalChannel } from '@hydra/protocol';
@@ -51,6 +52,12 @@ export function WorkerTerminal(): JSX.Element {
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    // Use modern (Unicode 11) character widths — the same fix VS Code's terminal
+    // applies — so Claude Code's box-drawing / symbol TUI (─ ⏺ ⎿ ✻ …) lines up
+    // instead of smearing. The raw stream is correct; only xterm's default
+    // Unicode-6 width table was misjudging these glyphs.
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = '11';
     term.open(surface);
     safeFit();
 
