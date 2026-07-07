@@ -12,7 +12,9 @@
     "build": "npm run build:main && npm run typecheck:renderer && npm run build:renderer",
     "start": "electron out/main.js",
     "boot-check": "node out/bootCheck.js",
-    "smoke:diff": "node out/smoke/diffModelSmoke.js"
+    "smoke:diff": "node out/smoke/diffModelSmoke.js",
+    "pack:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@hydra/protocol": "*",
@@ -30,6 +32,37 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "electron": "^33.0.0",
+    "electron-builder": "^24.13.3",
     "esbuild": "^0.28.0"
+  },
+  "build": {
+    "appId": "com.hydra.desktop",
+    "productName": "Hydra",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "asar": false,
+    "npmRebuild": false,
+    "electronVersion": "33.4.11",
+    "files": [
+      "out/**/*",
+      "index.html",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    }
   }
 }

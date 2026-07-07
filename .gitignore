@@ -30,3 +30,4 @@ vscode.proposed.*.d.ts
 
 .sisyphus/
 .hydra
+packages/desktop/dist/
