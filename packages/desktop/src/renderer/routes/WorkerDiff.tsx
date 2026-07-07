@@ -1,15 +1,16 @@
-// /worker/:id/diff — the M4 Diff Review route. The route + `:id` (the session
-// name) contract is fixed by the app shell; this file just hands the session to
-// <DiffReview/>, which owns the whole diff experience under renderer/diff/.
-
-import { useParams } from 'react-router-dom';
+// WorkerDiff — the M4 Diff Review view, now addressed by a `session` prop instead
+// of a route param. It just hands the session to <DiffReview/>, which owns the
+// whole diff experience under renderer/diff/.
 
 import { DiffReview } from '../diff/DiffReview';
 
-export function WorkerDiff(): JSX.Element {
-  const { id } = useParams();
-  if (!id) {
-    return <p className="hydra-status hydra-status--error">No worker id in the URL.</p>;
+export interface WorkerDiffProps {
+  session: string;
+}
+
+export function WorkerDiff({ session }: WorkerDiffProps): JSX.Element {
+  if (!session) {
+    return <p className="hydra-status hydra-status--error">No worker session.</p>;
   }
-  return <DiffReview session={id} />;
+  return <DiffReview session={session} />;
 }

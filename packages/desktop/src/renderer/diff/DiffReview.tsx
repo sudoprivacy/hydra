@@ -4,7 +4,6 @@
 // (FINAL.md risk #3).
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 
 import { toChangedFileList, type ChangedFileView } from './diffModel';
 import { ChangedFileList } from './ChangedFileList';
@@ -79,9 +78,6 @@ export function DiffReview({ session }: DiffReviewProps): JSX.Element {
           >
             {loading ? 'Refreshing…' : 'Refresh'}
           </button>
-          <Link to="/mission-control" className="hydra-diff__button">
-            Back
-          </Link>
         </div>
       </header>
 

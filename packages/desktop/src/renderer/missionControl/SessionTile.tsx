@@ -1,14 +1,13 @@
 // One board tile — a worker or a copilot. Presentational: it renders the model
 // the reducer produced and calls back to the container for every mutation.
-// Both link to /worker/:id/terminal (any tmux session attaches); only workers
-// get /worker/:id/diff (copilots have no branch/worktree to diff).
-
-import { Link } from 'react-router-dom';
+// Opening a tile hands off to the tab shell (`onOpen`): any session can open a
+// terminal; only workers can open a diff (copilots have no branch/worktree).
 
 import type { CopilotTileModel, TileModel, WorkerTileModel } from './boardModel';
 import { lifecycleLabel, relativeTime, runtimeLabel, runtimeModifier } from './format';
 
 export interface TileActions {
+  onOpen: (tile: TileModel, view: 'terminal' | 'diff') => void;
   onSend: (tile: TileModel) => void;
   onRename: (tile: TileModel) => void;
   onDelete: (tile: TileModel) => void;
@@ -26,8 +25,6 @@ export function SessionTile({ tile, actions }: { tile: TileModel; actions: TileA
 
 function WorkerTile({ tile, actions }: { tile: WorkerTileModel; actions: TileActions }): JSX.Element {
   const detail = [tile.type === 'code' ? tile.branch : 'task', tile.agent].filter(Boolean).join(' · ');
-  const terminalTo = `/worker/${encodeURIComponent(tile.session)}/terminal`;
-  const diffTo = `/worker/${encodeURIComponent(tile.session)}/diff`;
 
   return (
     <article className={`hydra-tile hydra-tile--${tile.lifecycle}`} data-session={tile.session}>
@@ -52,12 +49,12 @@ function WorkerTile({ tile, actions }: { tile: WorkerTileModel; actions: TileAct
       </div>
 
       <div className="hydra-tile__actions">
-        <Link className="hydra-btn hydra-btn--sm" to={terminalTo}>
+        <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'terminal')}>
           terminal
-        </Link>
-        <Link className="hydra-btn hydra-btn--sm" to={diffTo}>
+        </button>
+        <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'diff')}>
           diff
-        </Link>
+        </button>
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onSend(tile)}>
           send
         </button>
@@ -109,12 +106,9 @@ function CopilotTile({ tile, actions }: { tile: CopilotTileModel; actions: TileA
 
       <div className="hydra-tile__actions">
         {tile.lifecycle !== 'stopped' ? (
-          <Link
-            className="hydra-btn hydra-btn--sm"
-            to={`/worker/${encodeURIComponent(tile.session)}/terminal`}
-          >
+          <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'terminal')}>
             terminal
-          </Link>
+          </button>
         ) : null}
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onSend(tile)}>
           send

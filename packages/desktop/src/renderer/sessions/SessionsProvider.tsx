@@ -1,22 +1,44 @@
-// /mission-control — the fleet cockpit (M2).
-//
-// Container: it owns the HydraControlClient, the live board hook, the dialog
-// state, and the action handlers that call the client verbs. Everything below
-// it (the board, tiles, dialogs) is presentational. The board is driven by
-// listSessions() + subscribeEvents() + subscribeNotifications() through the pure
-// reducer in missionControl/boardModel.ts — live, never polled.
+// SessionsProvider — the single owner of the live board + every session
+// mutation, shared by the sidebar tree, the status bar, the row menus and the
+// Overview tab. It is the tab-shell's port of the old MissionControl container:
+// it holds the HydraControlClient, the live board hook, the dialog state and the
+// action handlers that call the client verbs, and it renders the dialogs +
+// error banner as global overlays. Consumers read it via `useSessions()`.
 
-import { useCallback, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import type { CreateCopilotInput, CreateWorkerInput } from '@hydra/protocol';
 
 import { useHydraClient } from '../HydraClientProvider';
-import { MissionControlBoard } from '../missionControl/MissionControlBoard';
-import { useMissionControlBoard } from '../missionControl/useMissionControlBoard';
+import { useMissionControlBoard, type MissionControlBoard } from '../missionControl/useMissionControlBoard';
 import { CreateSessionModal, type CreateKind } from '../missionControl/CreateSessionModal';
 import { ConfirmDeleteModal, PromptModal } from '../missionControl/dialogs';
-import type { TileActions } from '../missionControl/SessionTile';
 import type { TileModel, WorkerTileModel } from '../missionControl/boardModel';
+
+/** Every session mutation the UI can trigger, from any surface. */
+export interface SessionActions {
+  create: (kind: CreateKind) => void;
+  broadcast: () => void;
+  restore: () => void;
+  refresh: () => void;
+  send: (tile: TileModel) => void;
+  rename: (tile: TileModel) => void;
+  delete: (tile: TileModel) => void;
+  start: (tile: TileModel) => void;
+  stop: (tile: WorkerTileModel) => void;
+}
+
+export interface SessionsApi {
+  readonly board: MissionControlBoard;
+  readonly actions: SessionActions;
+}
 
 type Dialog =
   | { type: 'create'; kind: CreateKind }
@@ -26,7 +48,9 @@ type Dialog =
   | { type: 'restore' }
   | { type: 'broadcast' };
 
-export function MissionControl(): JSX.Element {
+const SessionsContext = createContext<SessionsApi | null>(null);
+
+export function SessionsProvider({ children }: { children: ReactNode }): JSX.Element {
   const client = useHydraClient();
   const board = useMissionControlBoard(client);
 
@@ -41,8 +65,8 @@ export function MissionControl(): JSX.Element {
     setBusy(false);
   }, []);
 
-  // A mutation invoked from within a dialog: keep the dialog open on failure
-  // (inline error), close + resync on success.
+  // A mutation from within a dialog: keep the dialog open on failure (inline
+  // error), close + resync on success.
   const runDialog = useCallback(
     async (fn: () => Promise<unknown>) => {
       setBusy(true);
@@ -60,7 +84,7 @@ export function MissionControl(): JSX.Element {
     [board],
   );
 
-  // A mutation invoked straight from a tile (start / stop): errors go to the
+  // A mutation straight from a tile / row (start / stop): errors go to the
   // top-level banner since there is no dialog to host them.
   const runDirect = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -75,45 +99,37 @@ export function MissionControl(): JSX.Element {
     [board],
   );
 
-  const tileActions = useMemo<TileActions>(
+  const actions = useMemo<SessionActions>(
     () => ({
-      onSend: (tile) => setDialog({ type: 'send', tile }),
-      onRename: (tile) => setDialog({ type: 'rename', tile }),
-      onDelete: (tile) => setDialog({ type: 'delete', tile }),
-      onStart: (tile: TileModel) => runDirect(() => client.startSession(tile.session, tile.kind)),
-      onStop: (tile: WorkerTileModel) => runDirect(() => client.stopWorker(tile.session)),
+      create: (kind) => setDialog({ type: 'create', kind }),
+      broadcast: () => setDialog({ type: 'broadcast' }),
+      restore: () => setDialog({ type: 'restore' }),
+      refresh: () => board.refresh(),
+      send: (tile) => setDialog({ type: 'send', tile }),
+      rename: (tile) => setDialog({ type: 'rename', tile }),
+      delete: (tile) => setDialog({ type: 'delete', tile }),
+      start: (tile) => runDirect(() => client.startSession(tile.session, tile.kind)),
+      stop: (tile) => runDirect(() => client.stopWorker(tile.session)),
     }),
-    [client, runDirect],
+    [board, client, runDirect],
   );
 
-  if (board.error && !board.view) {
-    return <p className="hydra-status hydra-status--error">Failed to load sessions: {board.error}</p>;
-  }
-  if (!board.view) {
-    return <p className="hydra-status">Loading sessions…</p>;
-  }
+  const value = useMemo<SessionsApi>(() => ({ board, actions }), [board, actions]);
 
   return (
-    <>
+    <SessionsContext.Provider value={value}>
       {banner ? (
-        <div className="hydra-banner hydra-banner--error" role="alert">
-          <span>{banner}</span>
-          <button type="button" className="hydra-banner__close" aria-label="Dismiss" onClick={() => setBanner(null)}>
-            ✕
-          </button>
+        <div className="hydra-toast">
+          <div className="hydra-banner hydra-banner--error" role="alert">
+            <span>{banner}</span>
+            <button type="button" className="hydra-banner__close" aria-label="Dismiss" onClick={() => setBanner(null)}>
+              ✕
+            </button>
+          </div>
         </div>
       ) : null}
 
-      <MissionControlBoard
-        view={board.view}
-        connected={board.connected}
-        lastSeq={board.lastSeq}
-        onRefresh={board.refresh}
-        onCreate={(kind) => setDialog({ type: 'create', kind })}
-        onBroadcast={() => setDialog({ type: 'broadcast' })}
-        onRestore={() => setDialog({ type: 'restore' })}
-        tileActions={tileActions}
-      />
+      {children}
 
       {dialog?.type === 'create' ? (
         <CreateSessionModal
@@ -192,6 +208,15 @@ export function MissionControl(): JSX.Element {
           onClose={closeDialog}
         />
       ) : null}
-    </>
+    </SessionsContext.Provider>
   );
+}
+
+/** Access the shared board + session actions. Throws outside the provider. */
+export function useSessions(): SessionsApi {
+  const api = useContext(SessionsContext);
+  if (!api) {
+    throw new Error('useSessions must be used within <SessionsProvider>');
+  }
+  return api;
 }

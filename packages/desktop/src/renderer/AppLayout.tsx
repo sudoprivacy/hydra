@@ -1,0 +1,94 @@
+// AppLayout — the IDE-style two-pane shell: a resizable Sidebar, a drag handle,
+// the TabArea, and the StatusBar pinned to the bottom. The sidebar width is
+// clamped (~220–480px) and persisted in localStorage so it survives relaunch.
+
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+
+import { Sidebar } from './sidebar/Sidebar';
+import { TabArea } from './tabs/TabArea';
+import { StatusBar } from './StatusBar';
+
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 480;
+const DEFAULT_WIDTH = 300;
+const STORAGE_KEY = 'hydra.sidebarWidth';
+
+const clampWidth = (px: number): number => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(px)));
+
+function loadWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) ? clampWidth(parsed) : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
+
+export function AppLayout(): JSX.Element {
+  const [width, setWidth] = useState(loadWidth);
+  const dragStart = useRef<{ x: number; width: number } | null>(null);
+
+  // Persist width whenever it settles (cheap; the app writes one small number).
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, String(width));
+    } catch {
+      // Storage can be unavailable (private mode); the width simply won't persist.
+    }
+  }, [width]);
+
+  const onPointerMove = useCallback((event: PointerEvent) => {
+    const start = dragStart.current;
+    if (!start) {
+      return;
+    }
+    setWidth(clampWidth(start.width + (event.clientX - start.x)));
+  }, []);
+
+  const stopDrag = useCallback(() => {
+    if (!dragStart.current) {
+      return;
+    }
+    dragStart.current = null;
+    document.body.classList.remove('hydra-resizing');
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', stopDrag);
+  }, [onPointerMove]);
+
+  const startDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      dragStart.current = { x: event.clientX, width };
+      document.body.classList.add('hydra-resizing');
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', stopDrag);
+      event.preventDefault();
+    },
+    [width, onPointerMove, stopDrag],
+  );
+
+  // Detach any stray listeners if we unmount mid-drag.
+  useEffect(() => stopDrag, [stopDrag]);
+
+  return (
+    <div className="hydra-app">
+      <div className="hydra-app__main">
+        <div className="hydra-app__sidebar" style={{ width }}>
+          <Sidebar />
+        </div>
+        <div
+          className="hydra-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onPointerDown={startDrag}
+          title="Drag to resize"
+        />
+        <div className="hydra-app__tabs">
+          <TabArea />
+        </div>
+      </div>
+      <StatusBar />
+    </div>
+  );
+}

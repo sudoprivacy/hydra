@@ -1,4 +1,4 @@
-// /worker/:id/terminal — the M3 terminal view.
+// WorkerTerminal — the M3 terminal view, now addressed by a `session` prop.
 //
 // A full-fidelity xterm.js terminal attached to the worker's tmux session over
 // the loopback seam: `client.attachTerminal(...)` returns a TerminalChannel
@@ -6,11 +6,12 @@
 // resize (→ pty.resize), and auto-reconnect with backoff on a transient drop —
 // tmux repaints the current screen on every reattach, so no client-side replay.
 //
-// The route param `:id` is the (URL-encoded) tmux session name, produced by the
-// Mission Control links.
+// The tab shell keeps this component MOUNTED while its pane is hidden (keep-alive
+// — the WebSocket stays live and scrollback is preserved). xterm cannot measure
+// itself while `display:none`, so the pane passes `active` and we refit + refocus
+// whenever this pane becomes the visible one again.
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -28,11 +29,17 @@ const INITIAL_RETRY_MS = 500;
 const MAX_RETRY_MS = 5000;
 const RETRY_FACTOR = 1.6;
 
-export function WorkerTerminal(): JSX.Element {
-  const { id } = useParams();
+export interface WorkerTerminalProps {
+  session: string;
+  /** True when this pane is the visible tab; drives the show-again refit. */
+  active?: boolean;
+}
+
+export function WorkerTerminal({ session, active = true }: WorkerTerminalProps): JSX.Element {
   const client = useHydraClient();
-  const session = id ? decodeURIComponent(id) : '';
   const surfaceRef = useRef<HTMLDivElement>(null);
+  // Set by the mount effect; lets the `active` effect refit without re-attaching.
+  const refitRef = useRef<() => void>(() => {});
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
 
   useEffect(() => {
@@ -81,6 +88,13 @@ export function WorkerTerminal(): JSX.Element {
         // The surface can be momentarily 0-sized during layout — ignore.
       }
     }
+
+    // Expose refit+focus so the pane can call it when it becomes visible again
+    // (xterm measures nothing while its container is display:none).
+    refitRef.current = () => {
+      safeFit();
+      term.focus();
+    };
 
     // Keystrokes + local resize flow to whatever channel is currently live.
     const inputSub = term.onData((data) => channel?.write(data));
@@ -146,6 +160,7 @@ export function WorkerTerminal(): JSX.Element {
 
     return () => {
       disposed = true;
+      refitRef.current = () => {};
       observer.disconnect();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -158,6 +173,16 @@ export function WorkerTerminal(): JSX.Element {
       term.dispose();
     };
   }, [session, client]);
+
+  // When this pane becomes the active tab, refit to its now-real size and focus.
+  // A rAF lets the browser paint the un-hidden surface before we measure it.
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const raf = requestAnimationFrame(() => refitRef.current());
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
 
   return (
     <section className="hydra-terminal">
