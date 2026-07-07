@@ -1,6 +1,7 @@
 // One board tile — a worker or a copilot. Presentational: it renders the model
-// the reducer produced and calls back to the container for every mutation. Only
-// worker tiles link to the sibling /worker/:id/{terminal,diff} routes (M3 / M4).
+// the reducer produced and calls back to the container for every mutation.
+// Both link to /worker/:id/terminal (any tmux session attaches); only workers
+// get /worker/:id/diff (copilots have no branch/worktree to diff).
 
 import { Link } from 'react-router-dom';
 
@@ -107,6 +108,14 @@ function CopilotTile({ tile, actions }: { tile: CopilotTileModel; actions: TileA
       </div>
 
       <div className="hydra-tile__actions">
+        {tile.lifecycle !== 'stopped' ? (
+          <Link
+            className="hydra-btn hydra-btn--sm"
+            to={`/worker/${encodeURIComponent(tile.session)}/terminal`}
+          >
+            terminal
+          </Link>
+        ) : null}
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onSend(tile)}>
           send
         </button>
