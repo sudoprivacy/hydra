@@ -48,6 +48,8 @@ export function WorkerTerminal(): JSX.Element {
       scrollback: 5000,
       // macOS option-as-meta so alt-keybindings reach tmux/vim.
       macOptionIsMeta: true,
+      // Required to activate the Unicode 11 width provider below.
+      allowProposedApi: true,
       theme: { background: '#1e1e1e' },
     });
     const fitAddon = new FitAddon();
