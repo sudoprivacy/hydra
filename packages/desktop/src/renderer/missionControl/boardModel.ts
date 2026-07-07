@@ -31,6 +31,19 @@ export interface BoardModel {
   readonly lifecycleOverrides: Readonly<Record<string, TileLifecycle>>;
   /** Unread notification count per session (target ∪ source), from the notification stream. */
   readonly unreadBySession: Readonly<Record<string, number>>;
+  /**
+   * Sessions whose latest UNREAD notification is a `complete` — the LIGHT
+   * completed chip (mirrors the old tree's `complete → 'completed'`). Folded
+   * from the notification snapshot and cleared when a session goes back to
+   * running (see `applyEvent`).
+   */
+  readonly completedBySession: Readonly<Record<string, boolean>>;
+  /**
+   * Changed-file counts per CODE worker (`git status --porcelain` line count),
+   * polled off the board tick via `applyGitStatus`. Task workers / copilots
+   * never appear here, so they never render `U:N`.
+   */
+  readonly gitStatusBySession: Readonly<Record<string, number>>;
   /** Total unread across all notifications (authoritative from the snapshot). */
   readonly unreadTotal: number;
   /** ISO timestamp of the most recent event touching each session. */
@@ -81,6 +94,8 @@ export function createBoardModel(snapshot: HydraSessionList): BoardModel {
     runtimeOverrides: {},
     lifecycleOverrides: {},
     unreadBySession: {},
+    completedBySession: {},
+    gitStatusBySession: {},
     unreadTotal: 0,
     lastEventBySession: {},
     lastSeq: 0,
@@ -102,6 +117,8 @@ export function applySnapshot(model: BoardModel, snapshot: HydraSessionList): Bo
     runtimeOverrides: {},
     lifecycleOverrides: {},
     unreadBySession: pruneToSessions(model.unreadBySession, alive),
+    completedBySession: pruneToSessions(model.completedBySession, alive),
+    gitStatusBySession: pruneToSessions(model.gitStatusBySession, alive),
     lastEventBySession: pruneToSessions(model.lastEventBySession, alive),
   };
 }
@@ -129,12 +146,18 @@ export function applyEvent(model: BoardModel, event: HydraEvent): BoardModel {
     const projection = runtimeFromEvent(event);
     if (projection) {
       next.runtimeOverrides = { ...model.runtimeOverrides, [event.session]: projection };
+      // A worker that resumes work is no longer "completed" — drop the chip the
+      // instant it runs again, without waiting for the next notification snapshot.
+      if (projection.state === 'running') {
+        next.completedBySession = withoutSession(model.completedBySession, event.session);
+      }
     }
     return next;
   }
 
   if (event.session && STARTED_EVENTS.has(event.type)) {
     next.lifecycleOverrides = { ...model.lifecycleOverrides, [event.session]: 'running' };
+    next.completedBySession = withoutSession(model.completedBySession, event.session);
     return next;
   }
 
@@ -151,15 +174,24 @@ export function applyEvents(model: BoardModel, events: readonly HydraEvent[]): B
   return events.reduce(applyEvent, model);
 }
 
-/** Fold a notification snapshot into per-session unread counts. */
+/**
+ * Fold a notification snapshot into per-session unread counts AND the per-session
+ * completion flag. A session is "completed" when its most recent UNREAD
+ * notification (by `createdAt`) is of kind `complete` — the old tree's
+ * `complete → 'completed'` mapping, surfaced here as the light chip.
+ */
 export function applyNotificationSnapshot(model: BoardModel, snapshot: NotificationSnapshot): BoardModel {
   const unreadBySession: Record<string, number> = {};
+  // Track the newest unread notification per session so completion reflects the
+  // *latest* signal, not merely the presence of some old `complete`.
+  const latestUnread = new Map<string, { at: number; kind: string }>();
+
   for (const notification of snapshot.notifications) {
     if (notification.readAt !== null) {
       continue;
     }
-    // Count a notification once per distinct session it references (mirrors the
-    // engine's `bySession` index).
+    // Count / classify a notification once per distinct session it references
+    // (mirrors the engine's `bySession` index — target ∪ source).
     const sessions = new Set<string>();
     if (notification.targetSession) {
       sessions.add(notification.targetSession);
@@ -167,11 +199,40 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
     if (notification.sourceSession) {
       sessions.add(notification.sourceSession);
     }
+    const at = Date.parse(notification.createdAt);
     for (const session of sessions) {
       unreadBySession[session] = (unreadBySession[session] ?? 0) + 1;
+      const current = latestUnread.get(session);
+      if (!current || (Number.isFinite(at) && at >= current.at)) {
+        latestUnread.set(session, { at: Number.isFinite(at) ? at : 0, kind: notification.kind });
+      }
     }
   }
-  return { ...model, unreadBySession, unreadTotal: snapshot.unreadCount };
+
+  const completedBySession: Record<string, boolean> = {};
+  for (const [session, latest] of latestUnread) {
+    if (latest.kind === 'complete') {
+      completedBySession[session] = true;
+    }
+  }
+
+  return { ...model, unreadBySession, completedBySession, unreadTotal: snapshot.unreadCount };
+}
+
+/**
+ * Fold a batch of git-status counts (from the ~15s poll) into the board. The
+ * map replaces the previous counts wholesale, so deleted workers drop out with
+ * no stale `U:N` left behind.
+ */
+export function applyGitStatus(
+  model: BoardModel,
+  statuses: Readonly<Record<string, { changed: number }>>,
+): BoardModel {
+  const gitStatusBySession: Record<string, number> = {};
+  for (const [session, status] of Object.entries(statuses)) {
+    gitStatusBySession[session] = status.changed;
+  }
+  return { ...model, gitStatusBySession };
 }
 
 // ── selectors (snapshot + overlays → renderable view) ──
@@ -189,6 +250,13 @@ export interface WorkerTileModel {
   readonly runtime: WorkerRuntimeState;
   readonly runtimeReason: string | null;
   readonly unread: number;
+  /** Latest unread notification is a `complete` (and the worker isn't running). */
+  readonly completed: boolean;
+  /**
+   * `git status --porcelain` changed-file count for CODE workers, or `null`
+   * when unknown / not applicable (task workers, not yet polled). Hidden at 0.
+   */
+  readonly changed: number | null;
   readonly lastEventAt: string | null;
   readonly attached: boolean;
   readonly workdir: string | null;
@@ -204,6 +272,12 @@ export interface CopilotTileModel {
   readonly mode: CopilotMode;
   readonly lifecycle: TileLifecycle;
   readonly unread: number;
+  /** Latest unread notification targeting the copilot is a `complete`. */
+  readonly completed: boolean;
+  /** Number of workers this copilot manages (`copilotSessionName` match). */
+  readonly workerCount: number;
+  /** Distinct repos among those workers (task workers contribute none). */
+  readonly repoCount: number;
   readonly lastEventAt: string | null;
   readonly attached: boolean;
   readonly workdir: string | null;
@@ -239,8 +313,11 @@ const UNKNOWN_REPO_LABEL = 'Unknown repo';
 
 /** Project the model into grouped, sorted tiles ready to render. */
 export function selectBoard(model: BoardModel): BoardView {
+  const copilotSummaries = computeCopilotSummaries(model.snapshot.workers);
   const workerTiles = model.snapshot.workers.map((worker) => toWorkerTile(model, worker));
-  const copilotTiles = model.snapshot.copilots.map((copilot) => toCopilotTile(model, copilot));
+  const copilotTiles = model.snapshot.copilots.map((copilot) =>
+    toCopilotTile(model, copilot, copilotSummaries.get(copilot.session)),
+  );
 
   const repoGroups = new Map<string, WorkerTileModel[]>();
   const taskTiles: WorkerTileModel[] = [];
@@ -285,12 +362,63 @@ export function selectBoard(model: BoardModel): BoardView {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
+/** Per-copilot worker/repo tally, mirroring the old `buildCopilotWorkerSummaries`. */
+interface CopilotSummary {
+  workerCount: number;
+  repoCount: number;
+}
+
+/**
+ * Tally each copilot's managed workers and the distinct repos among them, keyed
+ * by copilot session. Workers with no `copilotSessionName` are ignored; task
+ * workers count toward `workerCount` but contribute no repo (matching the old
+ * tree's `[N workers · M repos]`).
+ */
+function computeCopilotSummaries(workers: readonly SessionListWorker[]): Map<string, CopilotSummary> {
+  const byCopilot = new Map<string, { workerCount: number; repos: Set<string> }>();
+  for (const worker of workers) {
+    const copilotSession = worker.copilotSessionName;
+    if (!copilotSession) {
+      continue;
+    }
+    let entry = byCopilot.get(copilotSession);
+    if (!entry) {
+      entry = { workerCount: 0, repos: new Set<string>() };
+      byCopilot.set(copilotSession, entry);
+    }
+    entry.workerCount += 1;
+    if (worker.repo) {
+      entry.repos.add(worker.repo);
+    }
+  }
+
+  const summaries = new Map<string, CopilotSummary>();
+  for (const [session, entry] of byCopilot) {
+    summaries.set(session, { workerCount: entry.workerCount, repoCount: entry.repos.size });
+  }
+  return summaries;
+}
+
+/** Immutably drop one key from a session-keyed record (returns same ref if absent). */
+function withoutSession<T>(
+  record: Readonly<Record<string, T>>,
+  session: string,
+): Readonly<Record<string, T>> {
+  if (!(session in record)) {
+    return record;
+  }
+  const next: Record<string, T> = { ...record };
+  delete next[session];
+  return next;
+}
+
 function toWorkerTile(model: BoardModel, worker: SessionListWorker): WorkerTileModel {
   const override = model.runtimeOverrides[worker.session];
   const lifecycle = model.lifecycleOverrides[worker.session] ?? deriveLifecycle(worker.status);
   // A stopped worker has no live runtime; force `unknown` so a stale override
   // does not claim a dead session is "running".
   const runtimeSource = lifecycle === 'stopped' ? undefined : override ?? worker.runtimeState;
+  const runtime = runtimeSource ? runtimeSource.state : 'unknown';
   return {
     kind: 'worker',
     session: worker.session,
@@ -301,9 +429,13 @@ function toWorkerTile(model: BoardModel, worker: SessionListWorker): WorkerTileM
     branch: worker.branch,
     agent: worker.agent,
     lifecycle,
-    runtime: runtimeSource ? runtimeSource.state : 'unknown',
+    runtime,
     runtimeReason: runtimeSource?.reason ?? null,
     unread: model.unreadBySession[worker.session] ?? 0,
+    // The chip lingers only while the worker is NOT running; a live snapshot can
+    // still hold a `complete` for a resumed worker until its notif is read.
+    completed: (model.completedBySession[worker.session] ?? false) && runtime !== 'running',
+    changed: worker.type === 'code' ? (model.gitStatusBySession[worker.session] ?? null) : null,
     lastEventAt: model.lastEventBySession[worker.session] ?? worker.runtimeState.updatedAt,
     attached: worker.attached,
     workdir: worker.workdir,
@@ -312,7 +444,11 @@ function toWorkerTile(model: BoardModel, worker: SessionListWorker): WorkerTileM
   };
 }
 
-function toCopilotTile(model: BoardModel, copilot: SessionListCopilot): CopilotTileModel {
+function toCopilotTile(
+  model: BoardModel,
+  copilot: SessionListCopilot,
+  summary: CopilotSummary | undefined,
+): CopilotTileModel {
   return {
     kind: 'copilot',
     session: copilot.session,
@@ -321,6 +457,9 @@ function toCopilotTile(model: BoardModel, copilot: SessionListCopilot): CopilotT
     mode: copilot.mode,
     lifecycle: model.lifecycleOverrides[copilot.session] ?? deriveLifecycle(copilot.status),
     unread: model.unreadBySession[copilot.session] ?? 0,
+    completed: model.completedBySession[copilot.session] ?? false,
+    workerCount: summary?.workerCount ?? 0,
+    repoCount: summary?.repoCount ?? 0,
     lastEventAt: model.lastEventBySession[copilot.session] ?? null,
     attached: copilot.attached,
     workdir: copilot.workdir,

@@ -1,11 +1,23 @@
-// One session row in the sidebar tree. Shows a status dot + name + #number +
-// [agent], with a muted second line (e.g. `idle · U:2` for workers, or a
-// relative time for copilots). Clicking the row opens/focuses its tab when the
-// session has an attachable terminal; the ⋮ menu carries the per-row actions.
-// The row is highlighted when its tab is active.
+// One session row in the sidebar tree — a dense, two-line node that mirrors the
+// old VS Code extension tree (packages/extension tmuxSessionProvider.ts).
+//
+//   Copilot:  ● name [agent] [N workers · M repos]   [unread] ⋮
+//             35m ago  ✓ 已完成
+//   Worker:   ● branch #N [agent] running            [unread] ⋮
+//             35m ago  U:2  ✓ 已完成
+//
+// Clicking the row opens/focuses its tab when the session has an attachable
+// terminal; the ⋮ menu carries the per-row actions. The row is highlighted when
+// its tab is active.
 
 import type { TileModel } from '../missionControl/boardModel';
-import { relativeTime } from '../missionControl/format';
+import {
+  COMPLETED_CHIP_LABEL,
+  copilotSummaryLabel,
+  gitChangeLabel,
+  relativeTime,
+  runtimeToken,
+} from '../missionControl/format';
 import { STATUS_LABELS, tileStatus } from '../status';
 import { useTabs } from '../tabs/TabsProvider';
 import { RowMenu } from './RowMenu';
@@ -16,12 +28,8 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
   const selected = tabs.activeId === tile.session;
   const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
 
-  const subline =
-    tile.kind === 'worker'
-      ? `${STATUS_LABELS[status].toLowerCase()}${tile.unread > 0 ? ` · U:${tile.unread}` : ''}`
-      : tile.unread > 0
-        ? `U:${tile.unread}`
-        : relativeTime(tile.lastEventAt);
+  const summary = tile.kind === 'copilot' ? copilotSummaryLabel(tile.workerCount, tile.repoCount) : null;
+  const gitLabel = tile.kind === 'worker' ? gitChangeLabel(tile.changed) : null;
 
   return (
     <div
@@ -55,9 +63,34 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
           <span className="hydra-row__name">{tile.name}</span>
           {tile.kind === 'worker' ? <span className="hydra-row__num">#{tile.number}</span> : null}
           <span className="hydra-row__agent">[{tile.agent}]</span>
+          {tile.kind === 'worker' ? (
+            <span className="hydra-row__token">{runtimeToken(tile.lifecycle, tile.runtime)}</span>
+          ) : summary ? (
+            <span className="hydra-row__summary">{summary}</span>
+          ) : null}
         </div>
-        <div className="hydra-row__sub">{subline}</div>
+        <div className="hydra-row__sub">
+          <span className="hydra-row__time">{relativeTime(tile.lastEventAt)}</span>
+          {gitLabel ? (
+            <span className="hydra-row__u" title="changed files (git status)">
+              {gitLabel}
+            </span>
+          ) : null}
+          {tile.completed ? (
+            <span className="hydra-chip hydra-chip--done" title="Task completed">
+              {COMPLETED_CHIP_LABEL}
+            </span>
+          ) : null}
+        </div>
       </div>
+      {tile.unread > 0 ? (
+        <span
+          className="hydra-row__unread hydra-badge hydra-badge--unread"
+          title={`${tile.unread} unread`}
+        >
+          {tile.unread}
+        </span>
+      ) : null}
       <RowMenu tile={tile} />
     </div>
   );

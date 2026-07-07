@@ -27,6 +27,44 @@ export function lifecycleLabel(lifecycle: TileLifecycle): string {
   return lifecycle === 'running' ? 'running' : 'stopped';
 }
 
+/** The small green completed chip (mirrors the old tree's `complete → completed`). */
+export const COMPLETED_CHIP_LABEL = '✓ 已完成';
+
+/**
+ * A worker's lifecycle/runtime text token for the row (`running` / `idle` /
+ * `stopped` / `needs input` / `error` / `unknown`). A stopped worker has no live
+ * runtime, so lifecycle wins; otherwise the runtime state drives it. Mirrors the
+ * old tree's `formatWorkerRuntimeStateLabel`.
+ */
+export function runtimeToken(lifecycle: TileLifecycle, runtime: WorkerRuntimeState): string {
+  if (lifecycle === 'stopped') {
+    return 'stopped';
+  }
+  return runtime === 'needs-input' ? 'needs input' : runtime;
+}
+
+/**
+ * The copilot's `[N workers · M repos]` summary, with old-tree singular/plural
+ * and the repo clause dropped when a copilot manages only task workers. `null`
+ * when the copilot manages no workers (nothing to show).
+ */
+export function copilotSummaryLabel(workerCount: number, repoCount: number): string | null {
+  if (workerCount <= 0) {
+    return null;
+  }
+  const workers = `${workerCount} worker${workerCount === 1 ? '' : 's'}`;
+  if (repoCount <= 0) {
+    return `[${workers}]`;
+  }
+  const repos = `${repoCount} repo${repoCount === 1 ? '' : 's'}`;
+  return `[${workers} · ${repos}]`;
+}
+
+/** The `U:N` git-change token for a code-worker row, hidden (null) at 0/unknown. */
+export function gitChangeLabel(changed: number | null | undefined): string | null {
+  return changed && changed > 0 ? `U:${changed}` : null;
+}
+
 /**
  * A compact "time ago" for the last-event stamp. Kept coarse — the board is a
  * glanceable cockpit, not a log viewer. `now` is injectable for tests.

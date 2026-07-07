@@ -407,6 +407,14 @@
         color: var(--hy-accent);
         border-color: var(--hy-accent);
       }
+      /* Completed chip (✓ 已完成) — CJK, so drop the uppercase/letter-spacing. */
+      .hydra-chip--done {
+        flex: none;
+        color: var(--hy-ok);
+        border-color: var(--hy-ok);
+        text-transform: none;
+        letter-spacing: normal;
+      }
 
       .hydra-banner {
         display: flex;
@@ -846,12 +854,35 @@
         color: var(--hy-muted);
         white-space: nowrap;
       }
-      .hydra-row__sub {
-        font-size: 0.7rem;
+      /* Line-1 lifecycle/runtime token (worker) and [N workers · M repos] (copilot). */
+      .hydra-row__token,
+      .hydra-row__summary {
+        font-size: 0.72rem;
         color: var(--hy-muted);
+        white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      /* Line 2: relative time · U:N · completed chip — a compact inline strip. */
+      .hydra-row__sub {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-width: 0;
+        font-size: 0.7rem;
+        color: var(--hy-muted);
+      }
+      .hydra-row__time {
         white-space: nowrap;
+      }
+      .hydra-row__u {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      /* Unread notification count, pinned to the row's right edge before the ⋮. */
+      .hydra-row__unread {
+        flex: none;
+        margin-left: 0.15rem;
       }
       .hydra-row__menu {
         opacity: 0;

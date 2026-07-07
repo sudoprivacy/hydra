@@ -31,6 +31,7 @@ const {
   createBoardModel,
   applyEvent,
   applyEvents,
+  applyGitStatus,
   applyNotificationSnapshot,
   applySnapshot,
   selectBoard,
@@ -193,6 +194,59 @@ assert.equal(view.copilotCount, 0);
 assert.equal(view.groups[0].tiles[0].lifecycle, 'running', 'stale lifecycle override dropped after resync');
 assert.equal(view.groups[0].tiles[0].runtime, 'running', 'stale runtime override dropped after resync');
 assert.equal(view.groups[0].tiles[0].unread, 1, 'surviving session keeps its unread count');
+
+// ── 7. copilot [N workers · M repos] summary derived from the worker list ──
+
+{
+  const summarySnapshot = {
+    workers: [
+      worker({ session: 'w1', number: 1, repo: '/src/repo-a', copilotSessionName: 'copilot_captain' }),
+      worker({ session: 'w2', number: 2, repo: '/src/repo-b', copilotSessionName: 'copilot_captain' }),
+      worker({ session: 'w3', number: 3, type: 'task', repo: null, branch: null, workdir: '/n', copilotSessionName: 'copilot_captain' }),
+      worker({ session: 'w4', number: 4, repo: '/src/repo-a', copilotSessionName: null }), // unmanaged: ignored
+    ],
+    copilots: [copilot({})],
+    count: 5,
+  };
+  const summaryView = selectBoard(createBoardModel(summarySnapshot));
+  const copilotTile = summaryView.groups.find((group) => group.kind === 'copilots').tiles[0];
+  assert.equal(copilotTile.workerCount, 3, 'the copilot counts only its three managed workers');
+  assert.equal(copilotTile.repoCount, 2, 'two distinct repos (the task worker contributes none)');
+}
+
+// ── 8. completed chip folds from the notification stream; clears on running ──
+
+{
+  const completeNotif = {
+    loadedAt: '2026-01-01T00:00:00.000Z',
+    lastEventSeq: seq,
+    totalCount: 1,
+    unreadCount: 1,
+    notifications: [
+      { id: 'done1', createdAt: '2026-01-01T00:05:00.000Z', readAt: null, kind: 'complete', title: 'done', body: '', targetSession: 'repo-a_feat-one', sourceSession: null },
+    ],
+  };
+  let m = createBoardModel(snapshot);
+  // Worker went idle (agent finished) before the complete notification lands.
+  m = applyEvent(m, event('worker.runtime.changed', 'repo-a_feat-one', { state: 'idle' }));
+  m = applyNotificationSnapshot(m, completeNotif);
+  let v = selectBoard(m);
+  assert.equal(v.groups[0].tiles[0].completed, true, 'an idle worker with a complete notification is completed');
+
+  m = applyEvent(m, event('worker.runtime.changed', 'repo-a_feat-one', { state: 'running' }));
+  v = selectBoard(m);
+  assert.equal(v.groups[0].tiles[0].completed, false, 'the chip clears the moment the worker runs again');
+}
+
+// ── 9. git-status counts fold into CODE-worker tiles only ──
+
+{
+  let m = createBoardModel(snapshot);
+  m = applyGitStatus(m, { 'repo-a_feat-one': { changed: 3 }, task_notes: { changed: 9 } });
+  const v = selectBoard(m);
+  assert.equal(v.groups[0].tiles[0].changed, 3, 'the code worker shows its changed-file count');
+  assert.equal(v.groups[1].tiles[0].changed, null, 'a task worker never surfaces U:N, even if a count leaks in');
+}
 
 // ── misc invariants ──
 

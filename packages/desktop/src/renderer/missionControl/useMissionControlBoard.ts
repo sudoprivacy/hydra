@@ -17,6 +17,7 @@ import type { HydraControlClient, HydraEvent, NotificationSnapshot } from '@hydr
 
 import {
   applyEvents,
+  applyGitStatus,
   applyNotificationSnapshot,
   applySnapshot,
   createBoardModel,
@@ -30,6 +31,13 @@ import {
 const EVENT_FLUSH_MS = 16;
 /** Collapse a storm of membership events into one `listSessions()` refetch. */
 const RESYNC_DEBOUNCE_MS = 120;
+/**
+ * Cadence for the `git status --porcelain` poll that backs the sidebar `U:N`.
+ * Off the board tick on purpose — git is comparatively expensive, and change
+ * counts are glanceable context, not a live signal. One batched call covers
+ * every code worker; a resync (new worker) also kicks an immediate poll.
+ */
+const GIT_STATUS_POLL_MS = 15_000;
 
 export interface MissionControlBoard {
   /** The grouped, sorted view — `null` until the first snapshot loads. */
@@ -91,6 +99,8 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
 
   // A stable ref to the running refetch so `refresh()` and the debounce share it.
   const runResync = useRef<() => void>(() => {});
+  // A stable ref to the git-status poll so a resync can kick an immediate refresh.
+  const runGitStatusPoll = useRef<() => void>(() => {});
 
   useEffect(() => {
     disposed.current = false;
@@ -126,6 +136,8 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
             return;
           }
           setModel((prev) => (prev ? applySnapshot(prev, snapshot) : createBoardModel(snapshot)));
+          // The worker set may have changed (create/delete) — refresh counts now.
+          runGitStatusPoll.current();
         })
         .catch((cause: unknown) => {
           if (!disposed.current) {
@@ -154,6 +166,7 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
       .then((snapshot) => {
         if (!disposed.current) {
           setModel(createBoardModel(snapshot));
+          runGitStatusPoll.current();
         }
       })
       .catch((cause: unknown) => {
@@ -200,6 +213,32 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
         clearTimeout(resyncTimer.current);
         resyncTimer.current = null;
       }
+    };
+  }, [client]);
+
+  // Git-status poll: one batched `listGitStatus()` on an interval, plus the
+  // on-mount / on-resync kicks fired via `runGitStatusPoll`. Best-effort — a
+  // failure just leaves the last counts in place (the sidebar keeps rendering).
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      client
+        .listGitStatus()
+        .then((statuses) => {
+          if (!cancelled) {
+            setModel((prev) => (prev ? applyGitStatus(prev, statuses) : prev));
+          }
+        })
+        .catch(() => {
+          // Swallow: the board shows no `U:N` rather than surfacing a git error.
+        });
+    };
+    runGitStatusPoll.current = poll;
+    const timer = setInterval(poll, GIT_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      runGitStatusPoll.current = () => {};
+      clearInterval(timer);
     };
   }, [client]);
 
