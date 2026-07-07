@@ -176,20 +176,18 @@ export function applyEvents(model: BoardModel, events: readonly HydraEvent[]): B
 
 /**
  * Fold a notification snapshot into per-session unread counts AND the per-session
- * completion flag. A session is "completed" when its most recent UNREAD
- * notification (by `createdAt`) is of kind `complete` — the old tree's
- * `complete → 'completed'` mapping, surfaced here as the light chip.
+ * completion flag. A session is "completed" when its most recent notification
+ * (read OR unread, by `createdAt`) is of kind `complete` — so the chip PERSISTS
+ * after you glance at the notification, and is cleared only when the session
+ * resumes running (see the `worker.runtime.changed` handler). Mirrors the old
+ * tree's persistent `complete → 'completed'`.
  */
 export function applyNotificationSnapshot(model: BoardModel, snapshot: NotificationSnapshot): BoardModel {
   const unreadBySession: Record<string, number> = {};
-  // Track the newest unread notification per session so completion reflects the
-  // *latest* signal, not merely the presence of some old `complete`.
-  const latestUnread = new Map<string, { at: number; kind: string }>();
+  // Newest notification (read or unread) per session → drives the completed chip.
+  const latestBySession = new Map<string, { at: number; kind: string }>();
 
   for (const notification of snapshot.notifications) {
-    if (notification.readAt !== null) {
-      continue;
-    }
     // Count / classify a notification once per distinct session it references
     // (mirrors the engine's `bySession` index — target ∪ source).
     const sessions = new Set<string>();
@@ -200,17 +198,20 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
       sessions.add(notification.sourceSession);
     }
     const at = Date.parse(notification.createdAt);
+    const unread = notification.readAt === null;
     for (const session of sessions) {
-      unreadBySession[session] = (unreadBySession[session] ?? 0) + 1;
-      const current = latestUnread.get(session);
+      if (unread) {
+        unreadBySession[session] = (unreadBySession[session] ?? 0) + 1;
+      }
+      const current = latestBySession.get(session);
       if (!current || (Number.isFinite(at) && at >= current.at)) {
-        latestUnread.set(session, { at: Number.isFinite(at) ? at : 0, kind: notification.kind });
+        latestBySession.set(session, { at: Number.isFinite(at) ? at : 0, kind: notification.kind });
       }
     }
   }
 
   const completedBySession: Record<string, boolean> = {};
-  for (const [session, latest] of latestUnread) {
+  for (const [session, latest] of latestBySession) {
     if (latest.kind === 'complete') {
       completedBySession[session] = true;
     }

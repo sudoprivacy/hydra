@@ -167,6 +167,23 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
         if (!disposed.current) {
           setModel(createBoardModel(snapshot));
           runGitStatusPoll.current();
+          // The notification STREAM only pushes on CHANGE, and its initial
+          // snapshot can come up empty — so fetch the authoritative current
+          // notifications once so existing unread badges, attention, and the
+          // completed chip populate on first paint (not just after the next
+          // notification arrives).
+          client
+            .listNotifications()
+            .then((result) => {
+              if (!disposed.current) {
+                setModel((prev) =>
+                  prev ? applyNotificationSnapshot(prev, result as unknown as NotificationSnapshot) : prev,
+                );
+              }
+            })
+            .catch(() => {
+              /* non-fatal — the live stream still delivers updates */
+            });
         }
       })
       .catch((cause: unknown) => {
