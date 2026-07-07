@@ -43,7 +43,11 @@ export function WorkerTerminal(): JSX.Element {
 
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      // Latin from Menlo; CJK (and other non-Latin) fall back to the system
+      // fonts that actually have the glyphs — else Chinese/Japanese/Korean text
+      // renders blank in the Latin-only monospace fonts.
+      fontFamily:
+        'Menlo, Monaco, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Courier New", monospace',
       fontSize: 13,
       scrollback: 5000,
       // macOS option-as-meta so alt-keybindings reach tmux/vim.
