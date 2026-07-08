@@ -1,7 +1,6 @@
 // Preload — the secure IPC bridge. contextIsolation is on, so the renderer never
-// touches Node or ipcRenderer directly; it sees only `window.hydra.getBootstrap()`,
-// which resolves the { url, token } handoff. That is the ONLY thing exposed —
-// every domain call goes over the loopback transport, not IPC (FINAL §2).
+// touches Node or ipcRenderer directly. The exposed surface stays narrow:
+// bootstrap for loopback coordinates, plus validated external URL opening.
 
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -13,9 +12,11 @@ import type { HydraBootstrap, HydraBridge } from './bootstrap';
 // `window.hydra` unset (blank window). Import only TYPES from bootstrap and inline
 // the channel literal. Must stay equal to IPC_BOOTSTRAP_CHANNEL in bootstrap.ts.
 const IPC_BOOTSTRAP_CHANNEL = 'hydra:bootstrap';
+const IPC_OPEN_EXTERNAL_CHANNEL = 'hydra:open-external';
 
 const bridge: HydraBridge = {
   getBootstrap: (): Promise<HydraBootstrap> => ipcRenderer.invoke(IPC_BOOTSTRAP_CHANNEL),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC_OPEN_EXTERNAL_CHANNEL, url),
 };
 
 contextBridge.exposeInMainWorld('hydra', bridge);

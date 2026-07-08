@@ -7,6 +7,7 @@
   },
   "include": [
     "src/bootstrap.ts",
+    "src/externalLinks.ts",
     "src/sidecarLauncher.ts",
     "src/main.ts",
     "src/preload.ts",
@@ -15,7 +16,8 @@
     // getDiff→view mapping can run under `node` (the .tsx views are browser-only
     // and typechecked separately by tsconfig.renderer.json).
     "src/renderer/diff/diffModel.ts",
-    "src/smoke/diffModelSmoke.ts"
+    "src/smoke/diffModelSmoke.ts",
+    "src/smoke/externalLinksSmoke.ts"
   ],
   "references": [
     { "path": "../core" },
