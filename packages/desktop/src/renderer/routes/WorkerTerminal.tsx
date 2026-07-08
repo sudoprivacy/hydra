@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
 import type { Disposable, TerminalChannel } from '@hydra/protocol';
@@ -48,6 +49,10 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       return;
     }
 
+    const openTerminalLink = (uri: string): void => {
+      void window.hydra.openExternal(uri).catch(() => {});
+    };
+
     const term = new Terminal({
       cursorBlink: true,
       // Latin from Menlo; CJK (and other non-Latin) fall back to the system
@@ -61,10 +66,14 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       macOptionIsMeta: true,
       // Required to activate the Unicode 11 width provider below.
       allowProposedApi: true,
+      linkHandler: {
+        activate: (_event, uri) => openTerminalLink(uri),
+      },
       theme: { background: '#1e1e1e' },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon((_event, uri) => openTerminalLink(uri)));
     // Use modern (Unicode 11) character widths — the same fix VS Code's terminal
     // applies — so Claude Code's box-drawing / symbol TUI (─ ⏺ ⎿ ✻ …) lines up
     // instead of smearing. The raw stream is correct; only xterm's default

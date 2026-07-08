@@ -7,13 +7,15 @@
 //
 // It does NOT build Mission Control — the renderer is a thin React shell (M2).
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
+import { normalizeExternalHttpUrl } from './externalLinks';
 import { launchSidecar, type SidecarHandle } from './sidecarLauncher';
-import { IPC_BOOTSTRAP_CHANNEL, type HydraBootstrap } from './bootstrap';
+import { IPC_BOOTSTRAP_CHANNEL, IPC_OPEN_EXTERNAL_CHANNEL, type HydraBootstrap } from './bootstrap';
 
 let sidecar: SidecarHandle | undefined;
 let mainWindow: BrowserWindow | undefined;
@@ -54,14 +56,39 @@ function resolveUserPath(): string {
   return merged.join(':');
 }
 
+function requireRendererSender(event: IpcMainInvokeEvent): void {
+  if (event.sender !== mainWindow?.webContents) {
+    throw new Error('Refused IPC request from unknown renderer');
+  }
+}
+
+function registerOpenExternalIpc(): void {
+  ipcMain.handle(IPC_OPEN_EXTERNAL_CHANNEL, async (event, input: unknown) => {
+    requireRendererSender(event);
+    const url = normalizeExternalHttpUrl(input);
+    if (!url) {
+      throw new Error('Refused to open unsupported external URL');
+    }
+    await shell.openExternal(url);
+  });
+}
+
+function installNavigationGuards(window: BrowserWindow, appUrl: string): void {
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url !== appUrl) {
+      event.preventDefault();
+    }
+  });
+}
+
 async function start(): Promise<void> {
   const token = randomBytes(32).toString('hex');
   sidecar = await launchSidecar({ token, env: { PATH: resolveUserPath() } });
 
   const bootstrap: HydraBootstrap = { url: sidecar.url, token: sidecar.token };
-  // The single IPC surface: hand over the loopback coordinates, nothing else.
-  ipcMain.handle(IPC_BOOTSTRAP_CHANNEL, () => bootstrap);
-
+  const indexPath = path.join(__dirname, '..', 'index.html');
+  const appUrl = pathToFileURL(indexPath).href;
   mainWindow = new BrowserWindow({
     width: 1024,
     height: 720,
@@ -70,10 +97,17 @@ async function start(): Promise<void> {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
+  installNavigationGuards(mainWindow, appUrl);
+  ipcMain.handle(IPC_BOOTSTRAP_CHANNEL, (event) => {
+    requireRendererSender(event);
+    return bootstrap;
+  });
+  registerOpenExternalIpc();
 
-  await mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
+  await mainWindow.loadFile(indexPath);
 }
 
 app.whenReady().then(start).catch((error: unknown) => {
