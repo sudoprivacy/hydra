@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 out/
+packages/*/out/
+*.tsbuildinfo
 *.vsix
 
 # System files
@@ -28,3 +30,4 @@ vscode.proposed.*.d.ts
 
 .sisyphus/
 .hydra
+packages/desktop/dist/

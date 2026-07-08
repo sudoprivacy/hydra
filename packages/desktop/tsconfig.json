@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "out",
+    "types": ["node"]
+  },
+  "include": [
+    "src/bootstrap.ts",
+    "src/sidecarLauncher.ts",
+    "src/main.ts",
+    "src/preload.ts",
+    "src/bootCheck.ts",
+    // DOM-free diff view logic + its headless test, compiled to out/ so the
+    // getDiff→view mapping can run under `node` (the .tsx views are browser-only
+    // and typechecked separately by tsconfig.renderer.json).
+    "src/renderer/diff/diffModel.ts",
+    "src/smoke/diffModelSmoke.ts"
+  ],
+  "references": [
+    { "path": "../core" },
+    { "path": "../protocol" },
+    { "path": "../transport-loopback" },
+    { "path": "../sidecar" }
+  ]
+}

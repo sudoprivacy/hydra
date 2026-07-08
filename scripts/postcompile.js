@@ -1,27 +1,52 @@
 const fs = require('fs');
 const path = require('path');
 
-const cliEntry = path.join(__dirname, '..', 'out', 'cli', 'index.js');
+const repoRoot = path.join(__dirname, '..');
+const cliOut = path.join(repoRoot, 'packages', 'cli', 'out');
+const extOut = path.join(repoRoot, 'packages', 'extension', 'out');
 
-// Copy src/resources to out/resources
-const srcRes = path.join(__dirname, '..', 'src', 'resources');
-const outRes = path.join(__dirname, '..', 'out', 'resources');
-
-if (fs.existsSync(srcRes)) {
-  if (!fs.existsSync(outRes)) {
-    fs.mkdirSync(outRes, { recursive: true });
+function ensureShebang(file) {
+  if (!fs.existsSync(file)) {
+    return;
   }
-  fs.readdirSync(srcRes).forEach(file => {
-    fs.copyFileSync(path.join(srcRes, file), path.join(outRes, file));
-  });
-}
-
-if (fs.existsSync(cliEntry)) {
-  const content = fs.readFileSync(cliEntry, 'utf8');
+  const content = fs.readFileSync(file, 'utf8');
   if (!content.startsWith('#!/usr/bin/env node')) {
-    fs.writeFileSync(cliEntry, '#!/usr/bin/env node\n' + content);
+    fs.writeFileSync(file, '#!/usr/bin/env node\n' + content);
   }
   if (process.platform !== 'win32') {
-    fs.chmodSync(cliEntry, '755');
+    fs.chmodSync(file, 0o755);
   }
+}
+
+function copyDir(src, dest) {
+  if (!fs.existsSync(src)) {
+    return;
+  }
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDir(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+// 1. Make the built @hydra/cli entry a runnable bin (shebang + exec bit).
+ensureShebang(path.join(cliOut, 'cli', 'index.js'));
+
+// 2. Assemble the VS Code extension's self-contained runtime. The installed CLI
+//    wrapper (`~/.hydra/bin/hydra` -> `<extensionPath>/out/cli/index.js`, see
+//    core/cliInstaller.ts) and the extension `bin` both expect the compiled CLI
+//    at `out/cli/index.js`. Vendor the compiled CLI plus its `e2e`/`share`
+//    siblings into the extension's out/. `@hydra/core` is resolved at runtime
+//    from the extension's node_modules (workspace symlink in dev; a real copy
+//    dereferenced by scripts/prepare-vsix.js inside the packaged .vsix).
+if (fs.existsSync(extOut)) {
+  for (const sub of ['cli', 'e2e', 'share']) {
+    copyDir(path.join(cliOut, sub), path.join(extOut, sub));
+  }
+  ensureShebang(path.join(extOut, 'cli', 'index.js'));
 }

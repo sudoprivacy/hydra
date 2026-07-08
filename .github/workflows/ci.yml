@@ -143,7 +143,7 @@ jobs:
         Write-Host "Real worktree symlink fix test PASSED"
 
     - name: Doctor check (informational)
-      run: node out/cli/index.js doctor --json || true
+      run: node packages/cli/out/cli/index.js doctor --json || true
 
     - name: Version check
-      run: node out/cli/index.js --version
+      run: node packages/cli/out/cli/index.js --version

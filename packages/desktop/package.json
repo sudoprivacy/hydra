@@ -1,0 +1,68 @@
+{
+  "name": "@hydra/desktop",
+  "version": "0.3.2026062800",
+  "description": "Hydra desktop — Electron shell (M1). Main forks the plain-Node sidecar, mints a per-launch bearer token, and hands { url, token } to a React renderer that talks to the sidecar over LoopbackHttpWsTransport.",
+  "license": "MIT",
+  "private": true,
+  "main": "./out/main.js",
+  "scripts": {
+    "build:main": "tsc -b tsconfig.json",
+    "typecheck:renderer": "tsc -p tsconfig.renderer.json",
+    "build:renderer": "node scripts/build-frontend.mjs",
+    "build": "npm run build:main && npm run typecheck:renderer && npm run build:renderer",
+    "start": "electron out/main.js",
+    "boot-check": "node out/bootCheck.js",
+    "smoke:diff": "node out/smoke/diffModelSmoke.js",
+    "pack:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "dependencies": {
+    "@hydra/protocol": "*",
+    "@hydra/sidecar": "*",
+    "@hydra/transport-loopback": "*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-unicode11": "^0.8.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {
+    "@hydra/core": "*",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.28.0"
+  },
+  "build": {
+    "appId": "com.hydra.desktop",
+    "productName": "Hydra",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "asar": false,
+    "npmRebuild": false,
+    "electronVersion": "33.4.11",
+    "files": [
+      "out/**/*",
+      "index.html",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    }
+  }
+}

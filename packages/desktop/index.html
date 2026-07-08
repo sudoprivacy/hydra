@@ -1,0 +1,1224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Locked down: no remote content. Scripts are the local bundle only; the
+      renderer's data plane connects to the loopback sidecar over http/ws on
+      127.0.0.1 (any port), which is what connect-src allows.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:"
+    />
+    <!-- xterm.js styles, bundled by esbuild from @xterm/xterm/css/xterm.css. -->
+    <link rel="stylesheet" href="./out/renderer.css" />
+    <title>Hydra</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      body {
+        margin: 0;
+      }
+      .hydra-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .hydra-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 190px;
+        padding: 1rem;
+        border-right: 1px solid rgba(128, 128, 128, 0.3);
+      }
+      .hydra-brand {
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+      }
+      .hydra-content {
+        flex: 1;
+        padding: 1.25rem 1.75rem;
+      }
+      .hydra-status--error,
+      .hydra-list__meta {
+        opacity: 0.85;
+      }
+      .hydra-status--error {
+        color: #c0392b;
+      }
+      .hydra-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .hydra-list__item {
+        display: flex;
+        gap: 0.75rem;
+        align-items: baseline;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+      }
+      .hydra-list__title {
+        font-weight: 600;
+      }
+      .hydra-list__actions {
+        margin-left: auto;
+        display: flex;
+        gap: 0.75rem;
+      }
+      .hydra-empty {
+        opacity: 0.7;
+      }
+
+      /* ── Mission Control (M2) ─────────────────────────────────────────── */
+      :root {
+        --hy-bg: #ffffff;
+        --hy-panel: #f6f7f9;
+        --hy-tile: #ffffff;
+        --hy-border: rgba(0, 0, 0, 0.12);
+        --hy-border-strong: rgba(0, 0, 0, 0.2);
+        --hy-text: #1b1f24;
+        --hy-muted: rgba(0, 0, 0, 0.55);
+        --hy-accent: #2f6feb;
+        --hy-accent-contrast: #ffffff;
+        --hy-danger: #c0392b;
+        --hy-warn: #b9761b;
+        --hy-ok: #2e9e5b;
+        --hy-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.08);
+        --hy-run-running: #2e9e5b;
+        --hy-run-idle: #6b7280;
+        --hy-run-needs-input: #b9761b;
+        --hy-run-error: #c0392b;
+        --hy-run-unknown: #9aa0a6;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --hy-bg: #14171b;
+          --hy-panel: #1b1f24;
+          --hy-tile: #21262d;
+          --hy-border: rgba(255, 255, 255, 0.1);
+          --hy-border-strong: rgba(255, 255, 255, 0.2);
+          --hy-text: #e6e9ee;
+          --hy-muted: rgba(255, 255, 255, 0.55);
+          --hy-accent: #4f8cff;
+          --hy-danger: #e5645a;
+          --hy-warn: #e0a44a;
+          --hy-ok: #4cc07f;
+          --hy-run-running: #4cc07f;
+          --hy-run-idle: #9aa4b2;
+          --hy-run-needs-input: #e0a44a;
+          --hy-run-error: #e5645a;
+          --hy-run-unknown: #7d848e;
+        }
+      }
+      body {
+        background: var(--hy-bg);
+        color: var(--hy-text);
+      }
+
+      .hydra-board {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .hydra-board__bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem 1.25rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid var(--hy-border);
+      }
+      .hydra-board__heading {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .hydra-board__heading h1 {
+        margin: 0;
+        font-size: 1.25rem;
+      }
+      .hydra-live {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--hy-muted);
+      }
+      .hydra-live__dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--hy-run-unknown);
+      }
+      .hydra-live--on .hydra-live__dot {
+        background: var(--hy-ok);
+        box-shadow: 0 0 0 3px rgba(46, 158, 91, 0.2);
+      }
+      .hydra-live--off .hydra-live__dot {
+        background: var(--hy-warn);
+      }
+      .hydra-board__stats {
+        display: flex;
+        gap: 1rem;
+      }
+      .hydra-stat {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.1;
+      }
+      .hydra-stat__value {
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+      .hydra-stat__label {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--hy-muted);
+      }
+      .hydra-stat--accent .hydra-stat__value {
+        color: var(--hy-accent);
+      }
+      .hydra-stat--warn .hydra-stat__value {
+        color: var(--hy-warn);
+      }
+      .hydra-board__actions {
+        display: flex;
+        gap: 0.4rem;
+        margin-left: auto;
+        flex-wrap: wrap;
+      }
+
+      .hydra-btn {
+        appearance: none;
+        font: inherit;
+        font-size: 0.82rem;
+        line-height: 1;
+        padding: 0.45rem 0.7rem;
+        border-radius: 6px;
+        border: 1px solid var(--hy-border-strong);
+        background: var(--hy-tile);
+        color: var(--hy-text);
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .hydra-btn:hover {
+        border-color: var(--hy-accent);
+      }
+      .hydra-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .hydra-btn--primary {
+        background: var(--hy-accent);
+        border-color: var(--hy-accent);
+        color: var(--hy-accent-contrast);
+      }
+      .hydra-btn--danger {
+        color: var(--hy-danger);
+        border-color: var(--hy-danger);
+      }
+      .hydra-btn--danger:hover {
+        background: var(--hy-danger);
+        color: #fff;
+      }
+      .hydra-btn--sm {
+        font-size: 0.74rem;
+        padding: 0.28rem 0.5rem;
+      }
+
+      .hydra-board__groups {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .hydra-board__empty {
+        padding: 2.5rem 0;
+        text-align: center;
+      }
+      .hydra-muted {
+        color: var(--hy-muted);
+      }
+      .hydra-group__head {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 0.6rem;
+      }
+      .hydra-group__title {
+        margin: 0;
+        font-size: 0.95rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .hydra-group__icon {
+        color: var(--hy-muted);
+      }
+      .hydra-group__count {
+        font-size: 0.78rem;
+        color: var(--hy-muted);
+        background: var(--hy-panel);
+        border-radius: 999px;
+        padding: 0.05rem 0.5rem;
+      }
+      .hydra-group__grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 0.75rem;
+      }
+
+      .hydra-tile {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        padding: 0.7rem 0.8rem;
+        border: 1px solid var(--hy-border);
+        border-left: 3px solid var(--hy-run-unknown);
+        border-radius: 8px;
+        background: var(--hy-tile);
+        box-shadow: var(--hy-shadow);
+      }
+      .hydra-tile--stopped {
+        opacity: 0.72;
+        border-left-color: var(--hy-run-unknown);
+      }
+      .hydra-tile--copilot {
+        border-left-color: var(--hy-accent);
+      }
+      .hydra-tile__top {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+      .hydra-tile__number {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: var(--hy-muted);
+      }
+      .hydra-tile__name {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-tile__badges {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin-left: auto;
+      }
+      .hydra-tile__detail {
+        font-size: 0.82rem;
+        color: var(--hy-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-tile__sub {
+        font-size: 0.74rem;
+        color: var(--hy-muted);
+      }
+      .hydra-tile__foot {
+        display: flex;
+        gap: 0.6rem;
+        align-items: baseline;
+        font-size: 0.72rem;
+        color: var(--hy-muted);
+      }
+      .hydra-tile__reason {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-tile__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-top: 0.15rem;
+      }
+
+      .hydra-runtime {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        color: #fff;
+        background: var(--hy-run-unknown);
+        white-space: nowrap;
+      }
+      .hydra-runtime--running { background: var(--hy-run-running); }
+      .hydra-runtime--idle { background: var(--hy-run-idle); }
+      .hydra-runtime--needs-input { background: var(--hy-run-needs-input); }
+      .hydra-runtime--error { background: var(--hy-run-error); }
+      .hydra-runtime--unknown { background: var(--hy-run-unknown); }
+
+      .hydra-dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        display: inline-block;
+        flex: none;
+      }
+      .hydra-dot--running { background: var(--hy-ok); }
+      .hydra-dot--stopped {
+        background: transparent;
+        border: 1.5px solid var(--hy-run-unknown);
+      }
+
+      .hydra-badge {
+        font-size: 0.68rem;
+        font-weight: 700;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: var(--hy-panel);
+        color: var(--hy-text);
+      }
+      .hydra-badge--unread {
+        background: var(--hy-accent);
+        color: var(--hy-accent-contrast);
+      }
+      .hydra-badge--warn {
+        background: var(--hy-warn);
+        color: #fff;
+      }
+      .hydra-chip {
+        font-size: 0.66rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--hy-muted);
+        border: 1px solid var(--hy-border-strong);
+        border-radius: 999px;
+        padding: 0.05rem 0.4rem;
+      }
+      .hydra-chip--plan {
+        color: var(--hy-accent);
+        border-color: var(--hy-accent);
+      }
+      /* Completed chip (✓ 已完成) — CJK, so drop the uppercase/letter-spacing. */
+      .hydra-chip--done {
+        flex: none;
+        color: var(--hy-ok);
+        border-color: var(--hy-ok);
+        text-transform: none;
+        letter-spacing: normal;
+      }
+
+      .hydra-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        margin-bottom: 0.75rem;
+      }
+      .hydra-banner--error {
+        background: rgba(192, 57, 43, 0.12);
+        border: 1px solid var(--hy-danger);
+        color: var(--hy-danger);
+      }
+      .hydra-banner__close,
+      .hydra-modal__close {
+        margin-left: auto;
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+      }
+
+      /* ── dialogs ── */
+      .hydra-modal__backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 8vh 1rem 1rem;
+        z-index: 50;
+      }
+      .hydra-modal {
+        width: min(460px, 100%);
+        background: var(--hy-bg);
+        color: var(--hy-text);
+        border: 1px solid var(--hy-border-strong);
+        border-radius: 10px;
+        box-shadow: var(--hy-shadow);
+        overflow: hidden;
+      }
+      .hydra-modal__head {
+        display: flex;
+        align-items: center;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--hy-border);
+      }
+      .hydra-modal__title {
+        margin: 0;
+        font-size: 1rem;
+      }
+      .hydra-modal__body {
+        padding: 1rem;
+      }
+      .hydra-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+      }
+      .hydra-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .hydra-field__label {
+        font-size: 0.76rem;
+        color: var(--hy-muted);
+      }
+      .hydra-field__req {
+        color: var(--hy-danger);
+      }
+      .hydra-field__input {
+        font: inherit;
+        padding: 0.45rem 0.55rem;
+        border-radius: 6px;
+        border: 1px solid var(--hy-border-strong);
+        background: var(--hy-tile);
+        color: var(--hy-text);
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .hydra-field__input:focus {
+        outline: 2px solid var(--hy-accent);
+        outline-offset: -1px;
+      }
+      .hydra-checkbox {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+        font-size: 0.82rem;
+      }
+      .hydra-form__error {
+        margin: 0;
+        color: var(--hy-danger);
+        font-size: 0.82rem;
+      }
+      .hydra-form__hint {
+        margin: 0;
+        color: var(--hy-muted);
+        font-size: 0.78rem;
+      }
+      .hydra-form__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.25rem;
+      }
+      .hydra-segmented {
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.2rem;
+        background: var(--hy-panel);
+        border-radius: 8px;
+      }
+      .hydra-segmented--sub {
+        background: transparent;
+        padding: 0;
+      }
+      .hydra-seg {
+        flex: 1;
+        appearance: none;
+        font: inherit;
+        font-size: 0.8rem;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--hy-text);
+        cursor: pointer;
+      }
+      .hydra-seg--active {
+        background: var(--hy-tile);
+        border-color: var(--hy-border-strong);
+        font-weight: 600;
+      }
+      /* Terminal view — fills its tab pane (the pane owns the height now). */
+      .hydra-terminal {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        height: 100%;
+        min-height: 0;
+      }
+      .hydra-terminal__header {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+      .hydra-terminal__header h1 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+      .hydra-terminal__session {
+        opacity: 0.8;
+      }
+      .hydra-terminal__status {
+        margin-left: auto;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.85;
+      }
+      .hydra-terminal__status--connected {
+        color: #2e7d32;
+      }
+      .hydra-terminal__status--connecting {
+        color: #b8860b;
+      }
+      .hydra-terminal__status--exited {
+        color: #c0392b;
+      }
+      .hydra-terminal__surface {
+        flex: 1;
+        min-height: 0;
+        background: #1e1e1e;
+        padding: 0.5rem;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      /* ── IDE shell (sidebar tree + tab area + status bar) ─────────────── */
+      .hydra-app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      .hydra-app__main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .hydra-app__sidebar {
+        flex: none;
+        min-width: 0;
+        display: flex;
+        overflow: hidden;
+      }
+      .hydra-app__tabs {
+        flex: 1;
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+      }
+      .hydra-resizer {
+        flex: none;
+        width: 6px;
+        cursor: col-resize;
+        background: transparent;
+        border-right: 1px solid var(--hy-border);
+      }
+      .hydra-resizer:hover,
+      body.hydra-resizing .hydra-resizer {
+        background: var(--hy-accent);
+        border-right-color: var(--hy-accent);
+      }
+      body.hydra-resizing {
+        cursor: col-resize;
+        user-select: none;
+      }
+
+      /* ── sidebar ──────────────────────────────────────────────────────── */
+      .hydra-sidebar {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--hy-panel);
+      }
+      .hydra-sidebar__header {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.55rem 0.6rem;
+        border-bottom: 1px solid var(--hy-border);
+      }
+      .hydra-sidebar__brand {
+        font-weight: 700;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        color: var(--hy-muted);
+      }
+      .hydra-sidebar__tools {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.1rem;
+      }
+      .hydra-sidebar__scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 0.35rem 0.3rem 1rem;
+      }
+      .hydra-sidebar__status {
+        padding: 0.5rem 0.6rem;
+        font-size: 0.82rem;
+      }
+
+      .hydra-iconbtn {
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--hy-text);
+        cursor: pointer;
+        font-size: 0.95rem;
+        line-height: 1;
+        width: 1.7rem;
+        height: 1.7rem;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .hydra-iconbtn:hover {
+        background: var(--hy-tile);
+        border-color: var(--hy-border-strong);
+      }
+
+      .hydra-overview-entry {
+        appearance: none;
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        font-size: 0.86rem;
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.35rem 0.5rem;
+        margin-bottom: 0.25rem;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--hy-text);
+        cursor: pointer;
+      }
+      .hydra-overview-entry:hover {
+        background: var(--hy-tile);
+      }
+      .hydra-overview-entry--selected {
+        background: var(--hy-tile);
+        box-shadow: inset 2px 0 0 var(--hy-accent);
+      }
+
+      /* ── tree ─────────────────────────────────────────────────────────── */
+      .hydra-tree {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .hydra-tree__head,
+      .hydra-repo__head {
+        appearance: none;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font: inherit;
+        border: none;
+        background: transparent;
+        color: var(--hy-muted);
+        cursor: pointer;
+        padding: 0.25rem 0.4rem;
+        border-radius: 5px;
+      }
+      .hydra-tree__head:hover,
+      .hydra-repo__head:hover {
+        background: var(--hy-tile);
+      }
+      .hydra-tree__title {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .hydra-tree__count,
+      .hydra-repo__head .hydra-tree__count {
+        margin-left: auto;
+        font-size: 0.7rem;
+        color: var(--hy-muted);
+        background: var(--hy-bg);
+        border-radius: 999px;
+        padding: 0.02rem 0.4rem;
+      }
+      .hydra-tree__body,
+      .hydra-repo__body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+      .hydra-tree__empty {
+        margin: 0.1rem 0 0.3rem 1.4rem;
+        font-size: 0.78rem;
+        color: var(--hy-muted);
+      }
+      .hydra-repo {
+        margin-left: 0.5rem;
+      }
+      .hydra-repo__label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--hy-text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-repo__base {
+        font-size: 0.72rem;
+        color: var(--hy-muted);
+      }
+      .hydra-repo__body {
+        margin-left: 0.35rem;
+      }
+      .hydra-caret {
+        display: inline-block;
+        font-size: 0.7rem;
+        transition: transform 0.12s ease;
+        color: var(--hy-muted);
+      }
+      .hydra-caret--open {
+        transform: rotate(90deg);
+      }
+
+      /* ── tree row ─────────────────────────────────────────────────────── */
+      .hydra-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.3rem 0.45rem 0.3rem 1.2rem;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .hydra-row:hover {
+        background: var(--hy-tile);
+      }
+      .hydra-row:focus-visible {
+        outline: 2px solid var(--hy-accent);
+        outline-offset: -2px;
+      }
+      .hydra-row--selected {
+        background: var(--hy-tile);
+        box-shadow: inset 2px 0 0 var(--hy-accent);
+      }
+      .hydra-row--no-open {
+        cursor: default;
+      }
+      .hydra-row__main {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+      .hydra-row__line {
+        display: flex;
+        align-items: baseline;
+        gap: 0.35rem;
+        min-width: 0;
+      }
+      .hydra-row__name {
+        font-size: 0.84rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-row__num {
+        font-size: 0.72rem;
+        color: var(--hy-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .hydra-row__agent {
+        font-size: 0.72rem;
+        color: var(--hy-muted);
+        white-space: nowrap;
+      }
+      /* Line-1 lifecycle/runtime token (worker) and [N workers · M repos] (copilot). */
+      .hydra-row__token,
+      .hydra-row__summary {
+        font-size: 0.72rem;
+        color: var(--hy-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* Line 2: relative time · U:N · completed chip — a compact inline strip. */
+      .hydra-row__sub {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-width: 0;
+        font-size: 0.7rem;
+        color: var(--hy-muted);
+      }
+      .hydra-row__time {
+        white-space: nowrap;
+      }
+      .hydra-row__u {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      /* Unread notification count, pinned to the row's right edge before the ⋮. */
+      .hydra-row__unread {
+        flex: none;
+        margin-left: 0.15rem;
+      }
+      .hydra-row__menu {
+        opacity: 0;
+      }
+      .hydra-row:hover .hydra-row__menu,
+      .hydra-row:focus-within .hydra-row__menu,
+      .hydra-row--selected .hydra-row__menu,
+      .hydra-row__menu.hydra-menu--open {
+        opacity: 1;
+      }
+
+      /* ── status dots (shared by tree + tabs) ──────────────────────────── */
+      .hydra-sdot {
+        width: 0.6rem;
+        height: 0.6rem;
+        border-radius: 50%;
+        flex: none;
+        box-sizing: border-box;
+        display: inline-block;
+        position: relative;
+      }
+      .hydra-sdot--running { background: var(--hy-run-running); }
+      .hydra-sdot--idle {
+        background: transparent;
+        border: 1.5px solid var(--hy-run-idle);
+      }
+      .hydra-sdot--stopped { background: var(--hy-muted); }
+      .hydra-sdot--needs-input {
+        background: var(--hy-run-needs-input);
+        box-shadow: 0 0 0 2px rgba(185, 118, 27, 0.25);
+      }
+      .hydra-sdot--error { background: var(--hy-run-error); }
+      .hydra-sdot--unknown { background: var(--hy-run-unknown); }
+
+      /* ── live activity motion ─────────────────────────────────────────────
+         Only genuinely-active states move: running (a worker actively churning,
+         or a live copilot) breathes + emits a soft radar ping; needs-input pulses
+         an amber halo because it's waiting on you. idle/stopped/error stay still
+         so the board doesn't shimmer. Honours the OS reduced-motion setting.
+         The same dot class is used in the sidebar and the tab strip. */
+      @keyframes hy-breathe {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.22); opacity: 0.65; }
+      }
+      @keyframes hy-ping {
+        0% { box-shadow: 0 0 0 0 var(--hy-run-running); opacity: 0.45; }
+        100% { box-shadow: 0 0 0 5px var(--hy-run-running); opacity: 0; }
+      }
+      @keyframes hy-attention {
+        0%, 100% { box-shadow: 0 0 0 2px rgba(185, 118, 27, 0.28); }
+        50% { box-shadow: 0 0 0 5px rgba(185, 118, 27, 0.0); }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .hydra-sdot--running { animation: hy-breathe 1.6s ease-in-out infinite; }
+        .hydra-sdot--running::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: 50%;
+          animation: hy-ping 1.8s ease-out infinite;
+        }
+        .hydra-sdot--needs-input { animation: hy-attention 1.1s ease-in-out infinite; }
+      }
+
+      /* ── dropdown menu ────────────────────────────────────────────────── */
+      .hydra-menu {
+        position: relative;
+        display: inline-flex;
+      }
+      .hydra-menu__panel {
+        position: absolute;
+        top: calc(100% + 3px);
+        z-index: 40;
+        min-width: 168px;
+        padding: 0.25rem;
+        background: var(--hy-bg);
+        border: 1px solid var(--hy-border-strong);
+        border-radius: 8px;
+        box-shadow: var(--hy-shadow);
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
+      }
+      .hydra-menu__panel--left { left: 0; }
+      .hydra-menu__panel--right { right: 0; }
+      .hydra-menu__item {
+        appearance: none;
+        text-align: left;
+        font: inherit;
+        font-size: 0.82rem;
+        padding: 0.4rem 0.55rem;
+        border: none;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--hy-text);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .hydra-menu__item:hover {
+        background: var(--hy-panel);
+      }
+      .hydra-menu__item--danger {
+        color: var(--hy-danger);
+      }
+      .hydra-menu__item:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* ── tab bar ──────────────────────────────────────────────────────── */
+      .hydra-tabbar {
+        flex: none;
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        padding: 0.3rem 0.4rem 0;
+        border-bottom: 1px solid var(--hy-border);
+        overflow-x: auto;
+        background: var(--hy-bg);
+      }
+      .hydra-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        max-width: 220px;
+        padding: 0.35rem 0.5rem;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 7px 7px 0 0;
+        background: transparent;
+        color: var(--hy-muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.82rem;
+      }
+      .hydra-tab:hover {
+        background: var(--hy-panel);
+      }
+      .hydra-tab:focus-visible {
+        outline: 2px solid var(--hy-accent);
+        outline-offset: -2px;
+      }
+      .hydra-tab--active {
+        background: var(--hy-panel);
+        border-color: var(--hy-border);
+        color: var(--hy-text);
+      }
+      .hydra-tab--attention:not(.hydra-tab--active) {
+        color: var(--hy-warn);
+      }
+      .hydra-tab--attention {
+        box-shadow: inset 0 2px 0 var(--hy-warn);
+      }
+      .hydra-tab__glyph {
+        font-size: 0.9rem;
+      }
+      .hydra-tab__label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-tab__close {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 0.95rem;
+        line-height: 1;
+        padding: 0 0.15rem;
+        border-radius: 4px;
+        opacity: 0.6;
+      }
+      .hydra-tab__close:hover {
+        opacity: 1;
+        background: var(--hy-border-strong);
+      }
+
+      /* ── tab area + panes (keep-alive: hidden panes stay mounted) ─────── */
+      .hydra-tabarea {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .hydra-tabarea__panes {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+      }
+      .hydra-pane {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .hydra-pane[hidden] {
+        display: none;
+      }
+      .hydra-pane__inner {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .hydra-pane__toolbar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.45rem 0.75rem;
+        border-bottom: 1px solid var(--hy-border);
+      }
+      .hydra-pane__title {
+        font-size: 0.82rem;
+        color: var(--hy-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-pane__body {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+      }
+      .hydra-pane__view {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 0.6rem 0.75rem 0.75rem;
+        box-sizing: border-box;
+      }
+      .hydra-pane__view[hidden] {
+        display: none;
+      }
+      .hydra-seg-toggle {
+        margin-left: auto;
+        display: inline-flex;
+        gap: 0.15rem;
+        padding: 0.15rem;
+        background: var(--hy-panel);
+        border-radius: 7px;
+      }
+      .hydra-seg-toggle__btn {
+        appearance: none;
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.25rem 0.7rem;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--hy-text);
+        cursor: pointer;
+      }
+      .hydra-seg-toggle__btn--active {
+        background: var(--hy-tile);
+        border-color: var(--hy-border-strong);
+        font-weight: 600;
+      }
+
+      .hydra-overview {
+        height: 100%;
+        overflow: auto;
+        padding: 1rem 1.25rem 1.5rem;
+        box-sizing: border-box;
+      }
+
+      /* ── status bar ───────────────────────────────────────────────────── */
+      .hydra-statusbar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        height: 1.9rem;
+        padding: 0 0.85rem;
+        border-top: 1px solid var(--hy-border);
+        background: var(--hy-panel);
+        font-size: 0.74rem;
+        color: var(--hy-muted);
+      }
+      .hydra-statusbar__live {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+      .hydra-statusbar__dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--hy-run-unknown);
+      }
+      .hydra-statusbar__live--on .hydra-statusbar__dot {
+        background: var(--hy-ok);
+        box-shadow: 0 0 0 3px rgba(46, 158, 91, 0.2);
+      }
+      .hydra-statusbar__live--off .hydra-statusbar__dot {
+        background: var(--hy-warn);
+      }
+      .hydra-statusbar__counts {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .hydra-statusbar__count strong {
+        color: var(--hy-text);
+        font-variant-numeric: tabular-nums;
+      }
+      .hydra-statusbar__count--accent strong { color: var(--hy-accent); }
+      .hydra-statusbar__count--warn strong { color: var(--hy-warn); }
+      .hydra-statusbar__sep {
+        opacity: 0.5;
+      }
+
+      /* Direct-action error banner, floated so it never disturbs the shell. */
+      .hydra-toast {
+        position: fixed;
+        top: 0.6rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 60;
+        max-width: 90vw;
+      }
+      .hydra-toast .hydra-banner {
+        margin: 0;
+        box-shadow: var(--hy-shadow);
+        /* Opaque base (it floats over content) with the error tint layered on. */
+        background: linear-gradient(rgba(192, 57, 43, 0.12), rgba(192, 57, 43, 0.12)), var(--hy-panel);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./out/renderer.js"></script>
+  </body>
+</html>

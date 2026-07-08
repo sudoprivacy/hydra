@@ -1,462 +1,84 @@
 {
-  "name": "hydra-code",
-  "displayName": "Hydra Code",
-  "description": "Monitor and orchestrate parallel AI coding agents — see every worker's status, git diff, and terminal output from one sidebar",
+  "name": "hydra-monorepo",
   "version": "0.3.2026062800",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "publisher": "zhoujinjing",
+  "description": "Hydra monorepo — @hydra/core engine, @hydra/cli, and the hydra-code VS Code extension",
   "license": "MIT",
-  "icon": "resources/icon.png",
-  "categories": [
-    "Other",
-    "SCM Providers"
-  ],
-  "keywords": [
-    "tmux",
-    "worktree",
-    "git",
-    "git-worktree",
-    "terminal",
-    "session",
-    "branch",
-    "workflow",
-    "ai-coding",
-    "vibe-coding",
-    "claude-code",
-    "codex",
-    "gemini",
-    "sudocode",
-    "sudo-code",
-    "ai-agents",
-    "parallel-development",
-    "multi-branch",
-    "coding-agent",
-    "remote-ssh"
-  ],
-  "galleryBanner": {
-    "color": "#1BB352",
-    "theme": "dark"
-  },
-  "badges": [],
-  "homepage": "https://github.com/sudoprivacy/hydra",
-  "bugs": {
-    "url": "https://github.com/sudoprivacy/hydra/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/sudoprivacy/hydra.git"
-  },
-  "main": "./out/extension.js",
-  "bin": {
-    "hydra": "./out/cli/index.js"
-  },
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "tmux-explorer",
-          "title": "Hydra",
-          "icon": "resources/hydra-activitybar.svg"
-        }
-      ]
-    },
-    "views": {
-      "tmux-explorer": [
-        {
-          "id": "hydraCopilots",
-          "name": "Copilots"
-        },
-        {
-          "id": "hydraWorkers",
-          "name": "Workers"
-        }
-      ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "hydraCopilots",
-        "contents": "Start a copilot to orchestrate AI workers."
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Copilot (Claude)](command:hydra.startCopilotClaude)",
-        "when": "hydra.claudeAvailable"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Copilot (Codex)](command:hydra.startCopilotCodex)",
-        "when": "hydra.codexAvailable"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Copilot (Gemini)](command:hydra.startCopilotGemini)",
-        "when": "hydra.geminiAvailable"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Copilot (Antigravity)](command:hydra.startCopilotAntigravity)",
-        "when": "hydra.antigravityAvailable"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "[Start Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
-        "when": "hydra.sudocodeAvailable"
-      },
-      {
-        "view": "hydraCopilots",
-        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Antigravity CLI](https://antigravity.google), or Sudo Code.",
-        "when": "hydra.noAgentsAvailable"
-      }
-    ],
-    "commands": [
-      {
-        "command": "tmux.attachCreate",
-        "title": "Hydra: Attach/Create Session"
-      },
-      {
-        "command": "hydra.createWorker",
-        "title": "Hydra: Create Worker"
-      },
-      {
-        "command": "tmux.removeTask",
-        "title": "Hydra: Remove"
-      },
-      {
-        "command": "tmux.refresh",
-        "title": "Refresh",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "tmux.attach",
-        "title": "Open Shell"
-      },
-      {
-        "command": "tmux.attachInEditor",
-        "title": "Attach in Editor"
-      },
-      {
-        "command": "tmux.openWorktree",
-        "title": "Open Folder in New Window"
-      },
-      {
-        "command": "tmux.reviewChanges",
-        "title": "Review Changes",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "tmux.copyPath",
-        "title": "Copy Path"
-      },
-      {
-        "command": "tmux.newPane",
-        "title": "New Pane (Split)"
-      },
-      {
-        "command": "tmux.newWindow",
-        "title": "New Window"
-      },
-      {
-        "command": "tmux.terminalPaste",
-        "title": "Hydra: Smart Paste (Image Support)"
-      },
-      {
-        "command": "tmux.pasteImage",
-        "title": "Hydra: Paste Image from Clipboard"
-      },
-      {
-        "command": "tmux.createWorktreeFromBranch",
-        "title": "Create Worktree from This Branch"
-      },
-      {
-        "command": "hydra.openPR",
-        "title": "Hydra: Open PR"
-      },
-      {
-        "command": "hydra.openSessionNotification",
-        "title": "Hydra: Open Notification"
-      },
-      {
-        "command": "hydra.markSessionNotificationsRead",
-        "title": "Hydra: Mark Notifications Read"
-      },
-      {
-        "command": "hydra.clearSessionNotifications",
-        "title": "Hydra: Clear Notifications"
-      },
-      {
-        "command": "hydra.createCopilot",
-        "title": "Hydra: Create Copilot",
-        "icon": "$(add)"
-      },
-      {
-        "command": "hydra.startPlanCopilot",
-        "title": "Hydra: Start Planner"
-      },
-      {
-        "command": "hydra.startCopilotClaude",
-        "title": "Hydra: Start Copilot (Claude)"
-      },
-      {
-        "command": "hydra.startCopilotCodex",
-        "title": "Hydra: Start Copilot (Codex)"
-      },
-      {
-        "command": "hydra.startCopilotGemini",
-        "title": "Hydra: Start Copilot (Gemini)"
-      },
-      {
-        "command": "hydra.startCopilotAntigravity",
-        "title": "Hydra: Start Copilot (Antigravity)"
-      },
-      {
-        "command": "hydra.startCopilotSudoCode",
-        "title": "Hydra: Start Copilot (Sudo Code)"
-      },
-      {
-        "command": "hydra.showLogs",
-        "title": "Hydra: Show Logs"
-      },
-      {
-        "command": "hydra.openLogsFolder",
-        "title": "Hydra: Open Logs Folder"
-      },
-      {
-        "command": "hydra.copyDiagnosticInfo",
-        "title": "Hydra: Copy Diagnostic Info"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "tmux.terminalPaste",
-        "key": "cmd+v",
-        "when": "terminalFocus",
-        "mac": "cmd+v",
-        "linux": "ctrl+shift+v"
-      }
-    ],
-    "configuration": {
-      "title": "Hydra",
-      "properties": {
-        "tmuxWorktree.multiplexer": {
-          "type": "string",
-          "enum": [
-            "tmux"
-          ],
-          "default": "tmux",
-          "markdownDescription": "Terminal multiplexer backend (`tmux`)."
-        },
-        "tmuxWorktree.baseBranch": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Legacy setting: override the base branch used when creating new code-worker worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect from `origin/main`, `main`, `origin/master`, `master`."
-        },
-        "hydra.baseBranch": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Override the base branch used when creating new worker worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect. Takes precedence over `tmuxWorktree.baseBranch`."
-        },
-        "hydra.defaultAgent": {
-          "type": "string",
-          "enum": [
-            "claude",
-            "codex",
-            "gemini",
-            "antigravity",
-            "sudocode",
-            "custom"
-          ],
-          "default": "claude",
-          "markdownDescription": "Default AI agent to launch in new copilot/worker sessions. Hydra syncs this setting to the CLI default agent config."
-        },
-        "hydra.agentCommands": {
-          "type": "object",
-          "default": {
-            "claude": "claude",
-            "codex": "codex",
-            "gemini": "gemini",
-            "antigravity": "agy",
-            "sudocode": "scode"
-          },
-          "markdownDescription": "Map of agent type to shell command used to launch the agent."
-        },
-        "hydra.notifyCopilotOnWorkerComplete": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Automatically notify the parent copilot when a worker finishes its task. The notification is sent as a message to the copilot's tmux session."
-        },
-        "hydra.logging.level": {
-          "type": "string",
-          "enum": [
-            "debug",
-            "info",
-            "warn",
-            "error"
-          ],
-          "default": "info",
-          "markdownDescription": "Minimum level written to the Hydra diagnostic log file. Debug logging is more verbose and may include command start/success entries."
-        },
-        "hydra.logging.maxFileSizeMB": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "markdownDescription": "Maximum size in MB of the active Hydra diagnostic log before rotation."
-        },
-        "hydra.logging.maxFiles": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "markdownDescription": "Maximum number of Hydra diagnostic log files to retain, including the active hydra.log."
-        }
-      }
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "tmux.refresh",
-          "when": "view == hydraCopilots || view == hydraWorkers",
-          "group": "navigation"
-        },
-        {
-          "command": "hydra.createCopilot",
-          "when": "view == hydraCopilots",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "tmux.reviewChanges",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
-          "group": "1_open@1"
-        },
-        {
-          "command": "tmux.openWorktree",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
-          "group": "1_open@2"
-        },
-        {
-          "command": "tmux.attach",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "1_open@3"
-        },
-        {
-          "command": "hydra.openSessionNotification",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "1_open@4"
-        },
-        {
-          "command": "hydra.markSessionNotificationsRead",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "5_notifications@1"
-        },
-        {
-          "command": "hydra.clearSessionNotifications",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "5_notifications@2"
-        },
-        {
-          "command": "tmux.copyPath",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
-          "group": "2_copy"
-        },
-        {
-          "command": "tmux.removeTask",
-          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "9_danger"
-        }
-      ]
-    }
-  },
-  "activationEvents": [
-    "onView:hydraCopilots",
-    "onCommand:tmux.attachCreate",
-    "onCommand:hydra.createWorker",
-    "onCommand:tmux.removeTask",
-    "onCommand:tmux.refresh",
-    "onCommand:tmux.attach",
-    "onCommand:tmux.attachInEditor",
-    "onCommand:tmux.openWorktree",
-    "onCommand:tmux.reviewChanges",
-    "onCommand:tmux.copyPath",
-    "onCommand:tmux.newPane",
-    "onCommand:tmux.newWindow",
-    "onCommand:tmux.terminalPaste",
-    "onCommand:tmux.pasteImage",
-    "onCommand:tmux.createWorktreeFromBranch",
-    "onCommand:hydra.openPR",
-    "onCommand:hydra.createCopilot",
-    "onCommand:hydra.startPlanCopilot",
-    "onCommand:hydra.startCopilotClaude",
-    "onCommand:hydra.startCopilotCodex",
-    "onCommand:hydra.startCopilotGemini",
-    "onCommand:hydra.startCopilotAntigravity",
-    "onCommand:hydra.startCopilotSudoCode",
-    "onCommand:hydra.showLogs",
-    "onCommand:hydra.openLogsFolder",
-    "onCommand:hydra.copyDiagnosticInfo"
+  "private": true,
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "compile": "tsc -p ./ && node scripts/postcompile.js",
-    "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
+    "postinstall": "node scripts/ensure-pty-helper.js",
+    "compile": "tsc -b tsconfig.json && node scripts/postcompile.js",
+    "watch": "tsc -b -w tsconfig.json",
+    "clean": "tsc -b tsconfig.json --clean",
+    "lint": "eslint packages/*/src --ext ts",
+    "package:vsix": "node scripts/package-vsix.js",
+    "sync-version": "node scripts/sync-version.js",
+    "desktop:build": "npm run build -w @hydra/desktop",
+    "desktop:start": "npm run start -w @hydra/desktop",
+    "desktop:boot-check": "npm run boot-check -w @hydra/desktop",
+    "smoke:desktop-diff": "node packages/desktop/out/smoke/diffModelSmoke.js",
     "verify:shell-quoting": "node scripts/verify-shell-quoting.js",
     "e2e:isolated": "node scripts/e2e-isolated-runner.js",
     "e2e:isolated:shell": "node scripts/e2e-isolated-runner.js --shell --keep",
-    "smoke:tmux-attach": "node out/smoke/tmuxAttachSmoke.js",
-    "smoke:identity": "node out/smoke/sessionIdentitySmoke.js",
-    "smoke:copilot-env-e2e": "node out/smoke/copilotEnvE2eSmoke.js",
-    "smoke:codex-bypass": "node out/smoke/codexBypassSmoke.js",
-    "smoke:completion-hook": "node out/smoke/completionHookSmoke.js",
-    "smoke:task-worker": "node out/smoke/taskWorkerSmoke.js",
-    "smoke:task-worker-cli-e2e": "node out/smoke/taskWorkerCliE2eSmoke.js",
-    "smoke:worker-delete": "node out/smoke/workerDeleteFailClosedSmoke.js",
-    "smoke:telemetry": "node out/smoke/telemetrySmoke.js",
-    "smoke:telemetry-e2e": "node out/smoke/telemetryE2eSmoke.js",
-    "smoke:telemetry-posthog-real": "node out/smoke/telemetryPostHogRealSmoke.js",
-    "smoke:logging": "node out/smoke/loggingSmoke.js",
-    "smoke:logging-cli-e2e": "node out/smoke/loggingCliE2eSmoke.js",
-    "smoke:session-file-resolve": "node out/smoke/sessionFileResolveSmoke.js",
-    "smoke:sudocode-agent": "node out/smoke/sudocodeAgentSmoke.js",
-    "smoke:cli-session-fields": "node out/smoke/cliSessionFieldsSmoke.js",
-    "smoke:cli-config": "node out/smoke/cliConfigSmoke.js",
-    "smoke:cli-contract": "node out/smoke/cliContractSmoke.js",
-    "smoke:events-cli": "node out/smoke/eventsCliSmoke.js",
-    "smoke:notify-cli": "node out/smoke/notifyCliSmoke.js",
-    "smoke:worker-attention-notification": "node out/smoke/workerAttentionNotificationSmoke.js",
-    "smoke:worker-needs-input": "node out/smoke/workerNeedsInputSmoke.js",
-    "smoke:worker-runtime-state": "node out/smoke/workerRuntimeStateSmoke.js",
-    "smoke:notification-state": "node out/smoke/notificationStateServiceSmoke.js",
-    "smoke:session-notification-summary": "node out/smoke/sessionNotificationSummarySmoke.js",
-    "smoke:agent-registry": "node out/smoke/agentRegistrySmoke.js",
-    "smoke:share": "node out/smoke/shareBundleSmoke.js",
-    "smoke:repo-registry": "node out/smoke/repoRegistrySmoke.js",
-    "smoke:windows-format-quoting": "node out/smoke/windowsFormatQuotingSmoke.js",
-    "smoke:exec-powershell": "node out/smoke/execPowerShellSmoke.js",
-    "smoke:notify-hook-windows": "node out/smoke/notifyHookWindowsSmoke.js",
-    "smoke:cpu-probe": "node out/smoke/cpuProbeSmoke.js",
-    "smoke:shell-quote": "node out/smoke/shellQuoteSmoke.js",
-    "smoke:copilot-session-env": "node out/smoke/copilotSessionEnvSmoke.js",
-    "smoke:shell-quote-display": "node out/smoke/shellQuoteForDisplaySmoke.js",
-    "smoke:carry-over-quote": "node out/smoke/carryOverPatchQuoteSmoke.js",
-    "smoke:shell-target-e2e": "node out/smoke/shellTargetEndToEndSmoke.js",
-    "smoke:pane-shell-probe": "node out/smoke/paneShellProbeSmoke.js",
-    "smoke:enhanced-path-windows": "node out/smoke/enhancedPathWindowsSmoke.js",
-    "test": "npm run compile && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows",
-    "smoke:windows-cli-wrapper": "node out/smoke/windowsCliWrapperSmoke.js"
+    "smoke:version-consistency": "node packages/core/out/smoke/versionConsistencySmoke.js",
+    "smoke:tmux-attach": "node packages/core/out/smoke/tmuxAttachSmoke.js",
+    "smoke:identity": "node packages/core/out/smoke/sessionIdentitySmoke.js",
+    "smoke:copilot-env-e2e": "node packages/cli/out/smoke/copilotEnvE2eSmoke.js",
+    "smoke:codex-bypass": "node packages/core/out/smoke/codexBypassSmoke.js",
+    "smoke:completion-hook": "node packages/cli/out/smoke/completionHookSmoke.js",
+    "smoke:task-worker": "node packages/core/out/smoke/taskWorkerSmoke.js",
+    "smoke:task-worker-cli-e2e": "node packages/cli/out/smoke/taskWorkerCliE2eSmoke.js",
+    "smoke:worker-delete": "node packages/core/out/smoke/workerDeleteFailClosedSmoke.js",
+    "smoke:telemetry": "node packages/cli/out/smoke/telemetrySmoke.js",
+    "smoke:telemetry-e2e": "node packages/cli/out/smoke/telemetryE2eSmoke.js",
+    "smoke:telemetry-posthog-real": "node packages/core/out/smoke/telemetryPostHogRealSmoke.js",
+    "smoke:logging": "node packages/core/out/smoke/loggingSmoke.js",
+    "smoke:logging-cli-e2e": "node packages/cli/out/smoke/loggingCliE2eSmoke.js",
+    "smoke:session-file-resolve": "node packages/core/out/smoke/sessionFileResolveSmoke.js",
+    "smoke:sudocode-agent": "node packages/core/out/smoke/sudocodeAgentSmoke.js",
+    "smoke:cli-session-fields": "node packages/cli/out/smoke/cliSessionFieldsSmoke.js",
+    "smoke:cli-config": "node packages/cli/out/smoke/cliConfigSmoke.js",
+    "smoke:cli-contract": "node packages/cli/out/smoke/cliContractSmoke.js",
+    "smoke:seam": "node packages/sidecar/out/smoke/seamSmoke.js",
+    "smoke:protocol-contract": "node packages/sidecar/out/smoke/protocolContractSmoke.js",
+    "smoke:loopback": "node packages/sidecar/out/smoke/loopbackSmoke.js",
+    "smoke:mission-control": "node packages/desktop/scripts/missionControlBoardSmoke.mjs",
+    "smoke:terminal": "node packages/sidecar/out/smoke/terminalSmoke.js",
+    "smoke:events-cli": "node packages/cli/out/smoke/eventsCliSmoke.js",
+    "smoke:notify-cli": "node packages/cli/out/smoke/notifyCliSmoke.js",
+    "smoke:worker-attention-notification": "node packages/core/out/smoke/workerAttentionNotificationSmoke.js",
+    "smoke:worker-needs-input": "node packages/cli/out/smoke/workerNeedsInputSmoke.js",
+    "smoke:worker-runtime-state": "node packages/cli/out/smoke/workerRuntimeStateSmoke.js",
+    "smoke:notification-state": "node packages/cli/out/smoke/notificationStateServiceSmoke.js",
+    "smoke:session-notification-summary": "node packages/core/out/smoke/sessionNotificationSummarySmoke.js",
+    "smoke:agent-registry": "node packages/core/out/smoke/agentRegistrySmoke.js",
+    "smoke:share": "node packages/cli/out/smoke/shareBundleSmoke.js",
+    "smoke:repo-registry": "node packages/core/out/smoke/repoRegistrySmoke.js",
+    "smoke:windows-format-quoting": "node packages/core/out/smoke/windowsFormatQuotingSmoke.js",
+    "smoke:exec-powershell": "node packages/core/out/smoke/execPowerShellSmoke.js",
+    "smoke:notify-hook-windows": "node packages/core/out/smoke/notifyHookWindowsSmoke.js",
+    "smoke:cpu-probe": "node packages/extension/out/smoke/cpuProbeSmoke.js",
+    "smoke:shell-quote": "node packages/core/out/smoke/shellQuoteSmoke.js",
+    "smoke:copilot-session-env": "node packages/core/out/smoke/copilotSessionEnvSmoke.js",
+    "smoke:shell-quote-display": "node packages/core/out/smoke/shellQuoteForDisplaySmoke.js",
+    "smoke:carry-over-quote": "node packages/extension/out/smoke/carryOverPatchQuoteSmoke.js",
+    "smoke:shell-target-e2e": "node packages/core/out/smoke/shellTargetEndToEndSmoke.js",
+    "smoke:pane-shell-probe": "node packages/core/out/smoke/paneShellProbeSmoke.js",
+    "smoke:enhanced-path-windows": "node packages/core/out/smoke/enhancedPathWindowsSmoke.js",
+    "smoke:send-message": "node packages/core/out/smoke/sendMessageSmoke.js",
+    "smoke:windows-cli-wrapper": "node packages/core/out/smoke/windowsCliWrapperSmoke.js",
+    "test": "npm run compile && npm run smoke:version-consistency && npm run smoke:tmux-attach && npm run smoke:identity && npm run smoke:copilot-env-e2e && npm run smoke:codex-bypass && npm run smoke:completion-hook && npm run smoke:task-worker && npm run smoke:task-worker-cli-e2e && npm run smoke:worker-delete && npm run smoke:telemetry && npm run smoke:telemetry-e2e && npm run smoke:logging && npm run smoke:logging-cli-e2e && npm run smoke:session-file-resolve && npm run smoke:sudocode-agent && npm run smoke:cli-session-fields && npm run smoke:cli-config && npm run smoke:cli-contract && npm run smoke:seam && npm run smoke:protocol-contract && npm run smoke:loopback && npm run smoke:terminal && npm run smoke:events-cli && npm run smoke:notify-cli && npm run smoke:worker-attention-notification && npm run smoke:worker-needs-input && npm run smoke:worker-runtime-state && npm run smoke:notification-state && npm run smoke:session-notification-summary && npm run smoke:agent-registry && npm run smoke:share && npm run smoke:repo-registry && npm run smoke:windows-format-quoting && npm run smoke:windows-cli-wrapper && npm run smoke:exec-powershell && npm run smoke:notify-hook-windows && npm run smoke:cpu-probe && npm run smoke:shell-quote && npm run smoke:copilot-session-env && npm run smoke:shell-quote-display && npm run smoke:carry-over-quote && npm run smoke:shell-target-e2e && npm run smoke:pane-shell-probe && npm run smoke:enhanced-path-windows"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",
     "globals": "^17.0.0",
     "typescript": "^5.3.0"
-  },
-  "dependencies": {
-    "commander": "^14.0.3",
-    "iconv-lite": "^0.7.2",
-    "posthog-node": "^5.33.3"
   }
 }

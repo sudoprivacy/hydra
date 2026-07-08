@@ -45,16 +45,32 @@ Release a new version of the Hydra VS Code extension by creating a release PR.
 
    Prepend the new section to `CHANGELOG.md` after the `# Changelog` header.
 
-4. **Bump version in all files**
+4. **Bump the version (single source of truth = root `package.json`)**
 
-   Update the version string in:
-   - `package.json` (`"version"` field)
-   - `package-lock.json` (both root `"version"` and `packages[""].version`)
+   Set the new version string **only** in the root `package.json` (`"version"` field),
+   then propagate it to every workspace manifest and the lockfile:
+
+   ```bash
+   npm run sync-version
+   ```
+
+   `sync-version` writes the root version into `packages/core/package.json`,
+   `packages/cli/package.json`, `packages/extension/package.json`, and
+   `package-lock.json` (root `version`, `packages[""].version`, and each
+   `packages/<pkg>` entry). This keeps the git tag (from root, via
+   `auto-tag-release.yml`) equal to the published version (the .vsix is built from
+   `packages/extension/package.json`, the CLI/telemetry versions come from the
+   `@hydra/*` manifests).
+
+   Do **not** hand-edit the workspace manifests. The `smoke:version-consistency`
+   test (run as part of `npm test`) fails closed if any of the four manifests
+   diverge, and `scripts/package-vsix.js` refuses to build a .vsix whose version
+   disagrees with the root.
 
 5. **Commit and create release PR**
 
    ```bash
-   git add package.json package-lock.json CHANGELOG.md
+   git add package.json package-lock.json packages/*/package.json CHANGELOG.md
    git commit -m "chore: release v<version>"
    git push -u origin HEAD
    ```

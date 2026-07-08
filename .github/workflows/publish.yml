@@ -32,6 +32,9 @@ jobs:
       - name: Read version from package.json
         id: version
         run: |
+          # Root package.json is the single source of truth for the release version.
+          # sync-version.js keeps every workspace manifest + the packaged .vsix in
+          # lockstep, and package-vsix.js fails closed if they diverge.
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -46,11 +49,8 @@ jobs:
             echo 'RELEASE_NOTES_EOF'
           } >> $GITHUB_OUTPUT
 
-      - name: Compile
-        run: npm run compile
-
       - name: Package VSIX
-        run: npx @vscode/vsce package --out "hydra-${{ steps.version.outputs.version }}.vsix"
+        run: npm run package:vsix
 
       - name: Publish to VS Code Marketplace
         env:

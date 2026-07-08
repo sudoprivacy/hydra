@@ -1,0 +1,30 @@
+{
+  "name": "@hydra/sidecar",
+  "version": "0.3.2026062200",
+  "description": "Hydra sidecar — the server side of the seam. HydraAppService imports @hydra/core in-process (loopback HTTP/WS server lands in M1).",
+  "license": "MIT",
+  "private": true,
+  "main": "./out/index.js",
+  "types": "./out/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./out/index.d.ts",
+      "default": "./out/index.js"
+    },
+    "./*": {
+      "types": "./out/*.d.ts",
+      "default": "./out/*.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "compile": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "@hydra/core": "*",
+    "@hydra/protocol": "*",
+    "@hydra/transport-loopback": "*",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  }
+}

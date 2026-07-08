@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@hydra/core": ["packages/core/out/index.d.ts"],
+      "@hydra/core/*": ["packages/core/out/core/*"],
+      "@hydra/protocol": ["packages/protocol/out/index.d.ts"],
+      "@hydra/protocol/*": ["packages/protocol/out/*"],
+      "@hydra/transport-loopback": ["packages/transport-loopback/out/index.d.ts"],
+      "@hydra/transport-loopback/*": ["packages/transport-loopback/out/*"],
+      "@hydra/sidecar": ["packages/sidecar/out/index.d.ts"],
+      "@hydra/sidecar/*": ["packages/sidecar/out/*"]
+    }
+  }
+}

@@ -7,7 +7,7 @@ const { spawnSync } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_ROOT_PREFIX = path.join(os.tmpdir(), 'hydra-e2e-');
-const CLI_ENTRY = path.join(REPO_ROOT, 'out', 'cli', 'index.js');
+const CLI_ENTRY = path.join(REPO_ROOT, 'packages', 'cli', 'out', 'cli', 'index.js');
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;

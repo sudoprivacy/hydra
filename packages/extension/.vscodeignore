@@ -1,0 +1,22 @@
+# Sources & build metadata (ship compiled out/ only)
+src/**
+tsconfig.json
+tsconfig.tsbuildinfo
+**/*.map
+**/*.ts
+**/*.tsbuildinfo
+
+# Test artifacts that must not ship in the extension
+out/smoke/**
+
+# Dev-only tooling / editor
+.vscode/**
+.vscode-test/**
+.gitignore
+.eslintrc*
+eslint.config.js
+
+# Keep node_modules lean: drop type packages and lockfiles
+node_modules/.package-lock.json
+node_modules/.bin/**
+node_modules/@types/**

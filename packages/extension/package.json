@@ -1,0 +1,411 @@
+{
+  "name": "hydra-code",
+  "displayName": "Hydra Code",
+  "description": "Monitor and orchestrate parallel AI coding agents — see every worker's status, git diff, and terminal output from one sidebar",
+  "version": "0.3.2026062800",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "publisher": "zhoujinjing",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "tmux",
+    "worktree",
+    "git",
+    "git-worktree",
+    "terminal",
+    "session",
+    "branch",
+    "workflow",
+    "ai-coding",
+    "vibe-coding",
+    "claude-code",
+    "codex",
+    "gemini",
+    "sudocode",
+    "sudo-code",
+    "ai-agents",
+    "parallel-development",
+    "multi-branch",
+    "coding-agent",
+    "remote-ssh"
+  ],
+  "galleryBanner": {
+    "color": "#1BB352",
+    "theme": "dark"
+  },
+  "badges": [],
+  "homepage": "https://github.com/sudoprivacy/hydra",
+  "bugs": {
+    "url": "https://github.com/sudoprivacy/hydra/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sudoprivacy/hydra.git"
+  },
+  "main": "./out/extension.js",
+  "bin": {
+    "hydra": "./out/cli/index.js"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tmux-explorer",
+          "title": "Hydra",
+          "icon": "resources/hydra-activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "tmux-explorer": [
+        {
+          "id": "hydraCopilots",
+          "name": "Copilots"
+        },
+        {
+          "id": "hydraWorkers",
+          "name": "Workers"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "hydraCopilots",
+        "contents": "Start a copilot to orchestrate AI workers."
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Copilot (Claude)](command:hydra.startCopilotClaude)",
+        "when": "hydra.claudeAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Copilot (Codex)](command:hydra.startCopilotCodex)",
+        "when": "hydra.codexAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Copilot (Gemini)](command:hydra.startCopilotGemini)",
+        "when": "hydra.geminiAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Copilot (Antigravity)](command:hydra.startCopilotAntigravity)",
+        "when": "hydra.antigravityAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "[Start Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
+        "when": "hydra.sudocodeAvailable"
+      },
+      {
+        "view": "hydraCopilots",
+        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Antigravity CLI](https://antigravity.google), or Sudo Code.",
+        "when": "hydra.noAgentsAvailable"
+      }
+    ],
+    "commands": [
+      {
+        "command": "tmux.attachCreate",
+        "title": "Hydra: Attach/Create Session"
+      },
+      {
+        "command": "hydra.createWorker",
+        "title": "Hydra: Create Worker"
+      },
+      {
+        "command": "tmux.removeTask",
+        "title": "Hydra: Remove"
+      },
+      {
+        "command": "tmux.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "tmux.attach",
+        "title": "Open Shell"
+      },
+      {
+        "command": "tmux.attachInEditor",
+        "title": "Attach in Editor"
+      },
+      {
+        "command": "tmux.openWorktree",
+        "title": "Open Folder in New Window"
+      },
+      {
+        "command": "tmux.reviewChanges",
+        "title": "Review Changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "tmux.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "tmux.newPane",
+        "title": "New Pane (Split)"
+      },
+      {
+        "command": "tmux.newWindow",
+        "title": "New Window"
+      },
+      {
+        "command": "tmux.terminalPaste",
+        "title": "Hydra: Smart Paste (Image Support)"
+      },
+      {
+        "command": "tmux.pasteImage",
+        "title": "Hydra: Paste Image from Clipboard"
+      },
+      {
+        "command": "tmux.createWorktreeFromBranch",
+        "title": "Create Worktree from This Branch"
+      },
+      {
+        "command": "hydra.openPR",
+        "title": "Hydra: Open PR"
+      },
+      {
+        "command": "hydra.openSessionNotification",
+        "title": "Hydra: Open Notification"
+      },
+      {
+        "command": "hydra.markSessionNotificationsRead",
+        "title": "Hydra: Mark Notifications Read"
+      },
+      {
+        "command": "hydra.clearSessionNotifications",
+        "title": "Hydra: Clear Notifications"
+      },
+      {
+        "command": "hydra.createCopilot",
+        "title": "Hydra: Create Copilot",
+        "icon": "$(add)"
+      },
+      {
+        "command": "hydra.startPlanCopilot",
+        "title": "Hydra: Start Planner"
+      },
+      {
+        "command": "hydra.startCopilotClaude",
+        "title": "Hydra: Start Copilot (Claude)"
+      },
+      {
+        "command": "hydra.startCopilotCodex",
+        "title": "Hydra: Start Copilot (Codex)"
+      },
+      {
+        "command": "hydra.startCopilotGemini",
+        "title": "Hydra: Start Copilot (Gemini)"
+      },
+      {
+        "command": "hydra.startCopilotAntigravity",
+        "title": "Hydra: Start Copilot (Antigravity)"
+      },
+      {
+        "command": "hydra.startCopilotSudoCode",
+        "title": "Hydra: Start Copilot (Sudo Code)"
+      },
+      {
+        "command": "hydra.showLogs",
+        "title": "Hydra: Show Logs"
+      },
+      {
+        "command": "hydra.openLogsFolder",
+        "title": "Hydra: Open Logs Folder"
+      },
+      {
+        "command": "hydra.copyDiagnosticInfo",
+        "title": "Hydra: Copy Diagnostic Info"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tmux.terminalPaste",
+        "key": "cmd+v",
+        "when": "terminalFocus",
+        "mac": "cmd+v",
+        "linux": "ctrl+shift+v"
+      }
+    ],
+    "configuration": {
+      "title": "Hydra",
+      "properties": {
+        "tmuxWorktree.multiplexer": {
+          "type": "string",
+          "enum": [
+            "tmux"
+          ],
+          "default": "tmux",
+          "markdownDescription": "Terminal multiplexer backend (`tmux`)."
+        },
+        "tmuxWorktree.baseBranch": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Legacy setting: override the base branch used when creating new code-worker worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect from `origin/main`, `main`, `origin/master`, `master`."
+        },
+        "hydra.baseBranch": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Override the base branch used when creating new worker worktrees (e.g. `master`, `origin/master`). Leave empty to auto-detect. Takes precedence over `tmuxWorktree.baseBranch`."
+        },
+        "hydra.defaultAgent": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex",
+            "gemini",
+            "antigravity",
+            "sudocode",
+            "custom"
+          ],
+          "default": "claude",
+          "markdownDescription": "Default AI agent to launch in new copilot/worker sessions. Hydra syncs this setting to the CLI default agent config."
+        },
+        "hydra.agentCommands": {
+          "type": "object",
+          "default": {
+            "claude": "claude",
+            "codex": "codex",
+            "gemini": "gemini",
+            "antigravity": "agy",
+            "sudocode": "scode"
+          },
+          "markdownDescription": "Map of agent type to shell command used to launch the agent."
+        },
+        "hydra.notifyCopilotOnWorkerComplete": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically notify the parent copilot when a worker finishes its task. The notification is sent as a message to the copilot's tmux session."
+        },
+        "hydra.logging.level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info",
+          "markdownDescription": "Minimum level written to the Hydra diagnostic log file. Debug logging is more verbose and may include command start/success entries."
+        },
+        "hydra.logging.maxFileSizeMB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "markdownDescription": "Maximum size in MB of the active Hydra diagnostic log before rotation."
+        },
+        "hydra.logging.maxFiles": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "markdownDescription": "Maximum number of Hydra diagnostic log files to retain, including the active hydra.log."
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "tmux.refresh",
+          "when": "view == hydraCopilots || view == hydraWorkers",
+          "group": "navigation"
+        },
+        {
+          "command": "hydra.createCopilot",
+          "when": "view == hydraCopilots",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "tmux.reviewChanges",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem')",
+          "group": "1_open@1"
+        },
+        {
+          "command": "tmux.openWorktree",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
+          "group": "1_open@2"
+        },
+        {
+          "command": "tmux.attach",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "1_open@3"
+        },
+        {
+          "command": "hydra.openSessionNotification",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "1_open@4"
+        },
+        {
+          "command": "hydra.markSessionNotificationsRead",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "5_notifications@1"
+        },
+        {
+          "command": "hydra.clearSessionNotifications",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "5_notifications@2"
+        },
+        {
+          "command": "tmux.copyPath",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem')",
+          "group": "2_copy"
+        },
+        {
+          "command": "tmux.removeTask",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
+          "group": "9_danger"
+        }
+      ]
+    }
+  },
+  "activationEvents": [
+    "onView:hydraCopilots",
+    "onCommand:tmux.attachCreate",
+    "onCommand:hydra.createWorker",
+    "onCommand:tmux.removeTask",
+    "onCommand:tmux.refresh",
+    "onCommand:tmux.attach",
+    "onCommand:tmux.attachInEditor",
+    "onCommand:tmux.openWorktree",
+    "onCommand:tmux.reviewChanges",
+    "onCommand:tmux.copyPath",
+    "onCommand:tmux.newPane",
+    "onCommand:tmux.newWindow",
+    "onCommand:tmux.terminalPaste",
+    "onCommand:tmux.pasteImage",
+    "onCommand:tmux.createWorktreeFromBranch",
+    "onCommand:hydra.openPR",
+    "onCommand:hydra.createCopilot",
+    "onCommand:hydra.startPlanCopilot",
+    "onCommand:hydra.startCopilotClaude",
+    "onCommand:hydra.startCopilotCodex",
+    "onCommand:hydra.startCopilotGemini",
+    "onCommand:hydra.startCopilotAntigravity",
+    "onCommand:hydra.startCopilotSudoCode",
+    "onCommand:hydra.showLogs",
+    "onCommand:hydra.openLogsFolder",
+    "onCommand:hydra.copyDiagnosticInfo"
+  ],
+  "scripts": {
+    "compile": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "@hydra/core": "*",
+    "commander": "^14.0.3",
+    "iconv-lite": "^0.7.2",
+    "posthog-node": "^5.33.3"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}
