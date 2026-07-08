@@ -354,6 +354,7 @@ export class SessionManager {
   async sync(): Promise<SessionState> {
     const liveSessions = await this.backend.listSessions();
     const liveSessionMap = new Map(liveSessions.map(s => [s.name, s]));
+    const orphanedWorkerSessions: string[] = [];
     const discoveredSessions = new Map<string, {
       role: 'worker' | 'copilot';
       agent: string;
@@ -376,7 +377,7 @@ export class SessionManager {
       });
     }));
 
-    return this.updateSessionState((state) => {
+    const state = await this.updateSessionState((state) => {
       const now = new Date().toISOString();
       let dirty = false;
 
@@ -410,6 +411,7 @@ export class SessionManager {
           if (worker.attached !== false) { worker.attached = false; dirty = true; }
         } else {
           // Orphan: tmux dead + no worktree
+          orphanedWorkerSessions.push(worker.sessionName);
           delete state.workers[key];
           dirty = true;
         }
@@ -495,6 +497,10 @@ export class SessionManager {
       markSessionStateDirty(state, dirty);
       return state;
     });
+    for (const sessionName of orphanedWorkerSessions) {
+      this.clearWorkerRuntimeState(sessionName, 'sync-orphan');
+    }
+    return state;
   }
 
   async listWorkers(repoRoot?: string): Promise<WorkerInfo[]> {
@@ -920,61 +926,77 @@ export class SessionManager {
             throw error;
           }
         }
-      } else if (worker && worker.workdir && worker.repoRoot && fs.existsSync(worker.workdir)) {
-        logger.info('session.delete', 'Removing worker worktree', {
-          ...context,
-          phase: 'removeWorktree',
-          repoRoot: worker.repoRoot,
-        });
-        try {
-          await coreGit.removeWorktree(worker.repoRoot, worker.workdir);
-          removedWorktree = true;
-          logger.info('session.delete', 'Removed worker worktree', {
+      } else if (worker && isRepoWorker(worker) && worker.workdir) {
+        const workdirExists = fs.existsSync(worker.workdir);
+        const canRunGitCleanup = workdirExists && await this.canRunRepoWorkerGitCleanup(worker);
+        if (workdirExists && canRunGitCleanup && worker.repoRoot) {
+          logger.info('session.delete', 'Removing worker worktree', {
             ...context,
             phase: 'removeWorktree',
-            repoRoot: worker.repoRoot,
-          });
-        } catch (error) {
-          await this.updateSessionState((state) => {
-            if (state.workers[sessionName]) {
-              state.workers[sessionName].status = 'stopped';
-              state.workers[sessionName].attached = false;
-              state.updatedAt = new Date().toISOString();
-            }
-          });
-          logger.error('session.delete', 'Failed to remove worker worktree', {
-            ...context,
-            phase: 'removeWorktree',
-            repoRoot: worker.repoRoot,
-            error,
-          });
-          throw error;
-        }
-
-        if (worker.branch) {
-          logger.info('session.delete', 'Deleting worker branch', {
-            ...context,
-            phase: 'deleteBranch',
             repoRoot: worker.repoRoot,
           });
           try {
-            await exec(`git branch -D ${shellQuote(worker.branch)}`, {
-              cwd: worker.repoRoot,
-              logFailure: false,
-            });
-            deletedBranch = true;
-            logger.info('session.delete', 'Deleted worker branch', {
+            await coreGit.removeWorktree(worker.repoRoot, worker.workdir);
+            removedWorktree = true;
+            logger.info('session.delete', 'Removed worker worktree', {
               ...context,
-              phase: 'deleteBranch',
+              phase: 'removeWorktree',
               repoRoot: worker.repoRoot,
             });
-          } catch {
-            logger.debug('session.delete', 'Worker branch was not deleted', {
-              ...context,
-              phase: 'deleteBranch',
-              repoRoot: worker.repoRoot,
+          } catch (error) {
+            await this.updateSessionState((state) => {
+              if (state.workers[sessionName]) {
+                state.workers[sessionName].status = 'stopped';
+                state.workers[sessionName].attached = false;
+                state.updatedAt = new Date().toISOString();
+              }
             });
+            logger.error('session.delete', 'Failed to remove worker worktree', {
+              ...context,
+              phase: 'removeWorktree',
+              repoRoot: worker.repoRoot,
+              error,
+            });
+            throw error;
           }
+
+          if (worker.branch) {
+            logger.info('session.delete', 'Deleting worker branch', {
+              ...context,
+              phase: 'deleteBranch',
+              repoRoot: worker.repoRoot,
+            });
+            try {
+              await exec(`git branch -D ${shellQuote(worker.branch)}`, {
+                cwd: worker.repoRoot,
+                logFailure: false,
+              });
+              deletedBranch = true;
+              logger.info('session.delete', 'Deleted worker branch', {
+                ...context,
+                phase: 'deleteBranch',
+                repoRoot: worker.repoRoot,
+              });
+            } catch {
+              logger.debug('session.delete', 'Worker branch was not deleted', {
+                ...context,
+                phase: 'deleteBranch',
+                repoRoot: worker.repoRoot,
+              });
+            }
+          }
+        } else if (workdirExists) {
+          logger.warn('session.delete', 'Skipping worker worktree cleanup because repo root is unavailable', {
+            ...context,
+            phase: 'skipWorktreeCleanup',
+            repoRoot: worker.repoRoot,
+          });
+        } else {
+          logger.info('session.delete', 'Skipping worker worktree cleanup because workdir is already absent', {
+            ...context,
+            phase: 'skipWorktreeCleanup',
+            repoRoot: worker.repoRoot,
+          });
         }
       }
 
@@ -994,6 +1016,7 @@ export class SessionManager {
           state.updatedAt = new Date().toISOString();
         }
       });
+      this.clearWorkerRuntimeState(sessionName, 'worker-deleted');
 
       // agy stores completion hooks in a single global file; removing the
       // worker means its named entry there is dead weight that fires (as a
@@ -1812,6 +1835,25 @@ export class SessionManager {
         error,
       });
     }
+  }
+
+  private clearWorkerRuntimeState(sessionName: string, reason: string): void {
+    try {
+      this.runtimeStateStore.clear(sessionName);
+    } catch (error) {
+      logger.warn('session.worker-runtime-state', 'Failed to clear worker runtime state', {
+        sessionName,
+        reason,
+        error,
+      });
+    }
+  }
+
+  private async canRunRepoWorkerGitCleanup(worker: WorkerInfo): Promise<boolean> {
+    if (!worker.repoRoot || !fs.existsSync(worker.repoRoot)) {
+      return false;
+    }
+    return coreGit.isGitRepo(worker.repoRoot);
   }
 
   private emitCopilotEvent(type: string, copilot: CopilotInfo, payload: Record<string, unknown> = {}): void {

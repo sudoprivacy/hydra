@@ -221,6 +221,29 @@ function writeWorkerState(sessionsFile: string, worker: WorkerRecord): void {
   });
 }
 
+function writeWorkerRuntimeState(runtimeStateFile: string, worker: WorkerRecord): void {
+  writeJson(runtimeStateFile, {
+    version: 1,
+    workers: {
+      [worker.sessionName]: {
+        sessionName: worker.sessionName,
+        state: 'running',
+        updatedAt: new Date().toISOString(),
+        origin: 'session-manager',
+        reason: 'worker-created',
+        workerId: worker.workerId,
+        agent: worker.agent,
+        workdir: worker.workdir,
+      },
+    },
+  });
+}
+
+function readWorkerRuntimeState(runtimeStateFile: string, sessionName: string): unknown {
+  const state = readJson<{ workers?: Record<string, unknown> }>(runtimeStateFile, { workers: {} });
+  return state.workers?.[sessionName];
+}
+
 async function main(): Promise<void> {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-delete-'));
   process.env.HOME = tempHome;
@@ -231,6 +254,7 @@ async function main(): Promise<void> {
 
   const sessionsFile = path.join(hydraDir, 'sessions.json');
   const archiveFile = path.join(hydraDir, 'archive.json');
+  const runtimeStateFile = path.join(hydraDir, 'worker-runtime-state.json');
 
   const coreExec = await import('../core/exec') as unknown as Record<string, unknown>;
   const coreGit = await import('../core/git') as unknown as Record<string, unknown>;
@@ -250,6 +274,7 @@ async function main(): Promise<void> {
     let removeWorktreeCalls = 0;
     const branchDeleteCommands: string[] = [];
     const restoreCoreGit = patchModule(coreGit, {
+      isGitRepo: async () => true,
       removeWorktree: async () => {
         removeWorktreeCalls += 1;
       },
@@ -294,6 +319,7 @@ async function main(): Promise<void> {
     let removeWorktreeCalls = 0;
     const branchDeleteCommands: string[] = [];
     const restoreCoreGit = patchModule(coreGit, {
+      isGitRepo: async () => true,
       removeWorktree: async () => {
         removeWorktreeCalls += 1;
       },
@@ -328,6 +354,7 @@ async function main(): Promise<void> {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-delete-worktree-'));
     const worker = buildWorker('worker-delete-worktree-fails', repoRoot, workdir);
     writeWorkerState(sessionsFile, worker);
+    writeWorkerRuntimeState(runtimeStateFile, worker);
     writeJson(archiveFile, { entries: [] });
 
     const backend = new DeleteWorkerBackend([worker.sessionName]);
@@ -335,6 +362,7 @@ async function main(): Promise<void> {
     let removeWorktreeCalls = 0;
     const branchDeleteCommands: string[] = [];
     const restoreCoreGit = patchModule(coreGit, {
+      isGitRepo: async () => true,
       removeWorktree: async () => {
         removeWorktreeCalls += 1;
         throw makeExecError('worktree remove failed', 'contains modified or untracked files');
@@ -371,6 +399,123 @@ async function main(): Promise<void> {
     assert.equal(branchDeleteCommands.length, 0);
     assert.equal(await backend.hasSession(worker.sessionName), false);
     assert.ok(fs.existsSync(workdir), 'worktree should remain after worktree removal failure');
+    assert.ok(readWorkerRuntimeState(runtimeStateFile, worker.sessionName), 'runtime state should remain after worktree removal failure');
+  }
+
+  {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-delete-repo-'));
+    const workdir = path.join(os.tmpdir(), `hydra-worker-delete-missing-${Date.now()}`);
+    const worker = buildWorker('worker-delete-workdir-missing', repoRoot, workdir);
+    writeWorkerState(sessionsFile, worker);
+    writeWorkerRuntimeState(runtimeStateFile, worker);
+    writeJson(archiveFile, { entries: [] });
+
+    const backend = new DeleteWorkerBackend();
+    backend.killError = makeExecError('kill-session failed', `can't find session: ${worker.sessionName}`);
+
+    let isGitRepoCalls = 0;
+    let removeWorktreeCalls = 0;
+    const branchDeleteCommands: string[] = [];
+    const restoreCoreGit = patchModule(coreGit, {
+      isGitRepo: async () => {
+        isGitRepoCalls += 1;
+        return true;
+      },
+      removeWorktree: async () => {
+        removeWorktreeCalls += 1;
+      },
+    });
+    const restoreExec = patchModule(coreExec, {
+      exec: async (command: string) => {
+        branchDeleteCommands.push(command);
+        return '';
+      },
+    });
+
+    try {
+      const sm = new SessionManager(backend);
+      await sm.deleteWorker(worker.sessionName);
+    } finally {
+      restoreExec();
+      restoreCoreGit();
+    }
+
+    const archive = readJson<{ entries: Array<{ sessionName: string }> }>(archiveFile, { entries: [] });
+    const state = readJson<{ workers: Record<string, unknown> }>(sessionsFile, { workers: {} });
+    assert.equal(archive.entries.length, 1);
+    assert.equal(archive.entries[0]?.sessionName, worker.sessionName);
+    assert.equal(state.workers[worker.sessionName], undefined);
+    assert.equal(isGitRepoCalls, 0);
+    assert.equal(removeWorktreeCalls, 0);
+    assert.equal(branchDeleteCommands.length, 0);
+    assert.equal(readWorkerRuntimeState(runtimeStateFile, worker.sessionName), undefined);
+  }
+
+  {
+    const repoRoot = path.join(os.tmpdir(), `hydra-worker-delete-missing-repo-${Date.now()}`);
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-delete-worktree-'));
+    const worker = buildWorker('worker-delete-repo-root-missing', repoRoot, workdir);
+    writeWorkerState(sessionsFile, worker);
+    writeWorkerRuntimeState(runtimeStateFile, worker);
+    writeJson(archiveFile, { entries: [] });
+
+    const backend = new DeleteWorkerBackend();
+    backend.killError = makeExecError('kill-session failed', `can't find session: ${worker.sessionName}`);
+
+    let isGitRepoCalls = 0;
+    let removeWorktreeCalls = 0;
+    const branchDeleteCommands: string[] = [];
+    const restoreCoreGit = patchModule(coreGit, {
+      isGitRepo: async () => {
+        isGitRepoCalls += 1;
+        return true;
+      },
+      removeWorktree: async () => {
+        removeWorktreeCalls += 1;
+      },
+    });
+    const restoreExec = patchModule(coreExec, {
+      exec: async (command: string) => {
+        branchDeleteCommands.push(command);
+        return '';
+      },
+    });
+
+    try {
+      const sm = new SessionManager(backend);
+      await sm.deleteWorker(worker.sessionName);
+    } finally {
+      restoreExec();
+      restoreCoreGit();
+    }
+
+    const archive = readJson<{ entries: Array<{ sessionName: string }> }>(archiveFile, { entries: [] });
+    const state = readJson<{ workers: Record<string, unknown> }>(sessionsFile, { workers: {} });
+    assert.equal(archive.entries.length, 1);
+    assert.equal(archive.entries[0]?.sessionName, worker.sessionName);
+    assert.equal(state.workers[worker.sessionName], undefined);
+    assert.equal(isGitRepoCalls, 0);
+    assert.equal(removeWorktreeCalls, 0);
+    assert.equal(branchDeleteCommands.length, 0);
+    assert.ok(fs.existsSync(workdir), 'workdir should not be deleted when repo root is missing');
+    assert.equal(readWorkerRuntimeState(runtimeStateFile, worker.sessionName), undefined);
+  }
+
+  {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-worker-delete-repo-'));
+    const workdir = path.join(os.tmpdir(), `hydra-worker-delete-sync-orphan-${Date.now()}`);
+    const worker = buildWorker('worker-sync-orphan-runtime-clear', repoRoot, workdir);
+    writeWorkerState(sessionsFile, worker);
+    writeWorkerRuntimeState(runtimeStateFile, worker);
+
+    const backend = new DeleteWorkerBackend();
+    const sm = new SessionManager(backend);
+    const synced = await sm.sync();
+
+    const state = readJson<{ workers: Record<string, unknown> }>(sessionsFile, { workers: {} });
+    assert.equal(synced.workers[worker.sessionName], undefined);
+    assert.equal(state.workers[worker.sessionName], undefined);
+    assert.equal(readWorkerRuntimeState(runtimeStateFile, worker.sessionName), undefined);
   }
 
   {
