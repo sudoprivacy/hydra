@@ -37,6 +37,7 @@ function handlerById(agentType: string, id: string) {
 
 function testDefinitionsAndFacadeMaps(): void {
   assert.deepEqual(Object.keys(AGENT_DEFINITIONS).sort(), [
+    'antigravity',
     'claude',
     'codex',
     'custom',
@@ -47,6 +48,7 @@ function testDefinitionsAndFacadeMaps(): void {
   assert.equal(AGENT_LABELS.claude, 'Claude');
   assert.equal(AGENT_LABELS.codex, 'Codex');
   assert.equal(AGENT_LABELS.gemini, 'Gemini');
+  assert.equal(AGENT_LABELS.antigravity, 'Antigravity');
   assert.equal(AGENT_LABELS.sudocode, 'Sudo Code');
   assert.equal(AGENT_LABELS.custom, 'Custom');
 
@@ -54,6 +56,7 @@ function testDefinitionsAndFacadeMaps(): void {
     claude: 'claude',
     codex: 'codex',
     gemini: 'gemini',
+    antigravity: 'agy',
     sudocode: 'scode',
   });
   assert.equal((DEFAULT_AGENT_COMMANDS as Record<string, string | undefined>)['custom'], undefined);
@@ -61,12 +64,14 @@ function testDefinitionsAndFacadeMaps(): void {
   assert.equal(AGENT_YOLO_FLAGS.claude, '--dangerously-skip-permissions');
   assert.equal(AGENT_YOLO_FLAGS.codex, '--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust');
   assert.equal(AGENT_YOLO_FLAGS.gemini, '--yolo --skip-trust');
+  assert.equal(AGENT_YOLO_FLAGS.antigravity, '--dangerously-skip-permissions');
   assert.equal(AGENT_YOLO_FLAGS.sudocode, '--dangerously-skip-permissions');
   assert.equal((AGENT_YOLO_FLAGS as Record<string, string | undefined>)['custom'], undefined);
 
   assert.ok(AGENT_READY_PATTERNS.claude.test('⏵'));
   assert.ok(AGENT_READY_PATTERNS.codex.test('›'));
   assert.ok(AGENT_READY_PATTERNS.gemini.test('⏵'));
+  assert.ok(AGENT_READY_PATTERNS.antigravity.test('? for shortcuts'));
   assert.ok(AGENT_READY_PATTERNS.sudocode.test('\n❯ '));
   assert.equal((AGENT_READY_PATTERNS as Record<string, RegExp | undefined>)['custom'], undefined);
 
@@ -74,6 +79,7 @@ function testDefinitionsAndFacadeMaps(): void {
     claude: true,
     codex: true,
     gemini: true,
+    antigravity: true,
     sudocode: false,
     custom: false,
   });
@@ -91,6 +97,7 @@ function testCapabilityLookup(): void {
   assert.equal(agentSupportsCompletionNotification('claude'), true);
   assert.equal(agentSupportsCompletionNotification('codex'), true);
   assert.equal(agentSupportsCompletionNotification('gemini'), true);
+  assert.equal(agentSupportsCompletionNotification('antigravity'), true);
   assert.equal(agentSupportsCompletionNotification('sudocode'), false);
   assert.equal(agentSupportsCompletionNotification('unknown-agent'), false);
 
@@ -98,6 +105,8 @@ function testCapabilityLookup(): void {
   assert.equal(agentSupportsCopilotMode('claude', 'plan'), true);
   assert.equal(agentSupportsCopilotMode('codex', 'plan'), true);
   assert.equal(agentSupportsCopilotMode('gemini', 'plan'), false);
+  assert.equal(agentSupportsCopilotMode('antigravity', 'normal'), true);
+  assert.equal(agentSupportsCopilotMode('antigravity', 'plan'), false);
   assert.equal(agentSupportsCopilotMode('sudocode', 'plan'), false);
   assert.equal(agentSupportsCopilotMode('unknown-agent', 'plan'), false);
 }

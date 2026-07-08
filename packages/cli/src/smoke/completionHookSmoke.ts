@@ -243,6 +243,29 @@ async function main(): Promise<void> {
     'Gemini hook should emit JSON on stdout',
   );
 
+  // Antigravity: hooks live in a single global file under $HOME/.gemini/config.
+  sm['injectCompletionHook'](fakeWorktree, 'antigravity', hookInfo);
+  const antigravityHooksPath = path.join(tempHome, '.gemini', 'config', 'hooks.json');
+  assert.ok(fs.existsSync(antigravityHooksPath), 'Antigravity hooks.json should exist');
+  const antigravityHooks = JSON.parse(fs.readFileSync(antigravityHooksPath, 'utf-8'));
+  const antigravityHookName = `hydra-notify-${hookInfo.sessionName}`;
+  assert.ok(antigravityHooks[antigravityHookName], 'Antigravity hooks should be keyed by hydra-notify-<session>');
+  assert.equal(antigravityHooks[antigravityHookName].Stop[0].type, 'command');
+  assert.equal(antigravityHooks[antigravityHookName].Stop[0].timeout, 0);
+  const antigravityCommand: string = antigravityHooks[antigravityHookName].Stop[0].command;
+  assert.ok(
+    antigravityCommand.includes("printf '{}'"),
+    'Antigravity hook should emit JSON on stdout',
+  );
+  assert.ok(
+    antigravityCommand.includes(fakeWorktree),
+    'Antigravity hook should filter by worktree path so siblings do not collide',
+  );
+  assert.equal(antigravityHooks[antigravityHookName].PreToolUse, null);
+  assert.equal(antigravityHooks[antigravityHookName].PostToolUse, null);
+  assert.equal(antigravityHooks[antigravityHookName].PreInvocation, null);
+  assert.equal(antigravityHooks[antigravityHookName].PostInvocation, null);
+
   // Custom (should produce no config)
   sm['injectCompletionHook'](fakeWorktree, 'custom', hookInfo);
   assert.ok(!fs.existsSync(path.join(fakeWorktree, '.custom')), 'Custom agent should not produce config');
@@ -460,10 +483,19 @@ async function main(): Promise<void> {
         branch: 'feat/auth-gemini',
         workdir: runtimeWorktree,
       },
+      antigravity: {
+        ...hookInfo,
+        copilotSessionName: COPILOT_SESSION,
+        sessionName: 'repo_feat-auth-antigravity',
+        workerId: 74,
+        displayName: 'feat-auth-antigravity',
+        branch: 'feat/auth-antigravity',
+      },
     };
     sm['injectCompletionHook'](runtimeWorktree, 'claude', runtimeInfos.claude);
     sm['injectCompletionHook'](runtimeWorktree, 'codex', runtimeInfos.codex);
     sm['injectCompletionHook'](runtimeWorktree, 'gemini', runtimeInfos.gemini);
+    sm['injectCompletionHook'](runtimeWorktree, 'antigravity', runtimeInfos.antigravity);
 
     const runtimeClaudeConfig = JSON.parse(
       fs.readFileSync(path.join(runtimeWorktree, '.claude', 'settings.json'), 'utf-8'),
@@ -474,6 +506,24 @@ async function main(): Promise<void> {
     const runtimeGeminiConfig = JSON.parse(
       fs.readFileSync(path.join(runtimeWorktree, '.gemini', 'settings.json'), 'utf-8'),
     );
+    const runtimeAntigravityHooks = JSON.parse(
+      fs.readFileSync(path.join(tempHome, '.gemini', 'config', 'hooks.json'), 'utf-8'),
+    );
+    const runtimeAntigravityCommand: string =
+      runtimeAntigravityHooks[`hydra-notify-${runtimeInfos.antigravity.sessionName}`].Stop[0].command;
+
+    // agy Stop hooks read a JSON payload on stdin; our filter only fires when
+    // the workspacePaths array references this worker's worktree.
+    const antigravityStdin = JSON.stringify({
+      conversationId: 'fake-conversation',
+      workspacePaths: [runtimeWorktree],
+      fullyIdle: true,
+    });
+    const antigravityWrongStdin = JSON.stringify({
+      conversationId: 'fake-conversation',
+      workspacePaths: ['/some/other/workspace'],
+      fullyIdle: true,
+    });
 
     const hookCommands = [
       {
@@ -481,33 +531,62 @@ async function main(): Promise<void> {
         command: runtimeClaudeConfig.hooks.Stop[0].hooks[0].command,
         expectedStdout: '',
         info: runtimeInfos.claude,
+        stdin: undefined as string | undefined,
       },
       {
         agent: 'codex',
         command: runtimeCodexConfig.hooks.Stop[0].hooks[0].command,
         expectedStdout: '{}',
         info: runtimeInfos.codex,
+        stdin: undefined as string | undefined,
       },
       {
         agent: 'gemini',
         command: runtimeGeminiConfig.hooks.AfterAgent[0].hooks[0].command,
         expectedStdout: '{}',
         info: runtimeInfos.gemini,
+        stdin: undefined as string | undefined,
+      },
+      {
+        agent: 'antigravity',
+        command: runtimeAntigravityCommand,
+        expectedStdout: '{}',
+        info: runtimeInfos.antigravity,
+        stdin: antigravityStdin,
       },
     ];
 
     // Without a Hydra-armed pending marker, the hook should be a no-op. This
     // covers users typing directly in an attached worker terminal.
-    for (const { agent, command, expectedStdout, info } of hookCommands) {
+    for (const { agent, command, expectedStdout, info, stdin } of hookCommands) {
       const stdout = execSync(command, {
         encoding: 'utf-8',
         timeout: 5000,
         env: { ...process.env, HOME: tempHome },
+        input: stdin,
       });
       assert.equal(stdout, expectedStdout, `${agent} unarmed hook stdout should match agent contract`);
       const pendingPath = path.join(hydraDir, 'hooks', `notify-${info.sessionName}.pending`);
       assert.ok(!fs.existsSync(pendingPath), `${agent} unarmed hook should not create pending marker`);
     }
+
+    // Antigravity hook with a non-matching workspace must be a no-op even when
+    // armed — this is the safety net that keeps sibling workers from notifying.
+    sm['armCompletionNotification'](runtimeInfos.antigravity.sessionName);
+    const mismatchedStdout = execSync(runtimeAntigravityCommand, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: { ...process.env, HOME: tempHome },
+      input: antigravityWrongStdin,
+    });
+    assert.equal(mismatchedStdout, '{}', 'Antigravity hook should still emit {} on workspace mismatch');
+    const antigravityPending = path.join(
+      hydraDir, 'hooks', `notify-${runtimeInfos.antigravity.sessionName}.pending`,
+    );
+    assert.ok(
+      fs.existsSync(antigravityPending),
+      'Antigravity workspace mismatch should not consume the pending marker',
+    );
 
     await sleep(500);
     let paneOutput = captureSession(COPILOT_SESSION);
@@ -520,7 +599,7 @@ async function main(): Promise<void> {
     // Execute the exact command each agent hook config would run twice after
     // arming. The first run should notify and consume pending; the second run
     // should be a no-op until Hydra arms another copilot-originated message.
-    for (const { agent, command, expectedStdout, info } of hookCommands) {
+    for (const { agent, command, expectedStdout, info, stdin } of hookCommands) {
       sm['armCompletionNotification'](info.sessionName);
       const pendingPath = path.join(hydraDir, 'hooks', `notify-${info.sessionName}.pending`);
       assert.ok(fs.existsSync(pendingPath), `${agent} pending marker should exist before hook`);
@@ -530,6 +609,7 @@ async function main(): Promise<void> {
           encoding: 'utf-8',
           timeout: 5000,
           env: { ...process.env, HOME: tempHome },
+          input: stdin,
         });
         assert.equal(stdout, expectedStdout, `${agent} hook stdout should match agent contract on run ${run}`);
       }
@@ -580,12 +660,13 @@ async function main(): Promise<void> {
 
     // Re-arm to simulate a later copilot-originated worker message. The hook
     // should notify again after that message completes.
-    for (const { command, expectedStdout, info } of hookCommands) {
+    for (const { command, expectedStdout, info, stdin } of hookCommands) {
       sm['armCompletionNotification'](info.sessionName);
       const stdout = execSync(command, {
         encoding: 'utf-8',
         timeout: 5000,
         env: { ...process.env, HOME: tempHome },
+        input: stdin,
       });
       assert.equal(stdout, expectedStdout);
     }

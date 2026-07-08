@@ -2,9 +2,10 @@
  * Fail-closed guard against release-version divergence across the monorepo.
  *
  * The root package.json is the single source of truth for the version. This
- * smoke asserts that all four manifests (root + core + cli + extension) carry an
- * identical version, so a release can never tag one version while shipping
- * another in the .vsix / CLI / telemetry. If it fails, run `npm run sync-version`.
+ * smoke asserts that all five manifests (root + core + cli + extension + desktop)
+ * carry an identical version, so a release can never tag one version while shipping
+ * another in the .vsix / CLI / telemetry / desktop app. If it fails, run
+ * `npm run sync-version`.
  *
  * Run: node packages/core/out/smoke/versionConsistencySmoke.js
  */
@@ -43,6 +44,7 @@ function main(): void {
     'packages/core/package.json',
     'packages/cli/package.json',
     'packages/extension/package.json',
+    'packages/desktop/package.json',
   ];
 
   const rootVersion = readVersion(path.join(repoRoot, manifests[0]));

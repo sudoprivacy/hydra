@@ -1,6 +1,6 @@
 {
   "name": "hydra-monorepo",
-  "version": "0.3.2026062200",
+  "version": "0.3.2026062800",
   "description": "Hydra monorepo — @hydra/core engine, @hydra/cli, and the hydra-code VS Code extension",
   "license": "MIT",
   "private": true,

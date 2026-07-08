@@ -23,6 +23,7 @@ const workspaceManifests = [
   'packages/core/package.json',
   'packages/cli/package.json',
   'packages/extension/package.json',
+  'packages/desktop/package.json',
 ];
 
 function writeJson(p, obj) {

@@ -55,7 +55,7 @@ export function registerCopilotCommands(program: Command): void {
     .description('Create a new copilot')
     .option('--workdir <path>', 'Working directory for the copilot', process.cwd())
     .option('--repo <identifier>', 'Run inside a registered repo: <owner/name> or absolute path (overrides --workdir)')
-    .option('--agent <type>', 'Agent type override (claude, codex, gemini, sudocode, custom)')
+    .option('--agent <type>', 'Agent type override (claude, codex, gemini, antigravity, sudocode, custom)')
     .option('--mode <mode>', 'Copilot mode (normal, plan)', 'normal')
     .option('--plan', 'Shortcut for --mode plan')
     .option('--name <name>', 'Display name for the copilot session')

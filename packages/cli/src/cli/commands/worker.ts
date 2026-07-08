@@ -123,7 +123,7 @@ export function registerWorkerCommands(program: Command): void {
     .option('--dir <path>', 'Directory for a task worker')
     .option('--temp', 'Create a Hydra-managed task worker folder')
     .option('--name <name>', 'Task worker name')
-    .option('--agent <type>', 'Agent type override (claude, codex, gemini, sudocode, custom)')
+    .option('--agent <type>', 'Agent type override (claude, codex, gemini, antigravity, sudocode, custom)')
     .option('--base <branch>', 'Base branch override')
     .option('--task <prompt>', 'Task prompt for the agent')
     .option('--task-file <path>', 'Path to a file containing the task description')

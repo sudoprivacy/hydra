@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.2026062800] - 2026-06-28
+
+### Added
+- Add Antigravity (`agy`) as a first-class agent type for copilots and workers, including ready-state and trust-prompt handling, `--conversation` resume, and per-worker completion-notify hooks isolated by workspace path
+
+## [0.3.2026062400] - 2026-06-24
+
+### Added
+- Add worker error notifications and automatic needs-input detection for supported agent signals
+- Add durable worker runtime state surfaced in CLI JSON and the VS Code Worker tree
+
+### Fixed
+- Clear Worker notification badges and completion text correctly when notifications are cleared
+
 ## [0.3.2026062200] - 2026-06-22
 
 ### Added

@@ -2,7 +2,7 @@
   "name": "hydra-code",
   "displayName": "Hydra Code",
   "description": "Monitor and orchestrate parallel AI coding agents — see every worker's status, git diff, and terminal output from one sidebar",
-  "version": "0.3.2026062200",
+  "version": "0.3.2026062800",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -96,12 +96,17 @@
       },
       {
         "view": "hydraCopilots",
+        "contents": "[Start Copilot (Antigravity)](command:hydra.startCopilotAntigravity)",
+        "when": "hydra.antigravityAvailable"
+      },
+      {
+        "view": "hydraCopilots",
         "contents": "[Start Copilot (Sudo Code)](command:hydra.startCopilotSudoCode)",
         "when": "hydra.sudocodeAvailable"
       },
       {
         "view": "hydraCopilots",
-        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or Sudo Code.",
+        "contents": "No supported agents found on PATH.\nInstall [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Antigravity CLI](https://antigravity.google), or Sudo Code.",
         "when": "hydra.noAgentsAvailable"
       }
     ],
@@ -202,6 +207,10 @@
         "title": "Hydra: Start Copilot (Gemini)"
       },
       {
+        "command": "hydra.startCopilotAntigravity",
+        "title": "Hydra: Start Copilot (Antigravity)"
+      },
+      {
         "command": "hydra.startCopilotSudoCode",
         "title": "Hydra: Start Copilot (Sudo Code)"
       },
@@ -254,6 +263,7 @@
             "claude",
             "codex",
             "gemini",
+            "antigravity",
             "sudocode",
             "custom"
           ],
@@ -266,6 +276,7 @@
             "claude": "claude",
             "codex": "codex",
             "gemini": "gemini",
+            "antigravity": "agy",
             "sudocode": "scode"
           },
           "markdownDescription": "Map of agent type to shell command used to launch the agent."
@@ -379,6 +390,7 @@
     "onCommand:hydra.startCopilotClaude",
     "onCommand:hydra.startCopilotCodex",
     "onCommand:hydra.startCopilotGemini",
+    "onCommand:hydra.startCopilotAntigravity",
     "onCommand:hydra.startCopilotSudoCode",
     "onCommand:hydra.showLogs",
     "onCommand:hydra.openLogsFolder",
