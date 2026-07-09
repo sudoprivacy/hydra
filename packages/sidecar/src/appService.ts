@@ -32,6 +32,8 @@
 //  Topic.notifications      NotificationStateService.onDidChange
 //  openTerminal             node-pty ⇄ tmux attach (M3 — not yet implemented)
 
+import * as os from 'node:os';
+
 import { TmuxBackendCore } from '@hydra/core/tmux';
 import {
   isDirectoryWorker,
@@ -49,6 +51,7 @@ import { getRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hy
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
+import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
 
@@ -329,12 +332,13 @@ export class HydraAppService implements HydraAppServiceApi {
         await fetchOriginRequired(workdir);
       }
     } else {
-      workdir = expandAndResolvePath(input.workdir ?? process.cwd());
+      workdir = expandAndResolvePath(input.workdir ?? os.homedir());
     }
 
     const copilot = await this.sessionManager.createCopilotAndFinalize({
       workdir, agentType, copilotMode, name: input.name, sessionName,
     });
+    await this.sendCopilotOnboarding(copilot.sessionName, copilot.copilotMode);
 
     return {
       status: 'created',
@@ -344,6 +348,14 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir: copilot.workdir,
       agentSessionId: copilot.sessionId,
     };
+  }
+
+  private async sendCopilotOnboarding(sessionName: string, copilotMode: CopilotMode): Promise<void> {
+    try {
+      await this.backend.sendMessage(sessionName, getCopilotOnboardingPrompt(copilotMode));
+    } catch {
+      // Best effort: the copilot itself is already created and ready.
+    }
   }
 
   /** SessionManager.startWorker / startCopilot. */
