@@ -80,6 +80,19 @@ async function main(): Promise<void> {
     assert.deepEqual(empty.workers, [], 'no workers initially');
     assert.equal(empty.count, 0, 'count is 0 initially');
 
+    // Desktop-created copilots must receive the same Hydra onboarding prompt
+    // that the VS Code extension sends after creating a copilot.
+    const copilot = await client.createCopilot({ agent: 'claude', name: 'seam-copilot' });
+    assert.equal(copilot.status, 'created', 'copilot created');
+    assert.equal(copilot.workdir, tempHome, 'desktop seam defaults copilot workdir to HOME');
+    assert.ok(
+      backend.messages.some(m =>
+        m.sessionName === copilot.session && m.message.includes('You are a Hydra copilot'),
+      ),
+      'desktop seam sends copilot onboarding prompt',
+    );
+    await client.deleteSession(copilot.session, 'copilot');
+
     // ── Mutation: create + delete a task worker ──
     const created = await client.createWorker({ temp: true, name: 'seam-temp', agent: 'claude' });
     assert.equal(created.status, 'created', 'worker created');
