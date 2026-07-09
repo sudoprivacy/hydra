@@ -11,6 +11,7 @@
 import type {
   CopilotMode,
   HydraEvent,
+  HydraNotification,
   HydraSessionList,
   NotificationSnapshot,
   SessionListCopilot,
@@ -46,6 +47,8 @@ export interface BoardModel {
   readonly gitStatusBySession: Readonly<Record<string, number>>;
   /** Total unread across all notifications (authoritative from the snapshot). */
   readonly unreadTotal: number;
+  /** Complete notifications keyed by target session, used for copilot child rows. */
+  readonly completionNotificationsByTargetSession: Readonly<Record<string, readonly CompletionNotificationModel[]>>;
   /** ISO timestamp of the most recent event touching each session. */
   readonly lastEventBySession: Readonly<Record<string, string>>;
   /** Highest event `seq` applied — the live cursor. */
@@ -97,6 +100,7 @@ export function createBoardModel(snapshot: HydraSessionList): BoardModel {
     completedBySession: {},
     gitStatusBySession: {},
     unreadTotal: 0,
+    completionNotificationsByTargetSession: {},
     lastEventBySession: {},
     lastSeq: 0,
     resyncToken: 0,
@@ -119,6 +123,7 @@ export function applySnapshot(model: BoardModel, snapshot: HydraSessionList): Bo
     unreadBySession: pruneToSessions(model.unreadBySession, alive),
     completedBySession: pruneToSessions(model.completedBySession, alive),
     gitStatusBySession: pruneToSessions(model.gitStatusBySession, alive),
+    completionNotificationsByTargetSession: pruneToSessions(model.completionNotificationsByTargetSession, alive),
     lastEventBySession: pruneToSessions(model.lastEventBySession, alive),
   };
 }
@@ -186,6 +191,7 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
   const unreadBySession: Record<string, number> = {};
   // Newest notification (read or unread) per session → drives the completed chip.
   const latestBySession = new Map<string, { at: number; kind: string }>();
+  const completionNotificationsByTargetSession: Record<string, CompletionNotificationModel[]> = {};
 
   for (const notification of snapshot.notifications) {
     // Count / classify a notification once per distinct session it references
@@ -208,6 +214,12 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
         latestBySession.set(session, { at: Number.isFinite(at) ? at : 0, kind: notification.kind });
       }
     }
+    if (notification.kind === 'complete' && notification.targetSession) {
+      const targetSession = notification.targetSession;
+      const bucket = completionNotificationsByTargetSession[targetSession] ?? [];
+      bucket.push(toCompletionNotificationModel(notification));
+      completionNotificationsByTargetSession[targetSession] = bucket;
+    }
   }
 
   const completedBySession: Record<string, boolean> = {};
@@ -217,7 +229,13 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
     }
   }
 
-  return { ...model, unreadBySession, completedBySession, unreadTotal: snapshot.unreadCount };
+  return {
+    ...model,
+    unreadBySession,
+    completedBySession,
+    completionNotificationsByTargetSession,
+    unreadTotal: snapshot.unreadCount,
+  };
 }
 
 /**
@@ -251,7 +269,7 @@ export interface WorkerTileModel {
   readonly runtime: WorkerRuntimeState;
   readonly runtimeReason: string | null;
   readonly unread: number;
-  /** Latest unread notification is a `complete` (and the worker isn't running). */
+  /** Latest stored notification is a `complete` (and the worker isn't running). */
   readonly completed: boolean;
   /**
    * `git status --porcelain` changed-file count for CODE workers, or `null`
@@ -273,8 +291,10 @@ export interface CopilotTileModel {
   readonly mode: CopilotMode;
   readonly lifecycle: TileLifecycle;
   readonly unread: number;
-  /** Latest unread notification targeting the copilot is a `complete`. */
+  /** Latest stored notification targeting the copilot is a `complete`. */
   readonly completed: boolean;
+  /** Complete notifications targeting this copilot, newest first. */
+  readonly completionNotifications: readonly CompletionNotificationModel[];
   /** Number of workers this copilot manages (`copilotSessionName` match). */
   readonly workerCount: number;
   /** Distinct repos among those workers (task workers contribute none). */
@@ -286,6 +306,15 @@ export interface CopilotTileModel {
 }
 
 export type TileModel = WorkerTileModel | CopilotTileModel;
+
+export interface CompletionNotificationModel {
+  readonly id: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly targetSession: string;
+  readonly sourceSession: string | null;
+  readonly actionSession: string | null;
+}
 
 export type BoardGroupKind = 'repo' | 'tasks' | 'copilots';
 
@@ -459,12 +488,24 @@ function toCopilotTile(
     lifecycle: model.lifecycleOverrides[copilot.session] ?? deriveLifecycle(copilot.status),
     unread: model.unreadBySession[copilot.session] ?? 0,
     completed: model.completedBySession[copilot.session] ?? false,
+    completionNotifications: model.completionNotificationsByTargetSession[copilot.session] ?? [],
     workerCount: summary?.workerCount ?? 0,
     repoCount: summary?.repoCount ?? 0,
     lastEventAt: model.lastEventBySession[copilot.session] ?? null,
     attached: copilot.attached,
     workdir: copilot.workdir,
     raw: copilot,
+  };
+}
+
+function toCompletionNotificationModel(notification: HydraNotification): CompletionNotificationModel {
+  return {
+    id: notification.id,
+    title: notification.title,
+    createdAt: notification.createdAt,
+    targetSession: notification.targetSession ?? '',
+    sourceSession: notification.sourceSession,
+    actionSession: notification.action?.session ?? notification.sourceSession,
   };
 }
 

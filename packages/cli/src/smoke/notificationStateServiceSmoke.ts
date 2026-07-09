@@ -312,6 +312,13 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
   try {
     await withProcessEnv(ctx, async () => {
       const store = new NotificationStore();
+      const needsInput = store.create({
+        kind: 'needs-input',
+        title: 'Worker needs input',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
       const completed = store.create({
         kind: 'complete',
         title: 'Worker completed',
@@ -328,9 +335,11 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
 
         const workerScope = resolveSessionNotificationClearScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
         assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
-        assert.equal(service.getBySession('repo_worker').length, 1);
-        assert.equal(service.clear(workerScope.filters).cleared, 1);
-        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(service.getBySession('repo_worker').length, 2);
+        assert.equal(service.clear({ ...workerScope.filters, kind: 'complete' }).cleared, 1);
+        assert.equal(service.getById(completed.id), undefined);
+        assert.equal(service.getById(needsInput.id)?.id, needsInput.id);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, needsInput.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
 
         const copilotScope = resolveSessionNotificationClearScope({ contextValue: 'copilotItem' }, 'repo_copilot');
@@ -606,6 +615,57 @@ async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
   }
 }
 
+async function testKindScopedClearPreservesEventOnlyAttention(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-kind-clear-projection-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      new EventLog().append({
+        type: 'notify.created',
+        source: 'hook',
+        payload: {
+          notificationId: 'event-only-needs-input',
+          kind: 'needs-input',
+          title: 'Worker needs input',
+          targetSession: 'repo_copilot',
+          sourceSession: 'repo_worker',
+          actionType: 'open-session',
+          actionSession: 'repo_worker',
+        },
+      });
+      await sleep(10);
+
+      const storedComplete = new NotificationStore().create({
+        kind: 'complete',
+        title: 'Worker completed',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        action: { type: 'open-session', session: 'repo_worker' },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, storedComplete.id);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, storedComplete.id);
+
+        const cleared = service.clear({ session: 'repo_worker', kind: 'complete' });
+        assert.equal(cleared.cleared, 1);
+        assert.equal(service.getById(storedComplete.id), undefined);
+        assert.equal(
+          service.getLatestSourceAttention('repo_worker')?.id,
+          'event-only-needs-input',
+          'complete-only clear must preserve event-only needs-input attention',
+        );
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
 async function testStoredNotificationWinsOverDuplicateEventProjection(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-duplicate-event-projection-');
   try {
@@ -832,6 +892,7 @@ async function main(): Promise<void> {
   await testEventOnlyCompletionProjectionEmitsChange();
   await testSourceAttentionProjectionUsesLatestStatus();
   await testEventOnlyErrorProjectionEmitsChange();
+  await testKindScopedClearPreservesEventOnlyAttention();
   await testStoredNotificationWinsOverDuplicateEventProjection();
   await testInitializeSignatureWindow();
   await testDuplicateAndMalformedEventTolerance();

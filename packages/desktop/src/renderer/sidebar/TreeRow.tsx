@@ -1,10 +1,10 @@
 // One session row in the sidebar tree — a dense, two-line node that mirrors the
 // old VS Code extension tree (packages/extension tmuxSessionProvider.ts).
 //
-//   Copilot:  ● name [agent] [N workers · M repos]   [unread] ⋮
-//             35m ago  ✓ 已完成
-//   Worker:   ● branch #N [agent] running            [unread] ⋮
-//             35m ago  U:2  ✓ 已完成
+//   Copilot:  ● name [agent] [N workers · M repos] ✓ 已完成   [unread] ⋮
+//             35m ago
+//   Worker:   ● branch #N [agent] running ✓ 已完成             [unread] ⋮
+//             35m ago  U:2
 //
 // Clicking the row opens/focuses its tab when the session has an attachable
 // terminal; the ⋮ menu carries the per-row actions. The row is highlighted when
@@ -19,17 +19,26 @@ import {
   runtimeToken,
 } from '../missionControl/format';
 import { STATUS_LABELS, tileStatus } from '../status';
+import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
 import { RowMenu } from './RowMenu';
 
 export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
   const tabs = useTabs();
+  const { actions } = useSessions();
   const status = tileStatus(tile);
   const selected = tabs.activeId === tile.session;
   const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
 
   const summary = tile.kind === 'copilot' ? copilotSummaryLabel(tile.workerCount, tile.repoCount) : null;
   const gitLabel = tile.kind === 'worker' ? gitChangeLabel(tile.changed) : null;
+  const openTerminal = () => {
+    if (!canOpenTerminal) {
+      return;
+    }
+    tabs.openTab(tile.session, tile.kind);
+    actions.acknowledgeCompletion(tile);
+  };
 
   return (
     <div
@@ -41,9 +50,7 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
       tabIndex={0}
       title={tile.session}
       onClick={() => {
-        if (canOpenTerminal) {
-          tabs.openTab(tile.session, tile.kind);
-        }
+        openTerminal();
       }}
       onKeyDown={(event) => {
         if (event.currentTarget !== event.target) {
@@ -51,9 +58,7 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
         }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          if (canOpenTerminal) {
-            tabs.openTab(tile.session, tile.kind);
-          }
+          openTerminal();
         }
       }}
     >
@@ -68,17 +73,17 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
           ) : summary ? (
             <span className="hydra-row__summary">{summary}</span>
           ) : null}
+          {tile.completed ? (
+            <span className="hydra-chip hydra-chip--done" title="Task completed">
+              {COMPLETED_CHIP_LABEL}
+            </span>
+          ) : null}
         </div>
         <div className="hydra-row__sub">
           <span className="hydra-row__time">{relativeTime(tile.lastEventAt)}</span>
           {gitLabel ? (
             <span className="hydra-row__u" title="changed files (git status)">
               {gitLabel}
-            </span>
-          ) : null}
-          {tile.completed ? (
-            <span className="hydra-chip hydra-chip--done" title="Task completed">
-              {COMPLETED_CHIP_LABEL}
             </span>
           ) : null}
         </div>

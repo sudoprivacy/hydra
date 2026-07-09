@@ -21,6 +21,10 @@ import { useMissionControlBoard, type MissionControlBoard } from '../missionCont
 import { CreateSessionModal, type CreateKind } from '../missionControl/CreateSessionModal';
 import { ConfirmDeleteModal, PromptModal } from '../missionControl/dialogs';
 import type { TileModel, WorkerTileModel } from '../missionControl/boardModel';
+import {
+  completionNotificationClearFiltersForTile,
+  completionNotificationClearFiltersForWorkerSession,
+} from './notificationClear';
 
 /** Every session mutation the UI can trigger, from any surface. */
 export interface SessionActions {
@@ -31,6 +35,8 @@ export interface SessionActions {
   send: (tile: TileModel) => void;
   rename: (tile: TileModel) => void;
   delete: (tile: TileModel) => void;
+  acknowledgeCompletion: (tile: TileModel) => void;
+  acknowledgeWorkerCompletion: (session: string) => void;
   start: (tile: TileModel) => void;
   stop: (tile: WorkerTileModel) => void;
 }
@@ -108,6 +114,13 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       send: (tile) => setDialog({ type: 'send', tile }),
       rename: (tile) => setDialog({ type: 'rename', tile }),
       delete: (tile) => setDialog({ type: 'delete', tile }),
+      acknowledgeCompletion: (tile) => {
+        if (tile.kind === 'worker' && tile.completed) {
+          void runDirect(() => client.clearNotifications(completionNotificationClearFiltersForTile(tile)));
+        }
+      },
+      acknowledgeWorkerCompletion: (session) =>
+        runDirect(() => client.clearNotifications(completionNotificationClearFiltersForWorkerSession(session))),
       start: (tile) => runDirect(() => client.startSession(tile.session, tile.kind)),
       stop: (tile) => runDirect(() => client.stopWorker(tile.session)),
     }),

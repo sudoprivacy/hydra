@@ -38,6 +38,7 @@ interface NotifyClearOptions {
   session?: string;
   target?: string;
   from?: string;
+  kind?: string;
 }
 
 export function registerNotifyCommands(program: Command): void {
@@ -184,6 +185,7 @@ export function registerNotifyCommands(program: Command): void {
     .option('--session <session>', 'Clear notifications for a target or source session')
     .option('--target <session>', 'Clear notifications for a target session')
     .option('--from <session>', 'Clear notifications from a source session')
+    .option('--kind <kind>', 'Clear notification kind: complete, needs-input, error, blocked, info')
     .action((opts: NotifyClearOptions) => {
       const globalOpts = program.opts() as OutputOpts;
       try {
@@ -191,6 +193,7 @@ export function registerNotifyCommands(program: Command): void {
           session: opts.session,
           targetSession: opts.target,
           sourceSession: opts.from,
+          kind: opts.kind ? parseKind(opts.kind) : undefined,
         });
         outputResult(
           {

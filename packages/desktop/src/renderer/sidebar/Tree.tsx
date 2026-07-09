@@ -3,20 +3,52 @@
 // The grouping is taken straight from the board view the reducer already
 // produces — this file only reshapes it into the two top-level sections.
 
-import { useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 
-import type { BoardGroup, BoardView } from '../missionControl/boardModel';
+import type {
+  BoardGroup,
+  BoardView,
+  CompletionNotificationModel,
+  WorkerTileModel,
+} from '../missionControl/boardModel';
+import { relativeTime } from '../missionControl/format';
+import { useSessions } from '../sessions/SessionsProvider';
+import { useTabs } from '../tabs/TabsProvider';
 import { TreeRow } from './TreeRow';
 
 export function Tree({ view }: { view: BoardView }): JSX.Element {
   const copilots = view.groups.find((group) => group.kind === 'copilots');
   const workerGroups = view.groups.filter((group) => group.kind === 'repo' || group.kind === 'tasks');
+  const workersBySession = useMemo(() => {
+    const workers = new Map<string, WorkerTileModel>();
+    for (const group of workerGroups) {
+      for (const tile of group.tiles) {
+        if (tile.kind === 'worker') {
+          workers.set(tile.session, tile);
+        }
+      }
+    }
+    return workers;
+  }, [workerGroups]);
 
   return (
     <div className="hydra-tree" role="tree">
       <TreeSection title="COPILOTS" count={view.copilotCount}>
         {copilots && copilots.tiles.length > 0 ? (
-          copilots.tiles.map((tile) => <TreeRow key={tile.session} tile={tile} />)
+          copilots.tiles.map((tile) => (
+            <Fragment key={tile.session}>
+              <TreeRow tile={tile} />
+              {tile.kind === 'copilot'
+                ? tile.completionNotifications.map((notification) => (
+                  <CompletionNotificationRow
+                    key={notification.id}
+                    notification={notification}
+                    workersBySession={workersBySession}
+                  />
+                ))
+                : null}
+            </Fragment>
+          ))
         ) : (
           <p className="hydra-tree__empty">No copilots</p>
         )}
@@ -30,6 +62,43 @@ export function Tree({ view }: { view: BoardView }): JSX.Element {
         )}
       </TreeSection>
     </div>
+  );
+}
+
+function CompletionNotificationRow({
+  notification,
+  workersBySession,
+}: {
+  notification: CompletionNotificationModel;
+  workersBySession: ReadonlyMap<string, WorkerTileModel>;
+}): JSX.Element {
+  const tabs = useTabs();
+  const { actions } = useSessions();
+  const workerSession = notification.actionSession ?? notification.sourceSession;
+  const worker = workerSession ? workersBySession.get(workerSession) : undefined;
+  const label = worker ? `${worker.name} #${worker.number}` : notification.title;
+  const canOpen = Boolean(worker);
+
+  const openWorker = () => {
+    if (!worker) {
+      return;
+    }
+    tabs.openTab(worker.session, 'worker');
+    actions.acknowledgeWorkerCompletion(worker.session);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`hydra-notification-row${canOpen ? '' : ' hydra-notification-row--disabled'}`}
+      title={canOpen ? 'Open worker and clear completed notification' : notification.title}
+      disabled={!canOpen}
+      onClick={openWorker}
+    >
+      <span className="hydra-notification-row__badge">C</span>
+      <span className="hydra-notification-row__label">{label}</span>
+      <span className="hydra-notification-row__time">{relativeTime(notification.createdAt)}</span>
+    </button>
   );
 }
 

@@ -14,15 +14,17 @@ export function RowMenu({ tile }: { tile: TileModel }): JSX.Element {
 
   const items: MenuItem[] = [];
   const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
+  const openTile = (view: 'terminal' | 'diff') => {
+    tabs.openTab(tile.session, tile.kind);
+    tabs.setView(tile.session, view);
+    actions.acknowledgeCompletion(tile);
+  };
 
   if (canOpenTerminal) {
     items.push({
       key: 'terminal',
       label: 'Open Terminal',
-      onSelect: () => {
-        tabs.openTab(tile.session, tile.kind);
-        tabs.setView(tile.session, 'terminal');
-      },
+      onSelect: () => openTile('terminal'),
     });
   }
 
@@ -30,10 +32,7 @@ export function RowMenu({ tile }: { tile: TileModel }): JSX.Element {
     items.push({
       key: 'diff',
       label: 'Open Diff',
-      onSelect: () => {
-        tabs.openTab(tile.session, tile.kind);
-        tabs.setView(tile.session, 'diff');
-      },
+      onSelect: () => openTile('diff'),
     });
   }
 
