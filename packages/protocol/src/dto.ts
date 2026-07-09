@@ -17,6 +17,7 @@ import type {
 import type { HydraEvent } from '@hydra/core/events';
 import type {
   HydraNotification,
+  NotificationClearFilters,
   NotificationListFilters,
   NotificationListResult,
   NotificationReadResult,
@@ -34,6 +35,7 @@ export type {
   WorkerRuntimeSignalOrigin,
   HydraEvent,
   HydraNotification,
+  NotificationClearFilters,
   NotificationListFilters,
   NotificationListResult,
   NotificationReadResult,
@@ -253,12 +255,6 @@ export interface EventSubscribeInput {
 
 // Reserved for future filters (e.g. by session); empty today.
 export type NotificationSubscribeInput = Record<string, never>;
-
-/** Filters accepted by `clearNotifications` (subset of the list filters). */
-export type NotificationClearFilters = Pick<
-  NotificationListFilters,
-  'session' | 'targetSession' | 'sourceSession'
->;
 
 // ── wire request payloads ──
 //

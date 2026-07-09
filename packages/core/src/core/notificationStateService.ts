@@ -12,9 +12,9 @@ import {
   NotificationStore,
   type HydraNotification,
   type NotificationKind,
+  type NotificationClearFilters,
   type NotificationMarkSessionReadResult,
   type NotificationClearResult,
-  type NotificationListFilters,
   type NotificationOpenResult,
   type NotificationReadResult,
 } from './notifications';
@@ -206,7 +206,7 @@ export class NotificationStateService implements Disposable {
   }
 
   clear(
-    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    filters: NotificationClearFilters = {},
     eventSource: HydraEventSource = 'extension',
   ): NotificationClearResult {
     const result = this.store.clear(filters, eventSource);
@@ -517,9 +517,13 @@ function notificationMatchesClearEvent(notification: HydraNotification, event: H
   const session = getStringPayload(payload, 'session');
   const targetSession = getStringPayload(payload, 'targetSession');
   const sourceSession = getStringPayload(payload, 'sourceSession');
+  const kind = getStringPayload(payload, 'kind');
 
   if (!session && !targetSession && !sourceSession) {
-    return true;
+    return !kind || notification.kind === kind;
+  }
+  if (kind && notification.kind !== kind) {
+    return false;
   }
   if (session && notification.targetSession !== session && notification.sourceSession !== session) {
     return false;

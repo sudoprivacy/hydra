@@ -238,6 +238,33 @@ assert.equal(view.groups[0].tiles[0].unread, 1, 'surviving session keeps its unr
   assert.equal(v.groups[0].tiles[0].completed, false, 'the chip clears the moment the worker runs again');
 }
 
+{
+  const copilotCompleteNotif = {
+    loadedAt: '2026-01-01T00:00:00.000Z',
+    lastEventSeq: seq,
+    totalCount: 1,
+    unreadCount: 1,
+    notifications: [
+      {
+        id: 'done-copilot',
+        createdAt: '2026-01-01T00:05:00.000Z',
+        readAt: null,
+        kind: 'complete',
+        title: 'worker done',
+        body: '',
+        targetSession: 'copilot_captain',
+        sourceSession: 'repo-a_feat-one',
+        action: { type: 'open-session', session: 'repo-a_feat-one' },
+      },
+    ],
+  };
+  const m = applyNotificationSnapshot(createBoardModel(snapshot), copilotCompleteNotif);
+  const v = selectBoard(m);
+  const copilotTile = v.groups.find((group) => group.kind === 'copilots').tiles[0];
+  assert.equal(copilotTile.completionNotifications.length, 1, 'copilot exposes completion child rows');
+  assert.equal(copilotTile.completionNotifications[0].actionSession, 'repo-a_feat-one');
+}
+
 // ── 9. git-status counts fold into CODE-worker tiles only ──
 
 {

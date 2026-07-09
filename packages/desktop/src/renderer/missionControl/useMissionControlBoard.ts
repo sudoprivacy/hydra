@@ -99,6 +99,8 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
 
   // A stable ref to the running refetch so `refresh()` and the debounce share it.
   const runResync = useRef<() => void>(() => {});
+  // Notification state is separate from session state; refresh both for direct mutations.
+  const runNotificationRefresh = useRef<() => void>(() => {});
   // A stable ref to the git-status poll so a resync can kick an immediate refresh.
   const runGitStatusPoll = useRef<() => void>(() => {});
 
@@ -150,6 +152,22 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
     };
     runResync.current = resyncNow;
 
+    const refreshNotificationsNow = () => {
+      client
+        .listNotifications()
+        .then((result) => {
+          if (!disposed.current) {
+            setModel((prev) =>
+              prev ? applyNotificationSnapshot(prev, result as unknown as NotificationSnapshot) : prev,
+            );
+          }
+        })
+        .catch(() => {
+          /* non-fatal — the live stream still delivers updates */
+        });
+    };
+    runNotificationRefresh.current = refreshNotificationsNow;
+
     function scheduleResync(): void {
       if (resyncTimer.current !== null) {
         return;
@@ -172,18 +190,7 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
           // notifications once so existing unread badges, attention, and the
           // completed chip populate on first paint (not just after the next
           // notification arrives).
-          client
-            .listNotifications()
-            .then((result) => {
-              if (!disposed.current) {
-                setModel((prev) =>
-                  prev ? applyNotificationSnapshot(prev, result as unknown as NotificationSnapshot) : prev,
-                );
-              }
-            })
-            .catch(() => {
-              /* non-fatal — the live stream still delivers updates */
-            });
+          refreshNotificationsNow();
         }
       })
       .catch((cause: unknown) => {
@@ -230,6 +237,7 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
         clearTimeout(resyncTimer.current);
         resyncTimer.current = null;
       }
+      runNotificationRefresh.current = () => {};
     };
   }, [client]);
 
@@ -261,6 +269,7 @@ export function useMissionControlBoard(client: HydraControlClient): MissionContr
 
   const refresh = useCallback(() => {
     runResync.current();
+    runNotificationRefresh.current();
   }, []);
 
   const view = useMemo(() => (model ? selectBoard(model) : null), [model]);

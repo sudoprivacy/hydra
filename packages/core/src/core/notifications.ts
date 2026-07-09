@@ -72,6 +72,11 @@ export interface NotificationListResult {
   totalCount: number;
 }
 
+export type NotificationClearFilters = Pick<
+  NotificationListFilters,
+  'session' | 'targetSession' | 'sourceSession' | 'kind'
+>;
+
 export interface NotificationReadResult {
   notification: HydraNotification;
   markedRead: number;
@@ -225,7 +230,7 @@ export class NotificationStore {
   }
 
   clear(
-    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'> = {},
+    filters: NotificationClearFilters = {},
     eventSource: HydraEventSource = 'cli',
   ): NotificationClearResult {
     return this.withLock(() => {
@@ -367,7 +372,7 @@ export class NotificationStore {
 
   private emitClearEvent(
     cleared: number,
-    filters: Pick<NotificationListFilters, 'session' | 'targetSession' | 'sourceSession'>,
+    filters: NotificationClearFilters,
     source: HydraEventSource,
   ): void {
     try {
@@ -380,6 +385,7 @@ export class NotificationStore {
           session: filters.session,
           targetSession: filters.targetSession,
           sourceSession: filters.sourceSession,
+          kind: filters.kind,
         },
       });
     } catch (error) {

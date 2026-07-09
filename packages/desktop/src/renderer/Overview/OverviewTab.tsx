@@ -23,6 +23,7 @@ export function OverviewTab(): JSX.Element {
     onOpen: (tile, view) => {
       tabs.openTab(tile.session, tile.kind);
       tabs.setView(tile.session, view);
+      actions.acknowledgeCompletion(tile);
     },
     onSend: actions.send,
     onRename: actions.rename,

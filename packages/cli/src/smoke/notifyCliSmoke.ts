@@ -189,12 +189,61 @@ function main(): void {
     assert.equal(store.version, 1);
     assert.equal(store.notifications.length, 1);
 
+    const info = parseStdoutJson<{
+      status: string;
+      notification: {
+        id: string;
+        kind: string;
+        targetSession: string | null;
+        sourceSession: string | null;
+      };
+    }>(
+      runCli([
+        'notify',
+        'create',
+        '--session',
+        'repo_copilot',
+        '--from',
+        'repo_worker',
+        '--kind',
+        'info',
+        '--title',
+        'Informational note',
+        '--json',
+      ], ctx.env),
+      'hydra notify create info --json',
+    );
+    assert.equal(info.status, 'created');
+    assert.equal(info.notification.kind, 'info');
+
     const cleared = parseStdoutJson<{ status: string; cleared: number }>(
-      runCli(['notify', 'clear', '--session', 'repo_worker', '--json'], ctx.env),
-      'hydra notify clear --json',
+      runCli(['notify', 'clear', '--session', 'repo_worker', '--kind', 'complete', '--json'], ctx.env),
+      'hydra notify clear --kind complete --json',
     );
     assert.equal(cleared.status, 'ok');
     assert.equal(cleared.cleared, 1);
+
+    const remainingList = parseStdoutJson<{
+      notifications: Array<{ id: string; kind: string }>;
+      count: number;
+      unreadCount: number;
+      totalCount: number;
+    }>(
+      runCli(['notify', 'list', '--json'], ctx.env),
+      'hydra notify list remaining --json',
+    );
+    assert.equal(remainingList.count, 1);
+    assert.equal(remainingList.unreadCount, 1);
+    assert.equal(remainingList.totalCount, 1);
+    assert.equal(remainingList.notifications[0].id, info.notification.id);
+    assert.equal(remainingList.notifications[0].kind, 'info');
+
+    const clearedRemaining = parseStdoutJson<{ status: string; cleared: number }>(
+      runCli(['notify', 'clear', '--session', 'repo_worker', '--json'], ctx.env),
+      'hydra notify clear remaining --json',
+    );
+    assert.equal(clearedRemaining.status, 'ok');
+    assert.equal(clearedRemaining.cleared, 1);
 
     const emptyList = parseStdoutJson<{ notifications: unknown[]; count: number; unreadCount: number; totalCount: number }>(
       runCli(['notify', 'list', '--json'], ctx.env),
@@ -210,9 +259,11 @@ function main(): void {
       'notify.created',
       'worker.runtime.changed',
       'notify.read',
+      'notify.created',
+      'notify.cleared',
       'notify.cleared',
     ]);
-    assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4]);
+    assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4, 5, 6]);
     assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
 
     console.log('notifyCliSmoke: ok');
