@@ -1,4 +1,5 @@
 import { AgentType, CopilotMode } from './types';
+import { agentSupportsSignalCapability } from './agentHookAdapter';
 
 export type ShellTarget = 'posix' | 'cmd' | 'pwsh';
 
@@ -75,7 +76,6 @@ export interface AgentDefinition {
   defaultCommand?: string;
   yoloFlags?: string;
   supportsPlanMode: boolean;
-  supportsCompletionNotification: boolean;
   preassignSessionId?: boolean;
   launch: {
     buildCommand(context: AgentLaunchContext): string;
@@ -247,7 +247,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     defaultCommand: 'claude',
     yoloFlags: '--dangerously-skip-permissions',
     supportsPlanMode: true,
-    supportsCompletionNotification: true,
     preassignSessionId: true,
     launch: {
       buildCommand: (context) => {
@@ -290,7 +289,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     defaultCommand: 'codex',
     yoloFlags: '--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust',
     supportsPlanMode: true,
-    supportsCompletionNotification: true,
     launch: {
       buildCommand: (context) => {
         const command = buildAgentBaseCommand(BUILT_IN_AGENT_DEFINITIONS.codex, context.agentCommand, context);
@@ -356,7 +354,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     defaultCommand: 'gemini',
     yoloFlags: '--yolo --skip-trust',
     supportsPlanMode: false,
-    supportsCompletionNotification: true,
     launch: {
       buildCommand: (context) => {
         const command = buildAgentBaseCommand(BUILT_IN_AGENT_DEFINITIONS.gemini, context.agentCommand, context);
@@ -407,7 +404,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     defaultCommand: 'agy',
     yoloFlags: '--dangerously-skip-permissions',
     supportsPlanMode: false,
-    supportsCompletionNotification: true,
     launch: {
       buildCommand: (context) => buildAgentBaseCommand(
         BUILT_IN_AGENT_DEFINITIONS.antigravity,
@@ -456,7 +452,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     defaultCommand: 'scode',
     yoloFlags: '--dangerously-skip-permissions',
     supportsPlanMode: false,
-    supportsCompletionNotification: false,
     launch: {
       buildCommand: (context) => buildAgentBaseCommand(
         BUILT_IN_AGENT_DEFINITIONS.sudocode,
@@ -506,7 +501,6 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
     id: 'custom',
     label: 'Custom',
     supportsPlanMode: false,
-    supportsCompletionNotification: false,
     launch: {
       buildCommand: buildCustomLaunchCommand,
     },
@@ -549,7 +543,7 @@ export const AGENT_READY_PATTERNS: Record<string, RegExp> = Object.fromEntries(
 );
 
 export const AGENT_COMPLETION_NOTIFICATIONS: Record<string, boolean> = Object.fromEntries(
-  AGENT_DEFINITION_ORDER.map(id => [id, BUILT_IN_AGENT_DEFINITIONS[id].supportsCompletionNotification]),
+  AGENT_DEFINITION_ORDER.map(id => [id, agentSupportsSignalCapability(id, 'complete')]),
 );
 
 export function getAgentDefinition(agentType: string): AgentDefinition {
@@ -572,7 +566,7 @@ export function getAgentReadyPromptHandlers(agentType: string): AgentPromptHandl
 }
 
 export function agentSupportsCompletionNotification(agentType: string): boolean {
-  return getAgentDefinition(agentType).supportsCompletionNotification;
+  return agentSupportsSignalCapability(agentType, 'complete');
 }
 
 export function agentSupportsCopilotMode(agentType: string, copilotMode: CopilotMode): boolean {

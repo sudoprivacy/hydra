@@ -207,6 +207,10 @@ async function main(): Promise<void> {
   );
 
   // Codex
+  const codexTomlPath = path.join(fakeWorktree, '.codex', 'config.toml');
+  fs.mkdirSync(path.dirname(codexTomlPath), { recursive: true });
+  const originalCodexToml = '[features]\nhooks = false\nexperimental = true\n\n[model]\nname = "gpt-5"\n';
+  fs.writeFileSync(codexTomlPath, originalCodexToml, 'utf-8');
   sm['injectCompletionHook'](fakeWorktree, 'codex', hookInfo);
   const codexConfig = JSON.parse(fs.readFileSync(path.join(fakeWorktree, '.codex', 'hooks.json'), 'utf-8'));
   assert.ok(codexConfig.hooks?.Stop, 'Codex config should have Stop hook');
@@ -215,19 +219,10 @@ async function main(): Promise<void> {
     codexConfig.hooks.Stop[0].hooks[0].command.includes("printf '{}'"),
     'Codex hook should emit JSON on stdout',
   );
-  // Verify hooks feature flag is enabled in config.toml
-  const codexToml = fs.readFileSync(path.join(fakeWorktree, '.codex', 'config.toml'), 'utf-8');
-  assert.ok(codexToml.includes('hooks = true'), 'Codex config.toml should enable hooks feature flag');
-
-  // Verify existing Codex [features] table is updated instead of duplicated
-  const codexTomlPath = path.join(fakeWorktree, '.codex', 'config.toml');
-  fs.writeFileSync(codexTomlPath, '[features]\nexperimental = true\n\n[model]\nname = "gpt-5"\n');
-  sm['ensureCodexHooksEnabled'](codexTomlPath);
-  const mergedCodexToml = fs.readFileSync(codexTomlPath, 'utf-8');
-  assert.equal((mergedCodexToml.match(/^\[features\]$/gm) || []).length, 1);
-  assert.ok(
-    mergedCodexToml.includes('[features]\nhooks = true\nexperimental = true\n\n[model]'),
-    `Codex config.toml should merge into existing [features], got:\n${mergedCodexToml}`,
+  assert.equal(
+    fs.readFileSync(codexTomlPath, 'utf-8'),
+    originalCodexToml,
+    'Codex config.toml should remain byte-for-byte unchanged',
   );
 
   // Gemini
@@ -270,6 +265,23 @@ async function main(): Promise<void> {
   sm['injectCompletionHook'](fakeWorktree, 'custom', hookInfo);
   assert.ok(!fs.existsSync(path.join(fakeWorktree, '.custom')), 'Custom agent should not produce config');
 
+  // Malformed user configuration is left byte-for-byte unchanged and does not
+  // produce a script that a Codex inline override could reference.
+  const malformedWorktree = path.join(tempHome, 'malformed-codex-worktree');
+  const malformedHooksPath = path.join(malformedWorktree, '.codex', 'hooks.json');
+  const malformedHooks = '{"hooks":[';
+  const malformedSession = 'repo_malformed-codex';
+  fs.mkdirSync(path.dirname(malformedHooksPath), { recursive: true });
+  fs.writeFileSync(malformedHooksPath, malformedHooks, 'utf-8');
+  const malformedInstalled = sm['injectCompletionHook'](malformedWorktree, 'codex', {
+    ...hookInfo,
+    sessionName: malformedSession,
+    workdir: malformedWorktree,
+  });
+  assert.equal(malformedInstalled, false);
+  assert.equal(fs.readFileSync(malformedHooksPath, 'utf-8'), malformedHooks);
+  assert.equal(fs.existsSync(path.join(hydraDir, 'hooks', `notify-${malformedSession}.sh`)), false);
+
   // Verify notification script exists and is executable
   const scriptPath = path.join(hydraDir, 'hooks', `notify-${hookInfo.sessionName}.sh`);
   assert.ok(fs.existsSync(scriptPath), 'Notification script should exist');
@@ -290,6 +302,7 @@ async function main(): Promise<void> {
   );
   assert.ok(codexLaunch.includes('"/tmp/hydra-primary-repo"={trust_level="trusted"}'));
   assert.ok(codexLaunch.includes('"/tmp/hydra-worker-worktree"={trust_level="trusted"}'));
+  assert.ok(codexLaunch.includes('features.hooks=true'));
 
   // Verify merge behavior: inject again and check generated hooks stay idempotent
   sm['injectCompletionHook'](fakeWorktree, 'claude', hookInfo);
@@ -300,7 +313,11 @@ async function main(): Promise<void> {
 
   const needsOnlyWorktree = path.join(tempHome, 'needs-only-worktree');
   fs.mkdirSync(needsOnlyWorktree, { recursive: true });
-  sm['injectCompletionHook'](needsOnlyWorktree, 'claude', hookInfo, false);
+  sm['injectCompletionHook'](needsOnlyWorktree, 'claude', {
+    ...hookInfo,
+    sessionName: 'repo_needs-only',
+    workdir: needsOnlyWorktree,
+  }, false);
   const needsOnlyConfig = JSON.parse(fs.readFileSync(path.join(needsOnlyWorktree, '.claude', 'settings.json'), 'utf-8'));
   assert.equal(needsOnlyConfig.hooks.Stop, undefined, 'Completion hook should respect includeCompletion=false');
   assert.equal(needsOnlyConfig.hooks.PermissionRequest.length, 1, 'Needs-input hook should still install without completion hook');

@@ -3,6 +3,7 @@ import { outputError, outputResult, type OutputOpts } from '../output';
 import { classifyWorkerNeedsInputEvent } from '@hydra/core/workerNeedsInputClassifier';
 import { publishWorkerNeedsInputNotification } from '@hydra/core/workerAttentionNotifications';
 import { readWorkerSessionByName } from '@hydra/core/sessionStateReader';
+import { getAgentHookDiagnostic, listAgentHookDiagnostics } from '@hydra/core/agentHookAdapter';
 
 interface NeedsInputHookOptions {
   agent?: string;
@@ -14,6 +15,32 @@ export function registerHooksCommands(program: Command): void {
   const hooks = program
     .command('hooks', { hidden: true })
     .description('Internal Hydra agent hook commands');
+
+  hooks
+    .command('capabilities [agent]')
+    .description('Report normalized agent signal capabilities')
+    .action((agent?: string) => {
+      const globalOpts = program.opts() as OutputOpts;
+      try {
+        const diagnostics = agent
+          ? [getAgentHookDiagnostic(agent)]
+          : listAgentHookDiagnostics();
+        outputResult(
+          { status: 'ok', agents: diagnostics },
+          globalOpts,
+          () => {
+            for (const diagnostic of diagnostics) {
+              const capabilities = Object.entries(diagnostic.capabilities)
+                .map(([name, support]) => `${name}=${support}`)
+                .join(', ');
+              console.log(`${diagnostic.agentType}: ${capabilities}`);
+            }
+          },
+        );
+      } catch (error) {
+        outputError(error, globalOpts);
+      }
+    });
 
   hooks
     .command('needs-input')
