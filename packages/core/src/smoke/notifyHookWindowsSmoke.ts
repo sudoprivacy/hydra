@@ -1,8 +1,8 @@
 /**
  * Smoke for the Windows notify-hook variants (issue #225 §3).
  *
- * Calls buildNotifyScriptPowerShell / buildNotifyHookCommandPowerShell on
- * SessionManager directly so the assertions run on any host platform — the
+ * Calls the PowerShell script builder and AgentHookAdapter command builder so
+ * the assertions run on any host platform — the
  * existing completionHookSmoke continues to cover the POSIX .sh path on
  * macOS/Linux CI. We can't actually execute the .ps1 here (no powershell.exe
  * on macOS CI, no psmux), so this smoke verifies the produced shape: extension
@@ -34,6 +34,7 @@ async function main(): Promise<void> {
   try {
     const { SessionManager } = await import('../core/sessionManager');
     const { TmuxBackendCore } = await import('../core/tmux');
+    const { buildAgentCompletionHookCommand } = await import('../core/agentHookAdapter');
 
     const backend = new TmuxBackendCore();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,9 +104,9 @@ async function main(): Promise<void> {
 
     // ── Hook command shape for each agent ──
     const fakeScriptPath = path.join(hydraDir, 'hooks', 'notify-x.ps1');
-    const claudeCmd: string = sm['buildNotifyHookCommandPowerShell'](fakeScriptPath, 'claude');
-    const codexCmd: string = sm['buildNotifyHookCommandPowerShell'](fakeScriptPath, 'codex');
-    const geminiCmd: string = sm['buildNotifyHookCommandPowerShell'](fakeScriptPath, 'gemini');
+    const claudeCmd = buildAgentCompletionHookCommand(fakeScriptPath, 'claude', undefined, 'win32');
+    const codexCmd = buildAgentCompletionHookCommand(fakeScriptPath, 'codex', undefined, 'win32');
+    const geminiCmd = buildAgentCompletionHookCommand(fakeScriptPath, 'gemini', undefined, 'win32');
 
     for (const cmd of [claudeCmd, codexCmd, geminiCmd]) {
       assert.match(cmd, /^powershell\.exe -NoProfile -ExecutionPolicy Bypass -File /);

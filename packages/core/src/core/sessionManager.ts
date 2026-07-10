@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { CopilotMode, MultiplexerBackendCore } from './types';
@@ -20,6 +19,12 @@ import {
   type WorkerRuntimeState,
 } from './workerRuntimeState';
 import { ArchiveStore, type ArchiveStoreState } from './archiveStore';
+import {
+  buildAgentCompletionHookCommand,
+  getAgentHookDiagnostic,
+  installAgentHooks,
+  removeAgentHooks,
+} from './agentHookAdapter';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -743,7 +748,8 @@ export class SessionManager {
     const shouldNotifyCopilot = agentSupportsCompletionNotification(prepared.agentType) &&
       prepared.notifyCopilot &&
       !!prepared.copilotSessionName;
-    const shouldInstallClaudeNeedsInputHooks = prepared.agentType === 'claude' && !!prepared.copilotSessionName;
+    const shouldInstallNeedsInputHooks = getAgentHookDiagnostic(prepared.agentType)
+      .capabilities.needsInput === 'hook' && !!prepared.copilotSessionName;
     logger.info('session.launchWorker', 'Launching worker session', {
       source: prepared.source,
       sessionName: prepared.sessionName,
@@ -761,8 +767,8 @@ export class SessionManager {
     const workerId = peekState.workers[prepared.sessionName]?.workerId ??
       prepared.preservedWorkerInfo?.workerId ??
       peekState.nextWorkerId;
-    if ((shouldNotifyCopilot || shouldInstallClaudeNeedsInputHooks) && prepared.copilotSessionName) {
-      this.injectCompletionHook(prepared.workdir, prepared.agentType, {
+    if ((shouldNotifyCopilot || shouldInstallNeedsInputHooks) && prepared.copilotSessionName) {
+      const hooksInstalled = this.injectCompletionHook(prepared.workdir, prepared.agentType, {
         copilotSessionName: prepared.copilotSessionName,
         sessionName: prepared.sessionName,
         workerId,
@@ -771,7 +777,7 @@ export class SessionManager {
         branch: prepared.branch,
         workdir: prepared.workdir,
       }, shouldNotifyCopilot);
-      if (prepared.agentType === 'codex') {
+      if (prepared.agentType === 'codex' && hooksInstalled) {
         const scriptPath = this.getNotifyScriptPath(prepared.sessionName);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
         agentCommand = this.withCodexCompletionHookOverrides(agentCommand, trustRoots, scriptPath);
@@ -1038,11 +1044,28 @@ export class SessionManager {
       });
       this.clearWorkerRuntimeState(sessionName, 'worker-deleted');
 
-      // agy stores completion hooks in a single global file; removing the
-      // worker means its named entry there is dead weight that fires (as a
-      // no-op) on every Stop turn of every other agy run. Strip it now.
-      if (archivedWorker?.agent === 'antigravity' || worker?.agent === 'antigravity') {
-        this.removeAntigravityHook(sessionName);
+      const hookWorker = archivedWorker || worker;
+      if (hookWorker) {
+        try {
+          const hookResult = removeAgentHooks({
+            agentType: hookWorker.agent,
+            workdir: hookWorker.workdir,
+            sessionName,
+            completionScriptPath: this.getNotifyScriptPath(sessionName),
+          });
+          logger.info('session.delete', 'Removed worker agent hook configuration', {
+            ...context,
+            phase: 'removeAgentHooks',
+            hookStatus: hookResult.status,
+            hookConfigPaths: hookResult.configPaths,
+          });
+        } catch (error) {
+          logger.warn('session.delete', 'Worker agent hook configuration was left unchanged', {
+            ...context,
+            phase: 'removeAgentHooks',
+            error,
+          });
+        }
       }
 
       logger.info('session.delete', 'Deleted worker session', {
@@ -2377,319 +2400,39 @@ export class SessionManager {
     agentType: string,
     info: WorkerNotificationInfo,
     includeCompletion = true,
-  ): void {
-    if (!agentSupportsCompletionNotification(agentType)) {
-      return;
-    }
-
+  ): boolean {
     try {
-      let hookCommand: string | undefined;
-      if (includeCompletion) {
-        // 1. Write the completion notification script.
-        //    Windows gets a PowerShell .ps1 (the sh script's `mkdir`/`trap`/`mktemp`/
-        //    `case…esac`/`printf` body is meaningless to cmd.exe, and `sh` is only on
-        //    PATH if the user opted into Git for Windows' bin dir). See issue #225 §3.
-        const hooksDir = path.join(getHydraHome(), 'hooks');
-        fs.mkdirSync(hooksDir, { recursive: true });
-
-        const isWindows = process.platform === 'win32';
-        const scriptPath = this.getNotifyScriptPath(info.sessionName);
-        const scriptContent = isWindows
-          ? this.buildNotifyScriptPowerShell(info)
-          : this.buildNotifyScript(info);
-        fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
-
-        hookCommand = this.buildNotifyHookCommand(scriptPath, agentType, worktreePath);
-      }
-
-      // 2. Merge the completion hook into the agent's config
-      switch (agentType) {
-        case 'claude':
-          if (hookCommand) {
-            this.mergeAgentHookConfig(
-              path.join(worktreePath, '.claude', 'settings.json'),
-              'Stop',
-              { hooks: [{ type: 'command', command: hookCommand, async: true }] },
-            );
-          }
-          this.mergeAgentHookConfig(
-            path.join(worktreePath, '.claude', 'settings.json'),
-            'PermissionRequest',
-            { hooks: [{ type: 'command', command: this.buildNeedsInputHookCommand(info.sessionName, 'claude', 'PermissionRequest'), async: true }] },
-          );
-          this.mergeAgentHookConfig(
-            path.join(worktreePath, '.claude', 'settings.json'),
-            'PreToolUse',
-            { hooks: [{ type: 'command', command: this.buildNeedsInputHookCommand(info.sessionName, 'claude', 'PreToolUse'), async: true }] },
-          );
-          break;
-        case 'codex':
-          if (hookCommand) {
-            this.mergeAgentHookConfig(
-              path.join(worktreePath, '.codex', 'hooks.json'),
-              'Stop',
-              { hooks: [{ type: 'command', command: hookCommand }] },
-            );
-            // Codex requires the codex_hooks feature flag to be enabled
-            this.ensureCodexHooksEnabled(path.join(worktreePath, '.codex', 'config.toml'));
-          }
-          break;
-        case 'gemini':
-          if (hookCommand) {
-            this.mergeAgentHookConfig(
-              path.join(worktreePath, '.gemini', 'settings.json'),
-              'AfterAgent',
-              {
-                matcher: '*',
-                hooks: [{
-                  name: 'hydra-notify-copilot',
-                  type: 'command',
-                  command: hookCommand,
-                  timeout: 5000,
-                }],
-              },
-            );
-          }
-          break;
-        case 'antigravity':
-          if (hookCommand) {
-            // agy's hooks live in a single global file ~/.gemini/config/hooks.json
-            // keyed by hook name. We register a unique-per-worker name so other
-            // hydra workers' hooks don't collide, and the command itself filters
-            // by workspace path so only the originating worker fires.
-            this.mergeAntigravityHook(info.sessionName, hookCommand);
-          }
-          break;
-        // custom: no known hook system — skip
-      }
-    } catch {
-      // Best-effort — don't fail worker creation if hook injection fails
-    }
-  }
-
-  private mergeAgentHookConfig(
-    configPath: string,
-    eventName: string,
-    hookEntry: Record<string, unknown>,
-  ): void {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let config: any = {};
-    try {
-      if (fs.existsSync(configPath)) {
-        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      }
-    } catch { /* start fresh */ }
-
-    if (!config.hooks) config.hooks = {};
-    if (!Array.isArray(config.hooks[eventName])) config.hooks[eventName] = [];
-    if (!this.hasMatchingAgentHookEntry(config.hooks[eventName], hookEntry)) {
-      config.hooks[eventName].push(hookEntry);
-    }
-
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-  }
-
-  private hasMatchingAgentHookEntry(entries: unknown[], hookEntry: Record<string, unknown>): boolean {
-    const command = this.extractFirstAgentHookCommand(hookEntry);
-    if (command) {
-      return entries.some(entry => this.extractFirstAgentHookCommand(entry) === command);
-    }
-    return entries.some(entry => JSON.stringify(entry) === JSON.stringify(hookEntry));
-  }
-
-  private extractFirstAgentHookCommand(entry: unknown): string | undefined {
-    if (!entry || typeof entry !== 'object') {
-      return undefined;
-    }
-    const hooks = (entry as { hooks?: unknown }).hooks;
-    if (!Array.isArray(hooks)) {
-      return undefined;
-    }
-    for (const hook of hooks) {
-      if (hook && typeof hook === 'object') {
-        const command = (hook as { command?: unknown }).command;
-        if (typeof command === 'string' && command.trim()) {
-          return command;
-        }
-      }
-    }
-    return undefined;
-  }
-
-  private ensureCodexHooksEnabled(configTomlPath: string): void {
-    fs.mkdirSync(path.dirname(configTomlPath), { recursive: true });
-
-    const featureLine = 'hooks = true';
-    const content = fs.existsSync(configTomlPath)
-      ? fs.readFileSync(configTomlPath, 'utf-8')
-      : '';
-    if (/^\s*hooks\s*=\s*true\s*(?:#.*)?$/m.test(content)) {
-      return;
-    }
-
-    const lines = content ? content.split(/\r?\n/) : [];
-    let featuresStart = -1;
-    let featuresEnd = lines.length;
-
-    for (let i = 0; i < lines.length; i++) {
-      if (/^\s*\[features\]\s*(?:#.*)?$/.test(lines[i])) {
-        featuresStart = i;
-        for (let j = i + 1; j < lines.length; j++) {
-          if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(lines[j])) {
-            featuresEnd = j;
-            break;
-          }
-        }
-        break;
-      }
-    }
-
-    if (featuresStart >= 0) {
-      for (let i = featuresStart + 1; i < featuresEnd; i++) {
-        if (/^\s*hooks\s*=/.test(lines[i])) {
-          lines[i] = featureLine;
-          fs.writeFileSync(configTomlPath, lines.join('\n').replace(/\n*$/, '\n'), 'utf-8');
-          return;
-        }
-      }
-      lines.splice(featuresStart + 1, 0, featureLine);
-      fs.writeFileSync(configTomlPath, lines.join('\n').replace(/\n*$/, '\n'), 'utf-8');
-      return;
-    }
-
-    const prefix = content.trimEnd();
-    const nextContent = (prefix ? `${prefix}\n\n` : '') + `[features]\n${featureLine}\n`;
-    fs.writeFileSync(configTomlPath, nextContent, 'utf-8');
-  }
-
-  private buildNotifyHookCommand(scriptPath: string, agentType: string, worktreePath?: string): string {
-    if (process.platform === 'win32') {
-      return this.buildNotifyHookCommandPowerShell(scriptPath, agentType);
-    }
-    const command = `sh ${shellQuote(scriptPath)}`;
-    switch (agentType) {
-      case 'codex':
-        // Codex Stop hooks expect JSON on stdout. The notification remains
-        // best-effort, and the hook command reports a successful no-op payload.
-        return `${command} >/dev/null; printf '{}'`;
-      case 'gemini':
-        // Gemini hooks expect JSON on stdout. The notification remains
-        // best-effort, and the hook command reports a successful no-op payload.
-        return `${command} >/dev/null; printf '{}'`;
-      case 'antigravity': {
-        // agy hooks live in one global file shared across every agy process,
-        // so the command must filter by workspace to avoid notifying siblings.
-        // The Stop hook receives a JSON payload on stdin whose workspacePaths
-        // array contains the active workspace; pattern-matching on the quoted
-        // workdir string is sufficient because the path appears verbatim.
-        if (!worktreePath) {
-          return `${command} >/dev/null; printf '{}'`;
-        }
-        const quotedWorkdir = shellQuote(worktreePath);
-        return [
-          `payload=$(cat 2>/dev/null || true)`,
-          `case "$payload" in *'"'${quotedWorkdir}'"'*) ${command} >/dev/null ;; esac`,
-          `printf '{}'`,
-        ].join('; ');
-      }
-      default:
-        return command;
-    }
-  }
-
-  // Windows variant of buildNotifyHookCommand. The hook command is executed by
-  // the agent (claude/codex/gemini) via shell:true → cmd.exe on Windows, so the
-  // shape is: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<path>"`,
-  // optionally followed by cmd's `>NUL & echo {}` for agents that want JSON on
-  // stdout. See issue #225 §3.
-  private buildNotifyHookCommandPowerShell(scriptPath: string, agentType: string): string {
-    const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${shellQuote(scriptPath)}`;
-    switch (agentType) {
-      case 'codex':
-      case 'gemini':
-        return `${command} >NUL & echo {}`;
-      default:
-        return command;
-    }
-  }
-
-  private buildNeedsInputHookCommand(sessionName: string, agentType: string, eventName: string): string {
-    if (process.platform === 'win32') {
-      return this.buildNeedsInputHookCommandPowerShell(sessionName, agentType, eventName);
-    }
-    const agent = shellQuote(agentType);
-    const session = shellQuote(sessionName);
-    const event = shellQuote(eventName);
-    return [
-      'HYDRA_CLI=$(command -v hydra 2>/dev/null || true)',
-      '[ -n "$HYDRA_CLI" ] || HYDRA_CLI="$HOME/.hydra/bin/hydra"',
-      `[ -x "$HYDRA_CLI" ] && "$HYDRA_CLI" hooks needs-input --agent ${agent} --session ${session} --event ${event} --json >/dev/null 2>&1 || true`,
-    ].join('; ');
-  }
-
-  private buildNeedsInputHookCommandPowerShell(sessionName: string, agentType: string, eventName: string): string {
-    const psq = (s: string) => `'${s.replace(/'/g, "''")}'`;
-    return [
-      '$hydra = Get-Command hydra -ErrorAction SilentlyContinue',
-      '$hydraPath = if ($hydra) { $hydra.Source } else { $null }',
-      'if (-not $hydraPath) {',
-      "  foreach ($candidate in @((Join-Path $HOME '.hydra\\bin\\hydra.cmd'), (Join-Path $HOME '.hydra\\bin\\hydra.ps1'), (Join-Path $HOME '.hydra\\bin\\hydra'))) {",
-      '    if (Test-Path -LiteralPath $candidate) { $hydraPath = $candidate; break }',
-      '  }',
-      '}',
-      `if ($hydraPath) { & $hydraPath hooks needs-input --agent ${psq(agentType)} --session ${psq(sessionName)} --event ${psq(eventName)} --json *> $null }`,
-      'exit 0',
-    ].join('; ');
-  }
-
-  /**
-   * agy reads hooks from a single global file at ~/.gemini/config/hooks.json
-   * keyed by hook name. Each entry maps hook event types (Stop, PreToolUse,
-   * etc.) to a list of {type, command, timeout} objects.
-   */
-  private mergeAntigravityHook(sessionName: string, hookCommand: string): void {
-    const hooksPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
-    fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let config: any = {};
-    try {
-      if (fs.existsSync(hooksPath)) {
-        const parsed = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
-        if (parsed && typeof parsed === 'object') {
-          config = parsed;
-        }
-      }
-    } catch { /* start fresh */ }
-
-    const hookName = `hydra-notify-${sessionName}`;
-    config[hookName] = {
-      PreInvocation: null,
-      PostInvocation: null,
-      Stop: [{ type: 'command', command: hookCommand, timeout: 0 }],
-      PreToolUse: null,
-      PostToolUse: null,
-    };
-
-    fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-  }
-
-  private removeAntigravityHook(sessionName: string): void {
-    const hooksPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
-    if (!fs.existsSync(hooksPath)) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config: any = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
-      if (!config || typeof config !== 'object') return;
-      const hookName = `hydra-notify-${sessionName}`;
-      if (Object.prototype.hasOwnProperty.call(config, hookName)) {
-        delete config[hookName];
-        fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-      }
-    } catch {
-      // Best-effort cleanup; leave a stale (harmless) entry rather than corrupt the file.
+      const scriptPath = this.getNotifyScriptPath(info.sessionName);
+      const result = installAgentHooks({
+        agentType,
+        workdir: worktreePath,
+        sessionName: info.sessionName,
+        completion: includeCompletion ? {
+          path: scriptPath,
+          content: process.platform === 'win32'
+            ? this.buildNotifyScriptPowerShell(info)
+            : this.buildNotifyScript(info),
+          mode: 0o755,
+        } : undefined,
+      });
+      logger.info('session.injectAgentHooks', 'Configured worker agent hooks', {
+        sessionName: info.sessionName,
+        agent: agentType,
+        status: result.status,
+        configPaths: result.configPaths,
+        capabilities: result.diagnostic.capabilities,
+      });
+      return result.status !== 'unsupported';
+    } catch (error) {
+      // Hook signals are optional. Worker creation may proceed, but malformed
+      // user configuration is never replaced with generated Hydra state.
+      logger.warn('session.injectAgentHooks', 'Worker agent hook configuration was left unchanged', {
+        sessionName: info.sessionName,
+        agent: agentType,
+        workdir: worktreePath,
+        error,
+      });
+      return false;
     }
   }
 
@@ -2710,7 +2453,7 @@ export class SessionManager {
     const projects = [...trustRoots]
       .map((trustRoot) => `${JSON.stringify(trustRoot)}={trust_level="trusted"}`)
       .join(',');
-    const hookCommand = this.buildNotifyHookCommand(scriptPath, 'codex');
+    const hookCommand = buildAgentCompletionHookCommand(scriptPath, 'codex');
     const hooksConfig = [
       'hooks={Stop=[{hooks=[{',
       'type="command",',
