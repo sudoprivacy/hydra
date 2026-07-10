@@ -531,6 +531,15 @@ export class SessionManager {
     return workers.filter(w => isRepoWorker(w) && w.repoRoot && path.resolve(w.repoRoot) === canonical);
   }
 
+  /**
+   * Read persisted worker metadata without reconciling it against live tmux or
+   * worktree state. Mutation paths use this first so an orphan can still be
+   * stopped, deleted, or reported accurately instead of disappearing in sync.
+   */
+  listPersistedWorkers(): WorkerInfo[] {
+    return Object.values(this.readSessionState().workers);
+  }
+
   async listCopilots(repoRoot?: string): Promise<CopilotInfo[]> {
     const state = await this.sync();
     const copilots = Object.values(state.copilots);
@@ -544,10 +553,24 @@ export class SessionManager {
     return state.workers[sessionName];
   }
 
-  armCompletionNotification(sessionName: string): void {
+  getPersistedWorker(sessionName: string): WorkerInfo | undefined {
+    return this.readSessionState().workers[sessionName];
+  }
+
+  armCompletionNotification(sessionName: string): boolean {
     const hooksDir = path.join(getHydraHome(), 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
-    fs.writeFileSync(this.getNotifyPendingPath(sessionName), `${randomUUID()}\n`, 'utf-8');
+    const pendingPath = this.getNotifyPendingPath(sessionName);
+    const created = !fs.existsSync(pendingPath);
+    fs.writeFileSync(pendingPath, `${randomUUID()}\n`, 'utf-8');
+    return created;
+  }
+
+  cancelCompletionNotification(sessionName: string): boolean {
+    const pendingPath = this.getNotifyPendingPath(sessionName);
+    const existed = fs.existsSync(pendingPath);
+    fs.rmSync(pendingPath, { force: true });
+    return existed;
   }
 
   async getCopilot(sessionName: string): Promise<CopilotInfo | undefined> {

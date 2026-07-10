@@ -8,10 +8,8 @@ import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
 import { detectCurrentTmuxIdentity, detectIdentity, getWorkerCreationBlockedMessage } from '../identity';
 import { getTelemetry, normalizeAgentForTelemetry } from '@hydra/core/telemetry';
-import { agentSupportsCompletionNotification } from '@hydra/core/agentConfig';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
-import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
-import { setWorkerRuntimeState } from '@hydra/core/workerRuntimeState';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 type WorkerCreateCliOpts = {
   repo?: string;
@@ -154,6 +152,7 @@ export function registerWorkerCommands(program: Command): void {
 
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
         // Auto-detect parent copilot if --copilot not explicitly set
         let copilotSessionName = opts.copilot;
@@ -178,7 +177,7 @@ export function registerWorkerCommands(program: Command): void {
           const repoRoot = await getRepoRootFromPath(repoPath);
           const branchExisted = await localBranchExists(repoRoot, mode.branch);
 
-          const result = await sm.createWorker({
+          const result = await lifecycle.createWorker({
             repoRoot,
             branchName: mode.branch,
             agentType,
@@ -193,7 +192,7 @@ export function registerWorkerCommands(program: Command): void {
           postCreatePromise = result.postCreatePromise;
           status = branchExisted ? 'exists' : 'created';
         } else {
-          const result = await sm.createDirectoryWorker({
+          const result = await lifecycle.createDirectoryWorker({
             workdir: mode.workdir,
             name: mode.name,
             managedWorkdir: mode.managedWorkdir,
@@ -242,7 +241,7 @@ export function registerWorkerCommands(program: Command): void {
         );
 
         // Wait for delayed Enter (Claude trust prompt) before exiting
-        await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
+        await postCreatePromise;
       } catch (error) {
         outputError(error, globalOpts);
       }
@@ -257,9 +256,9 @@ export function registerWorkerCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        const workerInfo = await sm.getWorker(sessionName);
-        const workerType = workerInfo ? (isDirectoryWorker(workerInfo) ? 'task' : 'code') : undefined;
-        await sm.deleteWorker(sessionName, { deleteFiles: opts.deleteFiles === true });
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
+        const workerInfo = await lifecycle.deleteWorker(sessionName, { deleteFiles: opts.deleteFiles === true });
+        const workerType = isDirectoryWorker(workerInfo) ? 'task' : 'code';
 
         getTelemetry().capture('worker_deleted', {
           workerType,
@@ -284,7 +283,8 @@ export function registerWorkerCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        await sm.stopWorker(sessionName);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
+        await lifecycle.stopWorker(sessionName);
 
         outputResult(
           { status: 'stopped', session: sessionName },
@@ -305,7 +305,8 @@ export function registerWorkerCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        const { workerInfo, postCreatePromise } = await sm.startWorker(sessionName, opts.agent);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
+        const { workerInfo, postCreatePromise } = await lifecycle.startWorker(sessionName, opts.agent);
 
         outputResult(
           {
@@ -322,7 +323,7 @@ export function registerWorkerCommands(program: Command): void {
           },
         );
 
-        await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
+        await postCreatePromise;
       } catch (error) {
         outputError(error, globalOpts);
       }
@@ -336,7 +337,8 @@ export function registerWorkerCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
-        const worker = await sm.renameWorker(sessionName, newBranch);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
+        const worker = await lifecycle.renameWorker(sessionName, newBranch);
 
         outputResult(
           {
@@ -399,31 +401,15 @@ export function registerWorkerCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const identity = detectIdentity();
+        const sm = new SessionManager(backend);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
+        const actorSessionName = identity?.role === 'copilot' ? identity.sessionName : undefined;
 
         if (opts.all) {
           // When --all, first positional is the message, second is undefined/empty
           const message = sessionOrMessage;
-          const sm = new SessionManager(backend);
-          const state = await sm.sync();
-          const running = Object.values(state.workers).filter(w => w.status === 'running');
-
-          if (running.length === 0) {
-            throw new Error('No running workers found');
-          }
-
-          const sent: string[] = [];
-          for (const worker of running) {
-            if (
-              identity?.role === 'copilot' &&
-              worker.copilotSessionName === identity.sessionName &&
-              agentSupportsCompletionNotification(worker.agent)
-            ) {
-              sm.armCompletionNotification(worker.sessionName);
-            }
-            await backend.sendMessage(worker.sessionName, message);
-            markWorkerRunning(worker, 'worker-send');
-            sent.push(worker.sessionName);
-          }
+          const result = await lifecycle.broadcastToWorkers(message, { actorSessionName });
+          const sent = result.workers.map(worker => worker.sessionName);
 
           outputResult(
             { status: 'sent', sessions: sent, message },
@@ -438,19 +424,7 @@ export function registerWorkerCommands(program: Command): void {
         } else {
           const session = sessionOrMessage;
           const message = messageOrUndefined;
-          const sm = new SessionManager(backend);
-          const worker = await sm.getWorker(session);
-          if (
-            identity?.role === 'copilot' &&
-            worker?.copilotSessionName === identity.sessionName &&
-            agentSupportsCompletionNotification(worker.agent)
-          ) {
-            sm.armCompletionNotification(session);
-          }
-          await backend.sendMessage(session, message);
-          if (worker) {
-            markWorkerRunning(worker, 'worker-send');
-          }
+          await lifecycle.sendWorkerMessage(session, message, { actorSessionName });
 
           outputResult(
             { status: 'sent', session, message },
@@ -465,20 +439,4 @@ export function registerWorkerCommands(program: Command): void {
         outputError(error, globalOpts);
       }
     });
-}
-
-function markWorkerRunning(worker: WorkerInfo, reason: string): void {
-  try {
-    setWorkerRuntimeState({
-      sessionName: worker.sessionName,
-      state: 'running',
-      origin: 'manual',
-      reason,
-      workerId: worker.workerId,
-      agent: worker.agent,
-      workdir: worker.workdir,
-    }, 'cli');
-  } catch {
-    // Best-effort: sending the message is the user-visible operation.
-  }
 }

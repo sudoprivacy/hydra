@@ -11,17 +11,17 @@
 //
 // ── verb → engine mapping (every op grounded in real code) ────────────────────
 //  Op.listSessions          SessionManager.sync + WorkerRuntimeStateStore.get   (list.ts)
-//  Op.createWorker          SessionManager.createWorker / createDirectoryWorker  (worker.ts)
+//  Op.createWorker          WorkerLifecycleService.create*                       (worker.ts)
 //  Op.createCopilot         SessionManager.createCopilotAndFinalize             (copilot.ts)
-//  Op.startSession          SessionManager.startWorker / startCopilot
-//  Op.stopWorker            SessionManager.stopWorker
-//  Op.deleteSession         SessionManager.deleteWorker / deleteCopilot
-//  Op.renameSession         SessionManager.renameWorker / renameCopilot
-//  Op.restoreSession        SessionManager.getArchived + restoreWorker /
+//  Op.startSession          WorkerLifecycleService.startWorker / startCopilot
+//  Op.stopWorker            WorkerLifecycleService.stopWorker
+//  Op.deleteSession         WorkerLifecycleService.deleteWorker / deleteCopilot
+//  Op.renameSession         WorkerLifecycleService.renameWorker / renameCopilot
+//  Op.restoreSession        SessionManager.getArchived + WorkerLifecycleService.restoreWorker /
 //                             restoreCopilotAndFinalize                          (archive.ts)
 //  Op.getLogs               TmuxBackendCore.capturePane (+ getWorker/getCopilot) (worker.ts)
-//  Op.sendMessage           TmuxBackendCore.sendMessage (+ runtime mark)         (worker.ts)
-//  Op.broadcastToWorkers    SessionManager.sync + TmuxBackendCore.sendMessage    (worker send --all)
+//  Op.sendMessage           WorkerLifecycleService / TmuxBackendCore             (worker.ts)
+//  Op.broadcastToWorkers    WorkerLifecycleService.broadcastToWorkers            (worker send --all)
 //  Op.listNotifications     NotificationStore.list
 //  Op.markNotificationRead  NotificationStore.markRead
 //  Op.clearNotifications    NotificationStore.clear
@@ -43,7 +43,7 @@ import {
   type WorkerInfo,
 } from '@hydra/core/sessionManager';
 import type { CopilotMode, MultiplexerBackendCore } from '@hydra/core/types';
-import { WorkerRuntimeStateStore, setWorkerRuntimeState } from '@hydra/core/workerRuntimeState';
+import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
 import { NotificationStore } from '@hydra/core/notifications';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import { EventLog, type HydraEventSource } from '@hydra/core/events';
@@ -53,6 +53,7 @@ import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
 
@@ -122,6 +123,7 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly sessionManager: SessionManager;
   private readonly notificationStore: NotificationStore;
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
+  private readonly workerLifecycle: WorkerLifecycleService;
   private readonly eventLog: EventLog;
   private readonly diffService: DiffService;
   private readonly notificationEventSource: HydraEventSource;
@@ -134,6 +136,13 @@ export class HydraAppService implements HydraAppServiceApi {
     this.eventLog = options.eventLog ?? new EventLog();
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
+    this.workerLifecycle = new WorkerLifecycleService({
+      backend: this.backend,
+      sessionManager: this.sessionManager,
+      notificationStore: this.notificationStore,
+      runtimeStateStore: this.runtimeStateStore,
+      eventSource: this.notificationEventSource,
+    });
   }
 
   // ── transport waist (3 methods) + sidecar-internal terminal authorization ──
@@ -254,7 +263,7 @@ export class HydraAppService implements HydraAppServiceApi {
     return { copilots, workers, count: copilots.length + workers.length };
   }
 
-  /** SessionManager.createWorker / createDirectoryWorker — mirrors `hydra worker create`. */
+  /** WorkerLifecycleService.create* — mirrors `hydra worker create`. */
   private async createWorker(input: CreateWorkerInput): Promise<CreateWorkerResult> {
     const taskModeRequested = Boolean(input.dir) || input.temp === true;
     if (input.repo && taskModeRequested) {
@@ -275,7 +284,7 @@ export class HydraAppService implements HydraAppServiceApi {
       const branch = input.branch.trim();
       const branchExisted = await localBranchExists(repoRoot, branch);
 
-      const result = await this.sessionManager.createWorker({
+      const result = await this.workerLifecycle.createWorker({
         repoRoot,
         branchName: branch,
         agentType,
@@ -296,7 +305,7 @@ export class HydraAppService implements HydraAppServiceApi {
         if (!name) {
           throw new Error('--name is required when using --temp.');
         }
-        const result = await this.sessionManager.createDirectoryWorker({
+        const result = await this.workerLifecycle.createDirectoryWorker({
           managedWorkdir: true, name, agentType,
           task: input.task, taskFile: input.taskFile,
           copilotSessionName: input.copilot, notifyCopilot: input.notifyCopilot ?? true,
@@ -306,7 +315,7 @@ export class HydraAppService implements HydraAppServiceApi {
       }
 
       const workdir = expandAndResolvePath(input.dir!);
-      const result = await this.sessionManager.createDirectoryWorker({
+      const result = await this.workerLifecycle.createDirectoryWorker({
         workdir, name: input.name?.trim(), managedWorkdir: false, agentType,
         task: input.task, taskFile: input.taskFile,
         copilotSessionName: input.copilot, notifyCopilot: input.notifyCopilot ?? true,
@@ -363,10 +372,10 @@ export class HydraAppService implements HydraAppServiceApi {
     }
   }
 
-  /** SessionManager.startWorker / startCopilot. */
+  /** WorkerLifecycleService.startWorker / SessionManager.startCopilot. */
   private async startSession(payload: StartSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
-      const { workerInfo, postCreatePromise } = await this.sessionManager.startWorker(
+      const { workerInfo, postCreatePromise } = await this.workerLifecycle.startWorker(
         payload.session, payload.options?.agent, payload.options?.agentCommand,
       );
       await postCreatePromise;
@@ -383,27 +392,27 @@ export class HydraAppService implements HydraAppServiceApi {
     };
   }
 
-  /** SessionManager.stopWorker. */
+  /** WorkerLifecycleService.stopWorker. */
   private async stopWorker(payload: StopWorkerPayload): Promise<SessionResult> {
-    await this.sessionManager.stopWorker(payload.session);
+    await this.workerLifecycle.stopWorker(payload.session);
     return { status: 'stopped', kind: 'worker', session: payload.session };
   }
 
-  /** SessionManager.deleteWorker / deleteCopilot. */
+  /** WorkerLifecycleService.deleteWorker / SessionManager.deleteCopilot. */
   private async deleteSession(payload: DeleteSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
       const deleteFiles = payload.options?.deleteFiles === true;
-      await this.sessionManager.deleteWorker(payload.session, { deleteFiles });
+      await this.workerLifecycle.deleteWorker(payload.session, { deleteFiles });
       return { status: 'deleted', kind: 'worker', session: payload.session, deleteFiles };
     }
     await this.sessionManager.deleteCopilot(payload.session);
     return { status: 'deleted', kind: 'copilot', session: payload.session };
   }
 
-  /** SessionManager.renameWorker / renameCopilot. */
+  /** WorkerLifecycleService.renameWorker / SessionManager.renameCopilot. */
   private async renameSession(payload: RenameSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
-      const worker = await this.sessionManager.renameWorker(payload.session, payload.name);
+      const worker = await this.workerLifecycle.renameWorker(payload.session, payload.name);
       return {
         status: 'renamed', kind: 'worker', oldSession: payload.session,
         session: worker.sessionName, branch: worker.branch, workdir: worker.workdir,
@@ -416,7 +425,7 @@ export class HydraAppService implements HydraAppServiceApi {
     };
   }
 
-  /** SessionManager.getArchived + restoreWorker / restoreCopilotAndFinalize — mirrors `archive restore`. */
+  /** SessionManager.getArchived + WorkerLifecycleService.restoreWorker / restoreCopilotAndFinalize. */
   private async restoreSession(payload: RestoreSessionPayload): Promise<SessionResult> {
     const entry = this.sessionManager.getArchived(payload.session);
     if (!entry) {
@@ -424,7 +433,7 @@ export class HydraAppService implements HydraAppServiceApi {
     }
 
     if (entry.type === 'worker') {
-      const { workerInfo, postCreatePromise } = await this.sessionManager.restoreWorker(payload.session);
+      const { workerInfo, postCreatePromise } = await this.workerLifecycle.restoreWorker(payload.session);
       await postCreatePromise;
       return {
         status: 'restored', kind: 'worker', type: 'worker',
@@ -461,31 +470,20 @@ export class HydraAppService implements HydraAppServiceApi {
     return { session: payload.session, lines, output, sessionId: entity?.sessionId ?? null, sessionFile };
   }
 
-  /** TmuxBackendCore.sendMessage (+ runtime mark) — mirrors `worker/copilot send`. */
+  /** WorkerLifecycleService / TmuxBackendCore.sendMessage — mirrors `worker/copilot send`. */
   private async sendMessage(payload: SendMessagePayload): Promise<SendResult> {
-    await this.backend.sendMessage(payload.session, payload.message);
     if (payload.kind === 'worker') {
-      const worker = await this.sessionManager.getWorker(payload.session);
-      if (worker) {
-        this.markWorkerRunning(worker, 'worker-send');
-      }
+      await this.workerLifecycle.sendWorkerMessage(payload.session, payload.message);
+    } else {
+      await this.backend.sendMessage(payload.session, payload.message);
     }
     return { status: 'sent', session: payload.session, message: payload.message };
   }
 
-  /** SessionManager.sync + TmuxBackendCore.sendMessage per running worker — mirrors `worker send --all`. */
+  /** WorkerLifecycleService.broadcastToWorkers — mirrors `worker send --all`. */
   private async broadcastToWorkers(payload: BroadcastPayload): Promise<BroadcastResult> {
-    const state = await this.sessionManager.sync();
-    const running = Object.values(state.workers).filter(w => w.status === 'running');
-    if (running.length === 0) {
-      throw new Error('No running workers found');
-    }
-    const sent: string[] = [];
-    for (const worker of running) {
-      await this.backend.sendMessage(worker.sessionName, payload.message);
-      this.markWorkerRunning(worker, 'worker-broadcast');
-      sent.push(worker.sessionName);
-    }
+    const result = await this.workerLifecycle.broadcastToWorkers(payload.message);
+    const sent = result.workers.map(worker => worker.sessionName);
     return { status: 'sent', sessions: sent, message: payload.message };
   }
 
@@ -627,21 +625,6 @@ export class HydraAppService implements HydraAppServiceApi {
     throw new Error(`Session "${session}" not found`);
   }
 
-  private markWorkerRunning(worker: WorkerInfo, reason: string): void {
-    try {
-      setWorkerRuntimeState({
-        sessionName: worker.sessionName,
-        state: 'running',
-        origin: 'manual',
-        reason,
-        workerId: worker.workerId,
-        agent: worker.agent,
-        workdir: worker.workdir,
-      }, this.notificationEventSource);
-    } catch {
-      // Best-effort: delivering the message is the user-visible operation.
-    }
-  }
 }
 
 // ── module-local helpers (mirror list.ts / copilot.ts) ──
