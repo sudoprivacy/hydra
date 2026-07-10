@@ -1,8 +1,7 @@
 // Propagate the single source-of-truth version (root package.json) into every
 // workspace manifest and the lockfile, so the tag (auto-tag-release.yml, from
 // root), the packaged .vsix (from packages/extension/package.json), and the CLI/
-// telemetry version reads (from packages/{core,cli}/package.json) can never
-// diverge.
+// telemetry version reads (from workspace package.json files) can never diverge.
 //
 // Usage: `npm run sync-version` — run after bumping the version in the ROOT
 // package.json. Enforced by smoke:version-consistency (fails the test suite if
@@ -10,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { discoverWorkspaceManifestPaths } = require('./workspace-manifests');
 
 const repoRoot = path.resolve(__dirname, '..');
 const version = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
@@ -19,12 +19,7 @@ if (!version || typeof version !== 'string') {
   process.exit(1);
 }
 
-const workspaceManifests = [
-  'packages/core/package.json',
-  'packages/cli/package.json',
-  'packages/extension/package.json',
-  'packages/desktop/package.json',
-];
+const workspaceManifests = discoverWorkspaceManifestPaths(repoRoot);
 
 function writeJson(p, obj) {
   fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);

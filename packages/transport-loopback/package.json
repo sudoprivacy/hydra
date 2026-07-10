@@ -1,6 +1,6 @@
 {
   "name": "@hydra/transport-loopback",
-  "version": "0.3.2026062200",
+  "version": "0.3.2026062800",
   "description": "Hydra loopback transport — LoopbackHttpWsTransport (renderer → sidecar over 127.0.0.1 HTTP/WS) + the shared loopback wire vocabulary. Engine-free: depends only on @hydra/protocol types and global fetch/WebSocket.",
   "license": "MIT",
   "private": true,
