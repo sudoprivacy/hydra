@@ -1,6 +1,6 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Approved implementation contract — Wave 1 complete; Wave 2 next
+**Status:** Approved implementation contract — Wave 2 complete; Wave 3 next
 
 **Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
@@ -738,9 +738,9 @@ After each merged wave, update only these sections:
 - [x] PR1 Runtime v2 (#279, `4c2df4d`)
 - [x] PR2 Diff/tmux ownership safety (#278, `272088e`)
 - [x] PR3 Version/default-test governance (#277, `f825e5f`)
-- [ ] PR4 Notification v2
-- [ ] PR6 ArchiveStore
-- [ ] PR5 AgentHookAdapter
+- [x] PR4 Notification v2 (#281, `d09675b`)
+- [x] PR6 ArchiveStore (#282, `43b2af7`)
+- [x] PR5 AgentHookAdapter (#283, `9075994`)
 - [ ] PR7 WorkerLifecycleService
 - [ ] PR8 CompletionJobStore/Coordinator
 - [ ] PR9 Stable identity migration
@@ -774,3 +774,35 @@ After each merged wave, update only these sections:
   and foreign tmux ownership are `fixed`; the remaining entries stay
   `known-failure` for their owning waves.
 - No frozen decision or PR dependency was changed during Wave 1.
+
+### Wave 2 — 2026-07-10
+
+- Validated integration commit: `9075994` on
+  `feat/worker-attention-control-plane`.
+- PR4, PR6, and PR5 each passed the repository Claude Code Review workflow
+  with no review comments or inline findings before squash merge.
+- `npm run compile`
+- `npm run lint`
+- `npm run smoke:notification-v2`
+- `npm run smoke:archive-store`
+- `npm run smoke:agent-hook-adapter`
+- `npm run smoke:completion-hook`
+- `npm run smoke:notify-hook-windows`
+- `npm run smoke:cli-contract`
+- `npm run smoke:worker-delete`
+- `npm run smoke:task-worker`
+- `npm run smoke:worker-attention-characterization`
+- `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
+- Notification v2 is authoritative for occurrence status while retaining a
+  recoverable version 1 compatibility projection. Active attention is not
+  evicted by terminal-history retention.
+- The archive schema remains unchanged. Archive updates are now locked,
+  validated, and atomically replaced without losing concurrent writers.
+- Agent hook JSON schemas remain unchanged. Malformed user configuration is
+  rejected without replacement, Codex TOML is not mutated, and Hydra-owned
+  entries are reversible through persisted install receipts.
+- Characterization ledger after validation: runtime rollback, event-only
+  notification clear, symlink escape, foreign tmux ownership, and archive
+  concurrency are `fixed`. Codex abort resolution and completion pending-job
+  overwrite remain `known-failure` for their owning waves.
+- No frozen decision or PR dependency was changed during Wave 2.
