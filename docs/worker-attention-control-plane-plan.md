@@ -1,8 +1,8 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Approved implementation contract
+**Status:** Approved implementation contract — Wave 1 complete; Wave 2 next
 
-**Implementation gate:** No implementation PR starts until this document is approved.
+**Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
 **Scope owner:** Hydra core control plane
 
@@ -734,10 +734,10 @@ After each merged wave, update only these sections:
 
 ## 17. Completion checklist
 
-- [ ] PR0 contract approved and characterization tests landed
-- [ ] PR1 Runtime v2
-- [ ] PR2 Diff/tmux ownership safety
-- [ ] PR3 Version/default-test governance
+- [x] PR0 contract approved and characterization tests landed (#276, `77a523a`)
+- [x] PR1 Runtime v2 (#279, `4c2df4d`)
+- [x] PR2 Diff/tmux ownership safety (#278, `272088e`)
+- [x] PR3 Version/default-test governance (#277, `f825e5f`)
 - [ ] PR4 Notification v2
 - [ ] PR6 ArchiveStore
 - [ ] PR5 AgentHookAdapter
@@ -750,3 +750,27 @@ After each merged wave, update only these sections:
 - [ ] PR10D VS Code/CLI convergence
 - [ ] PR10E EventHub/stream/retention
 - [ ] Wave 5 migration and release validation
+
+## 18. Validation evidence
+
+### Wave 1 — 2026-07-10
+
+- Validated integration commit: `4c2df4d` on
+  `feat/worker-attention-control-plane`.
+- PR1 passed the repository Claude Code Review workflow with no review
+  comments or inline findings before squash merge.
+- `npm run compile`
+- `npm run lint`
+- `npm run smoke:worker-runtime-coordinator`
+- `npm run smoke:control-plane-safety`
+- `npm run smoke:version-consistency`
+- `npm run smoke:protocol-compatibility`
+- `npm run smoke:mission-control`
+- `npm run smoke:desktop-diff`
+- `npm run smoke:worker-runtime-state`
+- `npm run smoke:worker-attention-characterization`
+- `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
+- Characterization ledger after validation: runtime rollback, symlink escape,
+  and foreign tmux ownership are `fixed`; the remaining entries stay
+  `known-failure` for their owning waves.
+- No frozen decision or PR dependency was changed during Wave 1.
