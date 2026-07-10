@@ -8,7 +8,6 @@ import {
 import { logger } from './logger';
 import {
   getHydraNotificationsFile,
-  isNotificationKind,
   NotificationStore,
   type HydraNotification,
   type NotificationKind,
@@ -347,52 +346,9 @@ export class NotificationStateService implements Disposable {
   private rebuildSourceProjections(notifications: readonly HydraNotification[]): void {
     const attention = new Map<string, HydraNotification>();
     const completions = new Map<string, HydraNotification>();
-    const storedNotificationIds = new Set<string>();
 
     for (const notification of notifications) {
-      storedNotificationIds.add(notification.id);
       if (!notification.sourceSession || notification.targetSession === notification.sourceSession) {
-        continue;
-      }
-      upsertLatestAttention(attention, notification.sourceSession, notification);
-      if (notification.kind === 'complete') {
-        upsertLatestCompletion(completions, notification.sourceSession, notification);
-      }
-    }
-
-    let events: HydraEvent[];
-    try {
-      events = this.eventLog.read({ tolerateIncompleteTail: true });
-    } catch (error) {
-      logger.warn('notification-state.events', 'Failed to rebuild source notification projections', { error });
-      this.sourceAttentionBySession = attention;
-      this.sourceCompletionBySession = completions;
-      return;
-    }
-
-    const eventOnlyNotifications = new Map<string, HydraNotification>();
-    for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
-      const notification = notificationFromCreatedEvent(event);
-      if (notification?.sourceSession) {
-        if (!storedNotificationIds.has(notification.id)) {
-          eventOnlyNotifications.set(notification.id, notification);
-        }
-        continue;
-      }
-
-      if (event.type !== 'notify.cleared') {
-        continue;
-      }
-
-      for (const [id, projected] of eventOnlyNotifications.entries()) {
-        if (notificationMatchesClearEvent(projected, event)) {
-          eventOnlyNotifications.delete(id);
-        }
-      }
-    }
-
-    for (const notification of eventOnlyNotifications.values()) {
-      if (!notification.sourceSession) {
         continue;
       }
       upsertLatestAttention(attention, notification.sourceSession, notification);
@@ -478,65 +434,6 @@ function upsertLatestAttention(
   }
 }
 
-function notificationFromCreatedEvent(event: HydraEvent): HydraNotification | undefined {
-  if (event.type !== 'notify.created') {
-    return undefined;
-  }
-  const payload = event.payload || {};
-  if (!isNotificationKind(payload.kind)) {
-    return undefined;
-  }
-  const sourceSession = getStringPayload(payload, 'sourceSession');
-  const targetSession = getStringPayload(payload, 'targetSession');
-  if (!sourceSession || targetSession === sourceSession) {
-    return undefined;
-  }
-  const id = getStringPayload(payload, 'notificationId') || `event:${event.seq}`;
-  const action = getActionPayload(payload);
-  return {
-    id,
-    createdAt: event.ts,
-    readAt: null,
-    kind: payload.kind,
-    title: getStringPayload(payload, 'title') || getDefaultNotificationTitle(payload.kind),
-    body: getStringPayload(payload, 'body') || '',
-    targetSession: targetSession || null,
-    sourceSession,
-    action,
-    context: {
-      workerId: getNumberPayload(payload, 'workerId'),
-      branch: getStringPayload(payload, 'branch') ?? null,
-      workdir: getStringPayload(payload, 'workdir') ?? null,
-      agent: getStringPayload(payload, 'agent') ?? null,
-    },
-  };
-}
-
-function notificationMatchesClearEvent(notification: HydraNotification, event: HydraEvent): boolean {
-  const payload = event.payload || {};
-  const session = getStringPayload(payload, 'session');
-  const targetSession = getStringPayload(payload, 'targetSession');
-  const sourceSession = getStringPayload(payload, 'sourceSession');
-  const kind = getStringPayload(payload, 'kind');
-
-  if (!session && !targetSession && !sourceSession) {
-    return !kind || notification.kind === kind;
-  }
-  if (kind && notification.kind !== kind) {
-    return false;
-  }
-  if (session && notification.targetSession !== session && notification.sourceSession !== session) {
-    return false;
-  }
-  if (targetSession && notification.targetSession !== targetSession) {
-    return false;
-  }
-  if (sourceSession && notification.sourceSession !== sourceSession) {
-    return false;
-  }
-  return true;
-}
-
 const SOURCE_ATTENTION_KIND_PRIORITY: Record<NotificationKind, number> = {
   error: 0,
   blocked: 1,
@@ -544,40 +441,6 @@ const SOURCE_ATTENTION_KIND_PRIORITY: Record<NotificationKind, number> = {
   complete: 3,
   info: 4,
 };
-
-function getDefaultNotificationTitle(kind: NotificationKind): string {
-  switch (kind) {
-    case 'complete':
-      return 'Worker completed';
-    case 'error':
-      return 'Worker error';
-    case 'blocked':
-      return 'Worker blocked';
-    case 'needs-input':
-      return 'Worker needs input';
-    case 'info':
-      return 'Worker notification';
-  }
-}
-
-function getActionPayload(payload: Record<string, unknown>): HydraNotification['action'] | undefined {
-  const type = getStringPayload(payload, 'actionType');
-  const session = getStringPayload(payload, 'actionSession');
-  if ((type === 'open-session' || type === 'review-diff') && session) {
-    return { type, session };
-  }
-  return undefined;
-}
-
-function getStringPayload(payload: Record<string, unknown>, key: string): string | undefined {
-  const value = payload[key];
-  return typeof value === 'string' && value ? value : undefined;
-}
-
-function getNumberPayload(payload: Record<string, unknown>, key: string): number | undefined {
-  const value = payload[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
 
 function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotification): number {
   const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);

@@ -67,7 +67,7 @@ interface ArchiveInternals {
 
 const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'stale-notification-runtime-rollback': 'fixed',
-  'event-only-notification-clear': 'known-failure',
+  'event-only-notification-clear': 'fixed',
   'codex-turn-aborted-resolution': 'known-failure',
   'completion-pending-overwrite': 'known-failure',
   'diff-symlink-escape': 'fixed',
@@ -245,6 +245,10 @@ async function characterizeEventOnlyNotificationClear(): Promise<ScenarioResult>
       targetSession: 'copilot-events',
       sourceSession: 'worker-event-only',
       dedupeKey: 'complete:worker-event-only:run-1',
+      lifecycleEpoch: 'epoch-event-only',
+      runId: 'run-event-only-1',
+      signalId: 'complete-event-only-1',
+      context: { workerId: 2 },
       eventSource: 'hook',
     });
     store.create({
