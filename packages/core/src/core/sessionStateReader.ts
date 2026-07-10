@@ -62,3 +62,12 @@ export function readWorkerSessionByName(sessionName: string, sessionsFile = getH
     .find(worker => worker.sessionName === target)
     ?? null;
 }
+
+export function readWorkerSessionById(workerId: number, sessionsFile = getHydraSessionsFile()): WorkerInfo | null {
+  if (!Number.isSafeInteger(workerId) || workerId <= 0) {
+    return null;
+  }
+  return readWorkerSessions(sessionsFile)
+    .find(worker => worker.workerId === workerId)
+    ?? null;
+}

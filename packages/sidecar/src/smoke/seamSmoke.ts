@@ -127,7 +127,11 @@ async function main(): Promise<void> {
     assert.equal(diff.baseRef, 'main', 'base ref resolves to main');
     assert.equal(diff.branch, 'feature', 'current branch is feature');
     const diffPaths = diff.changes.map(c => c.path).sort();
-    assert.deepEqual(diffPaths, ['a.txt', 'b.txt'], 'diff lists the modified + untracked files');
+    assert.deepEqual(
+      diffPaths,
+      ['.claude/settings.json', 'a.txt', 'b.txt'],
+      'diff transparently includes the installed completion hook plus user changes',
+    );
     assert.equal(diff.count, diff.changes.length, 'count equals changes length');
 
     const current = await client.getFileSnapshot({ session: diffSession, path: 'a.txt', side: 'current' });
@@ -194,8 +198,8 @@ async function main(): Promise<void> {
     const { countChangedFiles } = await import('../gitStatus');
     assert.equal(
       await countChangedFiles(repoRoot),
-      2,
-      'countChangedFiles counts the modified + untracked files in the worktree',
+      3,
+      'countChangedFiles counts the hook config plus modified and untracked user files',
     );
     // The verb reports CODE workers only — the directory (task) worker is skipped.
     const gitStatuses = await client.listGitStatus();

@@ -307,7 +307,7 @@ export function buildAgentCompletionHookCommand(
       const quotedWorkdir = shellQuote(worktreePath);
       return [
         'payload=$(cat 2>/dev/null || true)',
-        `case "$payload" in *'"'${quotedWorkdir}'"'*) ${command} >/dev/null ;; esac`,
+        `case "$payload" in *'"'${quotedWorkdir}'"'*) printf '%s' "$payload" | ${command} >/dev/null ;; esac`,
         `printf '{}'`,
       ].join('; ');
     }

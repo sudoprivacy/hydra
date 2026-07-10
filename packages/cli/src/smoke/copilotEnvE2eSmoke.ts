@@ -33,6 +33,14 @@ interface RunResult {
   status: number;
 }
 
+interface CompletionJobEntry {
+  jobId: string;
+  workerId: number;
+  lifecycleEpoch: string;
+  runId: string;
+  status: 'pending' | 'fired' | 'cancelled';
+}
+
 type ProcessEnv = Record<string, string | undefined>;
 
 const SESSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -274,13 +282,28 @@ async function main(): Promise<void> {
       'worker agent should not inherit HYDRA_COPILOT_SESSION',
     );
 
-    const notifyScript = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.sh`);
-    const pendingPath = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.pending`);
-    assert.ok(fs.existsSync(notifyScript), 'notify hook script should be generated');
-    await pollUntil(() => fs.existsSync(pendingPath), 60_000, 'notify pending marker to be armed');
-    assert.match(fs.readFileSync(notifyScript, 'utf-8'), new RegExp(`COPILOT='${COPILOT_B}'`));
+    assert.ok(workerInfo.workerId, 'workerId should be recorded');
+    const notifyScript = path.join(hydraHome, 'hooks', `completion-worker-${workerInfo.workerId}.sh`);
+    const legacyPendingPath = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.pending`);
+    const jobsPath = path.join(hydraHome, 'completion-jobs.json');
+    assert.ok(fs.existsSync(notifyScript), 'structured completion hook script should be generated');
+    const pendingJob = await pollUntil(() => {
+      if (!fs.existsSync(jobsPath)) return null;
+      const jobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+      return jobs.find(job => job.workerId === workerInfo.workerId && job.status === 'pending') || null;
+    }, 60_000, 'durable completion job to be armed');
+    const scriptContent = fs.readFileSync(notifyScript, 'utf-8');
+    assert.match(scriptContent, /hooks complete/);
+    assert.match(scriptContent, new RegExp(`LIFECYCLE_EPOCH='${escapeRegExp(pendingJob.lifecycleEpoch)}'`));
+    assert.equal(scriptContent.includes(COPILOT_B), false, 'hook script must not copy parent routing');
+    assert.equal(scriptContent.includes(workerSessionName), false, 'hook script must not copy session routing');
+    assert.equal(fs.existsSync(legacyPendingPath), false, 'new lifecycle must not write legacy pending markers');
 
     assertRun('run notify script', run('sh', [notifyScript], childEnv, repoRoot));
+    await pollUntil(() => {
+      const jobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+      return jobs.find(job => job.jobId === pendingJob.jobId)?.status === 'fired' || null;
+    }, 10_000, 'completion job to be marked fired');
     await pollUntil(() => {
       const currentLog = fs.readFileSync(fakeAgentLog, 'utf-8');
       return currentLog.includes(`INPUT cwd=${repoRoot} hydra_copilot_session=${COPILOT_B} line=Worker #`);
@@ -292,7 +315,13 @@ async function main(): Promise<void> {
       false,
       'completion notification should not be delivered to copilot A',
     );
-    assert.equal(fs.existsSync(pendingPath), false, 'notify pending marker should be consumed');
+    const firedJobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+    assert.equal(
+      firedJobs.find(job => job.jobId === pendingJob.jobId)?.status,
+      'fired',
+      'completion coordinator should mark the durable job fired',
+    );
+    assert.equal(fs.existsSync(legacyPendingPath), false, 'legacy pending marker should remain absent');
 
     assertRun('worker delete', runHydra(['worker', 'delete', workerSessionName]));
     assertRun('copilot B delete', runHydra(['copilot', 'delete', COPILOT_B]));
