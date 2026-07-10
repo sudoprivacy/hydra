@@ -1,6 +1,6 @@
 {
   "name": "@hydra/sidecar",
-  "version": "0.3.2026062200",
+  "version": "0.3.2026062800",
   "description": "Hydra sidecar — the server side of the seam. HydraAppService imports @hydra/core in-process (loopback HTTP/WS server lands in M1).",
   "license": "MIT",
   "private": true,

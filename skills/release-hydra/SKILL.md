@@ -54,17 +54,17 @@ Release a new version of the Hydra VS Code extension by creating a release PR.
    npm run sync-version
    ```
 
-   `sync-version` writes the root version into `packages/core/package.json`,
-   `packages/cli/package.json`, `packages/extension/package.json`, and
-   `package-lock.json` (root `version`, `packages[""].version`, and each
-   `packages/<pkg>` entry). This keeps the git tag (from root, via
+   `sync-version` discovers every manifest declared by the root npm workspace
+   patterns and writes the root version into each one plus `package-lock.json`
+   (root `version`, `packages[""].version`, and every workspace package entry).
+   This keeps the git tag (from root, via
    `auto-tag-release.yml`) equal to the published version (the .vsix is built from
    `packages/extension/package.json`, the CLI/telemetry versions come from the
    `@hydra/*` manifests).
 
    Do **not** hand-edit the workspace manifests. The `smoke:version-consistency`
-   test (run as part of `npm test`) fails closed if any of the four manifests
-   diverge, and `scripts/package-vsix.js` refuses to build a .vsix whose version
+   test (run as part of `npm test`) fails closed if any workspace manifest
+   diverges, and `scripts/package-vsix.js` refuses to build a .vsix whose version
    disagrees with the root.
 
 5. **Commit and create release PR**
