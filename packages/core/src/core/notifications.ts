@@ -4,10 +4,6 @@ import { randomUUID } from 'crypto';
 import { getHydraHome } from './path';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
-import {
-  projectWorkerRuntimeFromNotification,
-  WorkerRuntimeStateStore,
-} from './workerRuntimeState';
 
 export type NotificationKind = 'complete' | 'needs-input' | 'error' | 'blocked' | 'info';
 
@@ -117,11 +113,11 @@ export class NotificationStore {
     private readonly filePath: string = getHydraNotificationsFile(),
     private readonly retentionLimit: number = DEFAULT_RETENTION_LIMIT,
     private readonly eventLog: EventLog = new EventLog(),
-    private readonly runtimeStateStore: WorkerRuntimeStateStore = new WorkerRuntimeStateStore(
-      path.join(path.dirname(filePath), 'worker-runtime-state.json'),
-      eventLog,
-    ),
-  ) {}
+    legacyRuntimeStateStore?: unknown,
+    private readonly now: () => number = Date.now,
+  ) {
+    void legacyRuntimeStateStore;
+  }
 
   create(input: CreateNotificationInput): CreateNotificationResult {
     return this.withLock(() => {
@@ -130,14 +126,13 @@ export class NotificationStore {
       if (dedupeKey) {
         const existing = store.notifications.find(notification => notification.dedupeKey === dedupeKey);
         if (existing) {
-          this.projectRuntimeState(existing, input.eventSource || 'cli');
           return { notification: existing, created: false };
         }
       }
 
       const notification: HydraNotification = {
         id: randomUUID(),
-        createdAt: new Date().toISOString(),
+        createdAt: getNextNotificationTimestamp(store.notifications, this.now()),
         readAt: null,
         kind: input.kind,
         title: truncate(input.title.trim() || 'Notification', MAX_TITLE_LENGTH),
@@ -160,7 +155,6 @@ export class NotificationStore {
       store.notifications = [notification, ...store.notifications].slice(0, this.retentionLimit);
       this.writeStore(store);
       this.emitNotificationEvent('notify.created', notification, input.eventSource || 'cli');
-      this.projectRuntimeState(notification, input.eventSource || 'cli');
       return { notification, created: true };
     });
   }
@@ -357,19 +351,6 @@ export class NotificationStore {
     }
   }
 
-  private projectRuntimeState(notification: HydraNotification, source: HydraEventSource): void {
-    try {
-      projectWorkerRuntimeFromNotification(notification, source, this.runtimeStateStore);
-    } catch (error) {
-      logger.warn('notifications.runtime-state', 'Failed to project notification into worker runtime state', {
-        notificationId: notification.id,
-        kind: notification.kind,
-        sourceSession: notification.sourceSession,
-        error,
-      });
-    }
-  }
-
   private emitClearEvent(
     cleared: number,
     filters: NotificationClearFilters,
@@ -395,6 +376,19 @@ export class NotificationStore {
       });
     }
   }
+}
+
+function getNextNotificationTimestamp(notifications: readonly HydraNotification[], wallClockMs: number): string {
+  let newestExistingMs = Number.NEGATIVE_INFINITY;
+  for (const notification of notifications) {
+    const createdAtMs = Date.parse(notification.createdAt);
+    if (Number.isFinite(createdAtMs) && createdAtMs > newestExistingMs) {
+      newestExistingMs = createdAtMs;
+    }
+  }
+  const normalizedWallClockMs = Number.isFinite(wallClockMs) ? Math.trunc(wallClockMs) : Date.now();
+  const logicalMs = Math.max(normalizedWallClockMs, newestExistingMs + 1);
+  return new Date(logicalMs).toISOString();
 }
 
 function matchesFilters(notification: HydraNotification, filters: NotificationListFilters): boolean {

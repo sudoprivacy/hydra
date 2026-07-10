@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { EventLog, type HydraEventSource } from './events';
 import { getHydraHome } from './path';
 import { logger } from './logger';
+import { applyLegacyWorkerRuntimeState } from './workerRuntimeCoordinator';
 
 export type WorkerRuntimeState = 'unknown' | 'running' | 'idle' | 'needs-input' | 'error';
 
@@ -36,23 +37,17 @@ export interface SetWorkerRuntimeStateInput {
   agent?: string | null;
   workdir?: string | null;
   updatedAt?: string;
+  lifecycleEpoch?: string;
+  runId?: string | null;
+  revision?: number;
+  signalId?: string;
+  occurrenceId?: string;
+  sourceSequence?: number;
 }
 
 export interface SetWorkerRuntimeStateResult {
   snapshot: WorkerRuntimeSnapshot;
   changed: boolean;
-}
-
-export interface WorkerRuntimeNotificationProjection {
-  id: string;
-  createdAt: string;
-  kind: string;
-  sourceSession: string | null;
-  context?: {
-    workerId?: number;
-    workdir?: string | null;
-    agent?: string | null;
-  };
 }
 
 interface WorkerRuntimeStateFile {
@@ -106,6 +101,20 @@ export class WorkerRuntimeStateStore {
       store.workers[snapshot.sessionName] = snapshot;
       this.writeStore(store);
       this.emitRuntimeEvent(snapshot, existing, eventSource);
+      return { snapshot: cloneSnapshot(snapshot), changed: true };
+    });
+  }
+
+  project(input: SetWorkerRuntimeStateInput): SetWorkerRuntimeStateResult {
+    return this.withLock(() => {
+      const store = this.readStore();
+      const snapshot = normalizeInput(input);
+      const existing = store.workers[snapshot.sessionName];
+      if (existing && snapshotsEqual(existing, snapshot)) {
+        return { snapshot: cloneSnapshot(existing), changed: false };
+      }
+      store.workers[snapshot.sessionName] = snapshot;
+      this.writeStore(store);
       return { snapshot: cloneSnapshot(snapshot), changed: true };
     });
   }
@@ -250,43 +259,10 @@ export function setWorkerRuntimeState(
   eventSource: HydraEventSource = 'extension',
   store = new WorkerRuntimeStateStore(),
 ): SetWorkerRuntimeStateResult {
-  return store.set(input, eventSource);
-}
-
-export function projectWorkerRuntimeFromNotification(
-  notification: WorkerRuntimeNotificationProjection,
-  eventSource: HydraEventSource = 'cli',
-  store = new WorkerRuntimeStateStore(),
-): SetWorkerRuntimeStateResult | undefined {
-  const state = runtimeStateForNotificationKind(notification.kind);
-  if (!state || !notification.sourceSession) {
-    return undefined;
+  if (typeof input.workerId !== 'number') {
+    return store.set(input, eventSource);
   }
-
-  return store.set({
-    sessionName: notification.sourceSession,
-    state,
-    origin: 'notification',
-    reason: notification.kind,
-    notificationId: notification.id,
-    workerId: notification.context?.workerId,
-    agent: notification.context?.agent,
-    workdir: notification.context?.workdir,
-    updatedAt: notification.createdAt,
-  }, eventSource);
-}
-
-export function runtimeStateForNotificationKind(kind: string): WorkerRuntimeState | undefined {
-  switch (kind) {
-    case 'complete':
-      return 'idle';
-    case 'needs-input':
-      return 'needs-input';
-    case 'error':
-      return 'error';
-    default:
-      return undefined;
-  }
+  return applyLegacyWorkerRuntimeState(input, eventSource, store);
 }
 
 export function cloneWorkerRuntimeSnapshot(snapshot: WorkerRuntimeSnapshot): WorkerRuntimeSnapshot {

@@ -66,7 +66,7 @@ interface ArchiveInternals {
 }
 
 const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
-  'stale-notification-runtime-rollback': 'known-failure',
+  'stale-notification-runtime-rollback': 'fixed',
   'event-only-notification-clear': 'known-failure',
   'codex-turn-aborted-resolution': 'known-failure',
   'completion-pending-overwrite': 'known-failure',
