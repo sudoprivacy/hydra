@@ -7,13 +7,14 @@
  *     → WS /v1/terminal → TerminalBridge → node-pty `tmux attach` → tmux session
  *
  * It boots the loopback server, spins up a throwaway `tmux new-session` on an
- * ISOLATED tmux socket (never touches the user's real tmux), and checks the four
- * hard problems plus auth:
+ * ISOLATED tmux socket (never touches the user's real tmux), and checks the
+ * terminal behaviors plus auth:
  *   1. bidirectional I/O    — a keystroke reaches the shell and its echo returns;
- *   2. resize propagation   — `pty.resize` → tmux → the shell's `stty size`;
- *   3. drop + reconnect     — the session persists and a fresh attach repaints;
- *   4. read-only mirror     — a mirror observer sees the current screen;
- *   5. auth enforcement     — a wrong bearer token on the terminal WS is rejected.
+ *   2. mouse scrollback     — wheel input enters tmux copy-mode, not the pane;
+ *   3. resize propagation   — `pty.resize` → tmux → the shell's `stty size`;
+ *   4. drop + reconnect     — the session persists and a fresh attach repaints;
+ *   5. read-only mirror     — a mirror observer sees the current screen;
+ *   6. auth enforcement     — a wrong bearer token on the terminal WS is rejected.
  * Then it cleans up the tmux session + server.
  *
  * Skips cleanly (exit 0) when tmux is unavailable so it is safe in the suite.
@@ -226,8 +227,40 @@ async function main(): Promise<void> {
       `saw marker ${t1.occurrences(new RegExp(marker))}× (echo + output)`,
     );
 
-    // ── 2. resize propagation (channel.resize → pty → tmux → shell) ──
-    console.log('2. Resize propagation');
+    // ── 2. mouse scrollback (wheel → tmux copy-mode, not pane Up/Down) ──
+    console.log('2. Mouse scrollback ownership');
+    const mouseEnabled = tmux([
+      'display-message',
+      '-p',
+      '-t',
+      `${SESSION}:0.0`,
+      '#{mouse}',
+    ]).stdout?.trim();
+    check('interactive attach enables tmux mouse handling', mouseEnabled === '1');
+
+    // SGR mouse button 64 is wheel-up. Sending it through the real terminal
+    // channel exercises WS → node-pty → tmux exactly like xterm.js does.
+    t1.write('\x1b[<64;10;10M');
+    await sleep(200);
+    const paneMode = tmux([
+      'display-message',
+      '-p',
+      '-t',
+      `${SESSION}:0.0`,
+      '#{pane_in_mode}|#{pane_mode}',
+    ]).stdout?.trim();
+    check(
+      'wheel-up enters tmux copy-mode instead of reaching the pane',
+      paneMode === '1|copy-mode',
+      paneMode || 'no pane mode',
+    );
+    if (paneMode === '1|copy-mode') {
+      tmux(['send-keys', '-t', `${SESSION}:0.0`, '-X', 'cancel']);
+      await sleep(100);
+    }
+
+    // ── 3. resize propagation (channel.resize → pty → tmux → shell) ──
+    console.log('3. Resize propagation');
     const before = await t1.sttySize();
     t1.resize(120, 50);
     await sleep(500);
@@ -238,8 +271,8 @@ async function main(): Promise<void> {
       `before=${before?.cols}c after=${after?.cols}c (rows ${before?.rows}->${after?.rows}, status off)`,
     );
 
-    // ── 3. drop + reconnect: session persists and a fresh attach repaints ──
-    console.log('3. Drop + reconnect (repaint of current screen)');
+    // ── 4. drop + reconnect: session persists and a fresh attach repaints ──
+    console.log('4. Drop + reconnect (repaint of current screen)');
     t1.clear();
     const persist = 'PERSIST_af19';
     t1.write(`echo ${persist}\r`);
@@ -253,8 +286,8 @@ async function main(): Promise<void> {
     const responsive = await t2.sttySize();
     check('reattached terminal is interactive', Boolean(responsive), responsive ? `${responsive.cols}c` : 'no response');
 
-    // ── 4. read-only mirror sees the current screen ──
-    console.log('4. Read-only mirror');
+    // ── 5. read-only mirror sees the current screen ──
+    console.log('5. Read-only mirror');
     const mirror = new Term(client, SESSION, { mode: 'mirror', cols: 120, rows: 40 });
     const mirrored = await mirror.waitFor(new RegExp(persist), 5000);
     check('mirror observer receives the current screen (capture-pane)', Boolean(mirrored));
@@ -262,8 +295,8 @@ async function main(): Promise<void> {
     t2.close();
     await sleep(300);
 
-    // ── 5. auth: a wrong token on the terminal WS is rejected ──
-    console.log('5. Auth enforcement on the terminal WS');
+    // ── 6. auth: a wrong token on the terminal WS is rejected ──
+    console.log('6. Auth enforcement on the terminal WS');
     const wsBase = server.url.replace(/^http/, 'ws');
     const badUrl = `${wsBase}/v1/terminal?session=${encodeURIComponent(SESSION)}&mode=interactive&cols=80&rows=24&token=wrong`;
     const rejected = await connectRejected(badUrl);
@@ -272,7 +305,7 @@ async function main(): Promise<void> {
     const accepted = await connectRejected(okUrl);
     check('terminal WS with the valid token is accepted', !accepted);
 
-    // ── 6. the target session survived every attach/detach ──
+    // ── 7. the target session survived every attach/detach ──
     check('target tmux session still alive (never disrupted)', tmuxHasSession(SESSION));
 
     console.log(`\n${passes} passed, ${failures} failed`);

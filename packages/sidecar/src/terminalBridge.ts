@@ -97,6 +97,14 @@ export class TerminalBridge {
     }
     this.owners.set(session, ws);
 
+    // tmux attach puts xterm.js in its alternate buffer. Without tmux mouse
+    // reporting, xterm converts wheel gestures into Up/Down key sequences;
+    // Codex then treats those as composer-history navigation. Keep this scoped
+    // to the attached session so tmux owns wheel scrollback without changing
+    // the user's global tmux configuration. This matches the extension attach
+    // path in packages/core/src/core/tmuxAttach.ts.
+    runTmux(['set-option', '-t', session, 'mouse', 'on']);
+
     // `status off` so the browser's N rows map to N program rows (tmux's status
     // bar would otherwise eat one — FINDINGS §3).
     runTmux(['set-option', '-t', session, 'status', 'off']);
