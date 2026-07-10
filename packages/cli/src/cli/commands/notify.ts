@@ -7,6 +7,8 @@ import {
   type NotificationKind,
   type NotificationListFilters,
 } from '@hydra/core/notifications';
+import { projectLegacyNotificationRuntime } from '@hydra/core/workerRuntimeCoordinator';
+import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
 import { outputError, outputResult, type OutputOpts } from '../output';
 
 interface NotifyCreateOptions {
@@ -73,6 +75,7 @@ export function registerNotifyCommands(program: Command): void {
         }
         const action = parseAction(opts.action, opts.actionSession || opts.from);
         const workerId = parseOptionalInteger(opts.workerId, '--worker-id');
+        const eventSource = parseEventSource(opts.eventSource);
         const result = store.create({
           kind,
           title,
@@ -87,8 +90,11 @@ export function registerNotifyCommands(program: Command): void {
             workdir: opts.workdir ?? null,
             agent: opts.agent ?? null,
           },
-          eventSource: parseEventSource(opts.eventSource),
+          eventSource,
         });
+        if (result.created) {
+          projectLegacyNotificationRuntime(result.notification, eventSource, new WorkerRuntimeStateStore());
+        }
 
         outputResult(
           {

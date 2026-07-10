@@ -16,6 +16,7 @@ import {
   WorkerRuntimeStateStore,
   type WorkerRuntimeSnapshot,
 } from '@hydra/core/workerRuntimeState';
+import { projectLegacyNotificationRuntime } from '@hydra/core/workerRuntimeCoordinator';
 import {
   classifyCodexRuntimeTranscriptText,
   classifyWorkerNeedsInputEvent,
@@ -206,6 +207,7 @@ async function testNotificationProjectionAndReadIsolation(): Promise<void> {
         eventSource: 'hook',
       });
       assert.equal(created.created, true);
+      projectLegacyNotificationRuntime(created.notification, 'hook', new WorkerRuntimeStateStore());
 
       const runtimeStore = new WorkerRuntimeStateStore();
       const snapshot = runtimeStore.get('repo_worker_runtime');
@@ -228,14 +230,13 @@ async function testNotificationProjectionAndReadIsolation(): Promise<void> {
         eventSource: 'hook',
       });
       assert.equal(duplicate.created, false);
-      assertRuntime(runtimeStore.get('repo_worker_runtime'), 'idle', 'complete');
+      assert.equal(runtimeStore.get('repo_worker_runtime'), undefined);
 
       const eventTypes = readEvents(ctx).map(event => event.type);
       assert.deepEqual(eventTypes, [
         'notify.created',
         'worker.runtime.changed',
         'notify.read',
-        'worker.runtime.changed',
       ]);
     });
   } finally {

@@ -53,6 +53,7 @@
     "smoke:worker-attention-notification": "node packages/core/out/smoke/workerAttentionNotificationSmoke.js",
     "smoke:worker-needs-input": "node packages/cli/out/smoke/workerNeedsInputSmoke.js",
     "smoke:worker-runtime-state": "node packages/cli/out/smoke/workerRuntimeStateSmoke.js",
+    "smoke:worker-runtime-coordinator": "node packages/core/out/smoke/workerRuntimeCoordinatorSmoke.js",
     "smoke:worker-attention-characterization": "node packages/core/out/smoke/workerAttentionCharacterizationSmoke.js",
     "smoke:control-plane-safety": "node packages/core/out/smoke/controlPlaneSafetySmoke.js",
     "smoke:notification-state": "node packages/cli/out/smoke/notificationStateServiceSmoke.js",

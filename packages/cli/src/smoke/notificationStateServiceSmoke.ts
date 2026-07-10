@@ -353,6 +353,55 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
   }
 }
 
+async function testMonotonicCreationOrderingAcrossBurstAndClockRollback(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-monotonic-time-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const baseMs = Date.parse('2026-07-10T00:00:00.000Z');
+      let wallClockMs = baseMs;
+      const store = new NotificationStore(undefined, undefined, undefined, undefined, () => wallClockMs);
+      const needsInput = store.create({
+        kind: 'needs-input',
+        title: 'Needs input first',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+      const completeBurst = store.create({
+        kind: 'complete',
+        title: 'Complete in same wall-clock millisecond',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+      wallClockMs = baseMs - 60_000;
+      const completeAfterRollback = store.create({
+        kind: 'complete',
+        title: 'Complete after clock rollback',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+
+      assert.equal(Date.parse(needsInput.createdAt), baseMs);
+      assert.equal(Date.parse(completeBurst.createdAt), baseMs + 1);
+      assert.equal(Date.parse(completeAfterRollback.createdAt), baseMs + 2);
+      assert.deepEqual(
+        store.list({ sourceSession: 'repo_worker' }).notifications.map(notification => notification.id),
+        [completeAfterRollback.id, completeBurst.id, needsInput.id],
+      );
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, completeAfterRollback.id);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, completeAfterRollback.id);
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
 async function testWatcherUpdatesFromNotificationFileOnly(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-file-only-');
   try {
@@ -886,6 +935,7 @@ async function main(): Promise<void> {
   await testInitialLoadAndIndexes();
   await testServiceOperationsReloadSynchronously();
   await testTargetSessionOperationsIgnoreSourceOnlyNotifications();
+  await testMonotonicCreationOrderingAcrossBurstAndClockRollback();
   await testWorkerClearScopeClearsSourceNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
