@@ -335,12 +335,63 @@ async function main(): Promise<void> {
 }
 
 function cleanupTempRoot(): void {
+  if (!waitForTempRootProcesses(1_000)) {
+    terminateTempRootProcesses('SIGTERM');
+    if (!waitForTempRootProcesses(2_000)) {
+      terminateTempRootProcesses('SIGKILL');
+      waitForTempRootProcesses(1_000);
+    }
+  }
   fs.rmSync(tempRoot, {
     recursive: true,
     force: true,
-    maxRetries: 10,
+    maxRetries: 50,
     retryDelay: 100,
   });
+}
+
+function waitForTempRootProcesses(timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (listTempRootProcesses().length === 0) return true;
+    sleepSync(100);
+  } while (Date.now() < deadline);
+  return listTempRootProcesses().length === 0;
+}
+
+function terminateTempRootProcesses(signal: 'SIGTERM' | 'SIGKILL'): void {
+  for (const entry of listTempRootProcesses()) {
+    try {
+      process.kill(entry.pid, signal);
+    } catch (error) {
+      if (getErrorCode(error) !== 'ESRCH') throw error;
+    }
+  }
+}
+
+function listTempRootProcesses(): Array<{ pid: number; command: string }> {
+  const result = spawnSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf-8' });
+  if (result.status !== 0) return [];
+  const processes: Array<{ pid: number; command: string }> = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match || !match[2].includes(tempRoot)) continue;
+    const pid = Number(match[1]);
+    if (Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid) {
+      processes.push({ pid, command: match[2] });
+    }
+  }
+  return processes;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
 }
 
 void main().catch((error: unknown) => {
