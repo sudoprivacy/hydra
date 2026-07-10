@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { TmuxBackendCore } from '@hydra/core/tmux';
 import { isDirectoryWorker, SessionManager, ArchivedSessionInfo, type WorkerInfo } from '@hydra/core/sessionManager';
 import { outputResult, outputError, type OutputOpts } from '../output';
-import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 function formatEntry(entry: ArchivedSessionInfo): Record<string, unknown> {
   const worker = entry.type === 'worker' ? entry.data as WorkerInfo : null;
@@ -122,6 +122,7 @@ export function registerArchiveCommands(program: Command): void {
       try {
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
         const entry = sm.getArchived(sessionName);
 
         if (!entry) {
@@ -129,7 +130,7 @@ export function registerArchiveCommands(program: Command): void {
         }
 
         if (entry.type === 'worker') {
-          const { workerInfo, postCreatePromise } = await sm.restoreWorker(sessionName);
+          const { workerInfo, postCreatePromise } = await lifecycle.restoreWorker(sessionName);
           const workerType = isDirectoryWorker(workerInfo) ? 'task' : 'code';
           outputResult(
             {
@@ -157,7 +158,7 @@ export function registerArchiveCommands(program: Command): void {
               console.log(`  Session ID: ${workerInfo.sessionId || 'none'}`);
             },
           );
-          await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
+          await postCreatePromise;
         } else {
           const { copilotInfo, postCreatePromise } = await sm.restoreCopilot(sessionName);
           await postCreatePromise;

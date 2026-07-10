@@ -9,7 +9,7 @@ import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { detectIdentity, getWorkerCreationBlockedMessage } from '@hydra/core/sessionIdentity';
 import { showHydraCommandError } from './logs';
-import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 function getBaseBranchOverride(): string | undefined {
   const hydraOverride = vscode.workspace.getConfiguration('hydra').get<string>('baseBranch');
@@ -81,8 +81,14 @@ async function createCodeWorker(repoRoot: string): Promise<void> {
   }
 
   const branchExisted = await localBranchExists(repoRoot, branchName);
-  const sessionManager = new SessionManager(new TmuxBackendCore());
-  const { workerInfo, postCreatePromise } = await sessionManager.createWorker({
+  const coreBackend = new TmuxBackendCore();
+  const sessionManager = new SessionManager(coreBackend);
+  const lifecycle = new WorkerLifecycleService({
+    backend: coreBackend,
+    sessionManager,
+    eventSource: 'extension',
+  });
+  const { workerInfo, postCreatePromise } = await lifecycle.createWorker({
     repoRoot,
     branchName,
     agentType,
@@ -92,7 +98,7 @@ async function createCodeWorker(repoRoot: string): Promise<void> {
 
   await refreshHydraViewsBeforeAttach();
   getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
-  void awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'extension' }).catch((error) => {
+  void postCreatePromise.catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(
       `Worker "${workerInfo.sessionName}" started, but agent initialization did not complete cleanly: ${message}`,
@@ -199,8 +205,14 @@ async function createTaskWorker(workspacePath: string, workspaceIsGitRepo: boole
     return;
   }
 
-  const sessionManager = new SessionManager(new TmuxBackendCore());
-  const { workerInfo, postCreatePromise } = await sessionManager.createDirectoryWorker({
+  const coreBackend = new TmuxBackendCore();
+  const sessionManager = new SessionManager(coreBackend);
+  const lifecycle = new WorkerLifecycleService({
+    backend: coreBackend,
+    sessionManager,
+    eventSource: 'extension',
+  });
+  const { workerInfo, postCreatePromise } = await lifecycle.createDirectoryWorker({
     workdir: workdirChoice.workdir,
     managedWorkdir: workdirChoice.managedWorkdir,
     name: nameInput.trim(),
@@ -210,7 +222,7 @@ async function createTaskWorker(workspacePath: string, workspaceIsGitRepo: boole
 
   await refreshHydraViewsBeforeAttach();
   getActiveBackend().attachSession(workerInfo.sessionName, workerInfo.workdir, undefined, 'worker');
-  void awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'extension' }).catch((error) => {
+  void postCreatePromise.catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showWarningMessage(
       `Worker "${workerInfo.sessionName}" started, but agent initialization did not complete cleanly: ${message}`,

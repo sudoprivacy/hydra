@@ -16,7 +16,16 @@ import {
   type WorkerRuntimeState,
 } from './workerRuntimeState';
 
-export type WorkerRuntimeErrorReason = 'post-create' | 'initial-prompt' | 'startup-timeout';
+export type WorkerRuntimeErrorReason =
+  | 'post-create'
+  | 'initial-prompt'
+  | 'startup-timeout'
+  | 'start'
+  | 'message-delivery'
+  | 'stop'
+  | 'delete'
+  | 'rename'
+  | 'restore';
 
 export interface PublishWorkerAttentionNotificationInput {
   kind: NotificationKind;
@@ -228,6 +237,18 @@ function getWorkerRuntimeErrorTitle(workerLabel: string, reason: WorkerRuntimeEr
     case 'startup-timeout':
     case 'post-create':
       return `${workerLabel} failed during startup`;
+    case 'start':
+      return `${workerLabel} failed to start`;
+    case 'message-delivery':
+      return `${workerLabel} failed to receive a message`;
+    case 'stop':
+      return `${workerLabel} failed to stop`;
+    case 'delete':
+      return `${workerLabel} failed to delete`;
+    case 'rename':
+      return `${workerLabel} failed to rename`;
+    case 'restore':
+      return `${workerLabel} failed to restore`;
   }
 }
 
