@@ -1,9 +1,9 @@
 // One session row in the sidebar tree — a dense, two-line node that mirrors the
 // old VS Code extension tree (packages/extension tmuxSessionProvider.ts).
 //
-//   Copilot:  ● name [agent] [N workers · M repos] ✓ 已完成   [unread] ⋮
+//   Copilot:  ● name agent [N workers · M repos] ✓ 已完成   [unread] ⋮
 //             35m ago
-//   Worker:   ● branch #N [agent] running ✓ 已完成             [unread] ⋮
+//   Worker:   ● branch #N agent running ✓ 已完成             [unread] ⋮
 //             35m ago  U:2
 //
 // Clicking the row opens/focuses its tab when the session has an attachable
@@ -67,7 +67,7 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
         <div className="hydra-row__line">
           <span className="hydra-row__name">{tile.name}</span>
           {tile.kind === 'worker' ? <span className="hydra-row__num">#{tile.number}</span> : null}
-          <span className="hydra-row__agent">[{tile.agent}]</span>
+          <span className="hydra-row__agent">{tile.agent}</span>
           {tile.kind === 'worker' ? (
             <span className="hydra-row__token">{runtimeToken(tile.lifecycle, tile.runtime)}</span>
           ) : summary ? (

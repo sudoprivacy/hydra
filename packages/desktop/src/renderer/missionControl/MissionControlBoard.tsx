@@ -113,8 +113,7 @@ function GroupSection({ group, tileActions }: { group: BoardGroup; tileActions: 
 }
 
 function GroupIcon({ kind }: { kind: BoardGroup['kind'] }): JSX.Element {
-  const glyph = kind === 'repo' ? '❑' : kind === 'tasks' ? '☰' : '✦';
-  return <span className="hydra-group__icon" aria-hidden="true">{glyph}</span>;
+  return <span className={`hydra-group__icon hydra-group__icon--${kind}`} aria-hidden="true" />;
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'accent' | 'warn' }): JSX.Element {

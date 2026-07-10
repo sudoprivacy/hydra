@@ -1,5 +1,5 @@
-// The sidebar title bar: the HYDRA wordmark plus the fleet-level controls —
-// ＋ create (Worker / Copilot), ⋯ more (Broadcast / Restore), and ⟳ refresh.
+// The sidebar title bar: the Hydra wordmark plus the fleet-level controls —
+// + create (Worker / Copilot), ... more (Broadcast / Restore), and refresh.
 // Every control delegates to the shared session actions.
 
 import { useSessions } from '../sessions/SessionsProvider';
@@ -10,11 +10,11 @@ export function SidebarHeader(): JSX.Element {
 
   return (
     <header className="hydra-sidebar__header">
-      <span className="hydra-sidebar__brand">HYDRA</span>
+      <span className="hydra-sidebar__brand">Hydra</span>
       <div className="hydra-sidebar__tools">
         <Menu
           label="Create session"
-          glyph="＋"
+          glyph="+"
           align="left"
           items={[
             { key: 'worker', label: 'New Worker…', onSelect: () => actions.create('worker') },
@@ -23,7 +23,7 @@ export function SidebarHeader(): JSX.Element {
         />
         <Menu
           label="More actions"
-          glyph="⋯"
+          glyph="..."
           align="right"
           items={[
             { key: 'broadcast', label: 'Broadcast to workers…', onSelect: actions.broadcast },
@@ -37,7 +37,7 @@ export function SidebarHeader(): JSX.Element {
           aria-label="Refresh"
           onClick={actions.refresh}
         >
-          ⟳
+          ↻
         </button>
       </div>
     </header>

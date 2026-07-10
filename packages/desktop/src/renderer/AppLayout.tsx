@@ -1,6 +1,6 @@
 // AppLayout — the IDE-style two-pane shell: a resizable Sidebar, a drag handle,
 // the TabArea, and the StatusBar pinned to the bottom. The sidebar width is
-// clamped (~220–480px) and persisted in localStorage so it survives relaunch.
+// clamped (~236–340px) and persisted in localStorage so it survives relaunch.
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
@@ -8,10 +8,10 @@ import { Sidebar } from './sidebar/Sidebar';
 import { TabArea } from './tabs/TabArea';
 import { StatusBar } from './StatusBar';
 
-const MIN_WIDTH = 220;
-const MAX_WIDTH = 480;
-const DEFAULT_WIDTH = 300;
-const STORAGE_KEY = 'hydra.sidebarWidth';
+const MIN_WIDTH = 236;
+const MAX_WIDTH = 340;
+const DEFAULT_WIDTH = 272;
+const STORAGE_KEY = 'hydra.sidebarWidth.v2';
 interface DragState {
   readonly x: number;
   readonly width: number;
@@ -106,7 +106,6 @@ export function AppLayout(): JSX.Element {
           aria-orientation="vertical"
           aria-label="Resize sidebar"
           onPointerDown={startDrag}
-          title="Drag to resize"
         />
         <div className="hydra-app__tabs">
           <TabArea />

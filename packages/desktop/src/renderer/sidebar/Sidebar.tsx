@@ -22,7 +22,8 @@ export function Sidebar(): JSX.Element {
           aria-current={overviewSelected}
           onClick={() => tabs.focusTab(OVERVIEW_TAB_ID)}
         >
-          <span aria-hidden="true">⌂</span> Overview
+          <span className="hydra-overview-entry__mark" aria-hidden="true" />
+          <span>Overview</span>
         </button>
 
         {board.view ? (
