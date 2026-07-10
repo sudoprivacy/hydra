@@ -21,11 +21,16 @@ export function getLegacyCompletionHookScriptPath(
   sessionName: string,
   platform: typeof process.platform = process.platform,
 ): string | undefined {
-  const normalized = sessionName.trim();
-  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('\0')) {
-    return undefined;
-  }
+  const normalized = normalizeLegacySessionName(sessionName);
+  if (!normalized) return undefined;
   return path.join(getHydraHome(), 'hooks', `notify-${normalized}.${scriptExtension(platform)}`);
+}
+
+export function getLegacyCompletionPendingPath(sessionName: string): string | undefined {
+  const normalized = normalizeLegacySessionName(sessionName);
+  return normalized
+    ? path.join(getHydraHome(), 'hooks', `notify-${normalized}.pending`)
+    : undefined;
 }
 
 export function buildCompletionHookScript(
@@ -61,17 +66,42 @@ export function writeCompletionHookScript(
 }
 
 export function refreshCompletionHookScripts(
-  sessionName: string,
+  sessionNames: readonly string[],
   identity: CompletionHookScriptIdentity,
   platform: typeof process.platform = process.platform,
 ): string[] {
-  const paths = [getCompletionHookScriptPath(identity.workerId, platform)];
-  const legacyPath = getLegacyCompletionHookScriptPath(sessionName, platform);
-  if (legacyPath && !paths.includes(legacyPath)) paths.push(legacyPath);
-  for (const scriptPath of paths) {
-    writeCompletionHookScript(scriptPath, identity, platform);
+  const scriptPath = getCompletionHookScriptPath(identity.workerId, platform);
+  writeCompletionHookScript(scriptPath, identity, platform);
+  removeLegacyCompletionHookScripts(sessionNames);
+  return [scriptPath];
+}
+
+export function removeLegacyCompletionHookScripts(sessionNames: readonly string[]): string[] {
+  const removed: string[] = [];
+  const candidates = new Set<string>();
+  for (const sessionName of sessionNames) {
+    const posixPath = getLegacyCompletionHookScriptPath(sessionName, 'darwin');
+    const windowsPath = getLegacyCompletionHookScriptPath(sessionName, 'win32');
+    if (posixPath) candidates.add(posixPath);
+    if (windowsPath) candidates.add(windowsPath);
   }
-  return paths;
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    fs.rmSync(candidate, { force: true });
+    removed.push(candidate);
+  }
+  return removed;
+}
+
+export function removeLegacyCompletionPendingFiles(sessionNames: readonly string[]): string[] {
+  const removed: string[] = [];
+  for (const sessionName of new Set(sessionNames)) {
+    const pendingPath = getLegacyCompletionPendingPath(sessionName);
+    if (!pendingPath || !fs.existsSync(pendingPath)) continue;
+    fs.rmSync(pendingPath, { force: true });
+    removed.push(pendingPath);
+  }
+  return removed;
 }
 
 function buildPosixScript(identity: CompletionHookScriptIdentity): string {
@@ -138,6 +168,16 @@ function validateRequiredString(value: unknown, field: string): asserts value is
 
 function scriptExtension(platform: typeof process.platform): 'ps1' | 'sh' {
   return platform === 'win32' ? 'ps1' : 'sh';
+}
+
+function normalizeLegacySessionName(sessionName: string): string | undefined {
+  const normalized = sessionName.trim();
+  return normalized
+    && !normalized.includes('/')
+    && !normalized.includes('\\')
+    && !normalized.includes('\0')
+    ? normalized
+    : undefined;
 }
 
 function readFile(filePath: string): string | undefined {

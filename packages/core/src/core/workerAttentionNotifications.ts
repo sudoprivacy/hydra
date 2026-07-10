@@ -9,6 +9,7 @@ import {
 } from './notifications';
 import type { WorkerNeedsInputSignal } from './workerNeedsInputClassifier';
 import type { WorkerInfo } from './sessionManager';
+import { getWorkerLifecycleEpoch } from './workerIdentity';
 import {
   setWorkerRuntimeState,
   WorkerRuntimeStateStore,
@@ -215,7 +216,7 @@ function updateWorkerRuntimeStateFromAttention(
       reason,
       workerId: worker.workerId,
       occurrenceId: occurrence?.occurrenceId,
-      lifecycleEpoch: occurrence?.lifecycleEpoch,
+      lifecycleEpoch: occurrence?.lifecycleEpoch ?? getWorkerLifecycleEpoch(worker),
       runId: occurrence?.runId,
       agent: worker.agent,
       workdir: worker.workdir,

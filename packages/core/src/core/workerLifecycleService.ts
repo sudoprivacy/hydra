@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { agentSupportsCompletionNotification } from './agentConfig';
 import { CompletionJobStore, type CompletionJob } from './completionJobStore';
+import { removeLegacyCompletionPendingFiles } from './completionHookScript';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
 import { NotificationStore } from './notifications';
@@ -21,6 +22,7 @@ import {
 import { WorkerRuntimeCoordinator, type WorkerRuntimeIdentity } from './workerRuntimeCoordinator';
 import { WorkerRuntimeStateStore } from './workerRuntimeState';
 import { WorkerRuntimeStateStoreV2, type WorkerRuntimeSnapshotV2 } from './workerRuntimeV2';
+import { getWorkerLifecycleEpoch, normalizeWorkerSessionAliases } from './workerIdentity';
 
 export type WorkerSelector = string | number;
 
@@ -92,6 +94,7 @@ export class WorkerLifecycleService {
   }
 
   async createWorker(options: CreateWorkerOpts): Promise<CreateWorkerResult> {
+    await this.sessionManager.ensurePersistedWorkerIdentities();
     return this.prepareCreatedWorker(
       await this.sessionManager.createWorker(options),
       options.notifyCopilot !== false,
@@ -99,6 +102,7 @@ export class WorkerLifecycleService {
   }
 
   async createDirectoryWorker(options: CreateDirectoryWorkerOpts): Promise<CreateWorkerResult> {
+    await this.sessionManager.ensurePersistedWorkerIdentities();
     return this.prepareCreatedWorker(
       await this.sessionManager.createDirectoryWorker(options),
       options.notifyCopilot !== false,
@@ -119,7 +123,9 @@ export class WorkerLifecycleService {
         ),
       );
     } catch (error) {
-      this.publishError(worker, error, 'start');
+      const currentWorker = this.resolveCurrentWorkerIdentity(worker);
+      this.cancelStaleCompletionIntents(currentWorker, getWorkerLifecycleEpoch(currentWorker));
+      this.publishError(currentWorker, error, 'start');
       throw error;
     }
   }
@@ -209,7 +215,9 @@ export class WorkerLifecycleService {
   async renameWorker(selector: WorkerSelector, newBranchName: string): Promise<WorkerInfo> {
     const worker = await this.resolveWorker(selector);
     try {
-      return await this.sessionManager.renameWorker(worker.sessionName, newBranchName);
+      const renamed = await this.sessionManager.renameWorker(worker.sessionName, newBranchName);
+      this.refreshRuntimeRoute(renamed, 'worker-renamed');
+      return renamed;
     } catch (error) {
       this.publishError(worker, error, 'rename');
       throw error;
@@ -217,6 +225,7 @@ export class WorkerLifecycleService {
   }
 
   async restoreWorker(sessionName: string): Promise<CreateWorkerResult> {
+    await this.sessionManager.ensurePersistedWorkerIdentities();
     const archived = this.sessionManager.getArchived(sessionName);
     const worker = archived?.type === 'worker' ? archived.data as WorkerInfo : undefined;
     try {
@@ -224,7 +233,11 @@ export class WorkerLifecycleService {
       if (worker) this.cancelCompletionIntent(worker, 'worker-restored');
       return this.wrapPostCreate(this.prepareStartedWorker(result, 'worker-restored'));
     } catch (error) {
-      if (worker) this.publishError(worker, error, 'restore');
+      if (worker) {
+        const currentWorker = this.resolveCurrentWorkerIdentity(worker);
+        this.cancelStaleCompletionIntents(currentWorker, getWorkerLifecycleEpoch(currentWorker));
+        this.publishError(currentWorker, error, 'restore');
+      }
       throw error;
     }
   }
@@ -288,6 +301,7 @@ export class WorkerLifecycleService {
   }
 
   private async resolveWorker(selector: WorkerSelector): Promise<WorkerInfo> {
+    await this.sessionManager.ensurePersistedWorkerIdentities();
     const persistedWorker = typeof selector === 'number'
       ? this.sessionManager.listPersistedWorkers().find(candidate => candidate.workerId === selector)
       : this.sessionManager.getPersistedWorker(selector);
@@ -307,7 +321,8 @@ export class WorkerLifecycleService {
     notifyCompletion: boolean,
   ): PreparedWorkerDispatch {
     const before = this.runtimeV2Store.get(worker.workerId);
-    const lifecycleEpoch = before?.lifecycleEpoch ?? compatibilityLifecycleEpoch(worker.workerId);
+    const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
+    this.cancelStaleCompletionIntents(worker, lifecycleEpoch);
     const runtimeActive = before?.lifecycleEpoch === lifecycleEpoch
       && (before.state === 'running' || before.state === 'needs-input')
       && !!before.runId;
@@ -317,7 +332,7 @@ export class WorkerLifecycleService {
 
     try {
       if (notifyCompletion && agentSupportsCompletionNotification(worker.agent)) {
-        const hookAvailable = this.sessionManager.ensureWorkerCompletionHook(worker, lifecycleEpoch);
+        const hookAvailable = this.sessionManager.ensureWorkerCompletionHook(worker);
         if (!hookAvailable) {
           logger.warn('worker-lifecycle.completion-unavailable', 'Worker dispatch will continue without completion tracking', {
             sessionName: worker.sessionName,
@@ -343,8 +358,12 @@ export class WorkerLifecycleService {
 
       const runId = completionJob?.runId ?? proposedRunId;
       this.applyRunningTransition(worker, lifecycleEpoch, runId, reason);
-      if (before?.state === 'needs-input' && before.runId === runId) {
-        this.resolveNeedsInputOccurrences(worker.workerId, lifecycleEpoch, runId, 'worker-message');
+      if (before?.state === 'needs-input') {
+        if (before.lifecycleEpoch === lifecycleEpoch && before.runId === runId) {
+          this.resolveNeedsInputOccurrences(worker.workerId, lifecycleEpoch, runId, 'worker-message');
+        } else {
+          this.resolveWorkerNeedsInput(worker.workerId, 'worker-recreated');
+        }
       }
       return { completionJob, completionJobCreated, lifecycleEpoch, runId };
     } catch (error) {
@@ -385,6 +404,45 @@ export class WorkerLifecycleService {
     throw new Error(`Worker runtime running transition for #${worker.workerId} did not converge`);
   }
 
+  private refreshRuntimeRoute(worker: WorkerInfo, reason: string): void {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.runtimeV2Store.get(worker.workerId);
+      if (!current || current.sessionName === worker.sessionName) return;
+      const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
+      if (current.lifecycleEpoch !== lifecycleEpoch) return;
+      const result = this.runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch,
+        runId: current.runId,
+        revision: current.revision + 1,
+        state: current.state,
+        signalId: randomUUID(),
+        occurrenceId: current.occurrenceId,
+        origin: 'lifecycle',
+        reason,
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, this.eventSource);
+      if (result.outcome === 'applied') return;
+      if (result.outcome !== 'stale-revision') {
+        logger.warn('worker-lifecycle.runtime-route', 'Worker runtime route migration was rejected', {
+          workerId: worker.workerId,
+          sessionName: worker.sessionName,
+          lifecycleEpoch,
+          outcome: result.outcome,
+        });
+        return;
+      }
+    }
+    logger.warn('worker-lifecycle.runtime-route', 'Worker runtime route migration did not converge', {
+      workerId: worker.workerId,
+      sessionName: worker.sessionName,
+      lifecycleEpoch: getWorkerLifecycleEpoch(worker),
+    });
+  }
+
   private resolveNeedsInputOccurrences(
     workerId: number,
     lifecycleEpoch: string,
@@ -416,21 +474,58 @@ export class WorkerLifecycleService {
     return {
       workerId,
       sessionName: worker.sessionName,
-      lifecycleEpoch: this.runtimeV2Store.get(workerId)?.lifecycleEpoch
-        ?? compatibilityLifecycleEpoch(workerId),
+      lifecycleEpoch: getWorkerLifecycleEpoch(worker),
       agent: worker.agent,
       workdir: worker.workdir,
     };
   }
 
+  private resolveCurrentWorkerIdentity(fallback: WorkerInfo): WorkerInfo {
+    return this.sessionManager.listPersistedWorkers()
+      .find(worker => worker.workerId === fallback.workerId)
+      ?? fallback;
+  }
+
   private cancelCompletionIntent(worker: WorkerInfo, reason: string): boolean {
+    let cancelled = false;
     try {
-      return this.completionJobStore.cancelPending(worker.workerId, reason).length > 0;
+      cancelled = this.completionJobStore.cancelPending(worker.workerId, reason).length > 0;
     } catch (error) {
       logger.warn('worker-lifecycle.completion-cancel', 'Failed to cancel worker completion intent', {
         sessionName: worker.sessionName,
         workerId: worker.workerId,
         reason,
+        error,
+      });
+    }
+    try {
+      removeLegacyCompletionPendingFiles([
+        worker.sessionName,
+        ...normalizeWorkerSessionAliases(worker),
+      ]);
+    } catch (error) {
+      logger.warn('worker-lifecycle.legacy-completion-cleanup', 'Failed to remove legacy worker completion intent', {
+        sessionName: worker.sessionName,
+        workerId: worker.workerId,
+        reason,
+        error,
+      });
+    }
+    return cancelled;
+  }
+
+  private cancelStaleCompletionIntents(worker: WorkerInfo, lifecycleEpoch: string): boolean {
+    try {
+      return this.completionJobStore.cancelPendingOutsideEpoch(
+        worker.workerId,
+        lifecycleEpoch,
+        'stale-lifecycle-epoch',
+      ).length > 0;
+    } catch (error) {
+      logger.warn('worker-lifecycle.completion-cancel', 'Failed to cancel stale worker completion intent', {
+        sessionName: worker.sessionName,
+        workerId: worker.workerId,
+        lifecycleEpoch,
         error,
       });
       return false;
@@ -468,8 +563,4 @@ export class WorkerLifecycleService {
       error,
     });
   }
-}
-
-function compatibilityLifecycleEpoch(workerId: number): string {
-  return `legacy-worker-${workerId}`;
 }

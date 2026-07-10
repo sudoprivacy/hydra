@@ -1,11 +1,14 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import { CompletionJobStore, type CompletionJob } from './completionJobStore';
+import {
+  getLegacyCompletionPendingPath,
+  removeLegacyCompletionPendingFiles,
+} from './completionHookScript';
 import type { HydraEventSource } from './events';
 import { logger } from './logger';
 import { NotificationStore, type HydraNotification } from './notifications';
-import { getHydraHome } from './path';
 import { isDirectoryWorker, type WorkerInfo } from './sessionManager';
+import { normalizeWorkerSessionAliases } from './workerIdentity';
 import {
   WorkerRuntimeCoordinator,
   type WorkerRuntimeApplyOutcome,
@@ -57,6 +60,7 @@ export interface CompletionCoordinatorOptions {
   eventSource?: HydraEventSource;
   now?: () => number;
   readLegacyPendingToken?: (sessionName: string) => string | undefined;
+  removeLegacyPendingFiles?: (sessionNames: readonly string[]) => string[];
 }
 
 export class CompletionCoordinator {
@@ -69,6 +73,7 @@ export class CompletionCoordinator {
   private readonly eventSource: HydraEventSource;
   private readonly now: () => number;
   private readonly readLegacyPendingToken: (sessionName: string) => string | undefined;
+  private readonly removeLegacyPendingFiles: (sessionNames: readonly string[]) => string[];
 
   constructor(options: CompletionCoordinatorOptions) {
     this.resolveWorker = options.resolveWorker;
@@ -80,6 +85,7 @@ export class CompletionCoordinator {
     this.eventSource = options.eventSource ?? 'hook';
     this.now = options.now ?? Date.now;
     this.readLegacyPendingToken = options.readLegacyPendingToken ?? readLegacyCompletionPendingToken;
+    this.removeLegacyPendingFiles = options.removeLegacyPendingFiles ?? removeLegacyCompletionPendingFiles;
   }
 
   async complete(signal: CompletionSignal): Promise<CompletionApplyResult> {
@@ -108,7 +114,13 @@ export class CompletionCoordinator {
       }
     }
     if (!job) {
-      const legacyToken = this.readLegacyPendingToken(identity.worker.sessionName);
+      const legacyRoutes = [
+        identity.worker.sessionName,
+        ...normalizeWorkerSessionAliases(identity.worker),
+      ];
+      const legacyToken = legacyRoutes
+        .map(sessionName => this.readLegacyPendingToken(sessionName))
+        .find((token): token is string => !!token);
       const hasDurableHistory = this.jobStore.list()
         .some(candidate => candidate.workerId === signal.workerId);
       const runtimeActive = existingRuntime?.lifecycleEpoch === signal.lifecycleEpoch
@@ -220,6 +232,18 @@ export class CompletionCoordinator {
       lifecycleEpoch: job.lifecycleEpoch,
       runId: job.runId,
     });
+    try {
+      this.removeLegacyPendingFiles([
+        routedIdentity.worker.sessionName,
+        ...normalizeWorkerSessionAliases(routedIdentity.worker),
+      ]);
+    } catch (error) {
+      logger.warn('completion-coordinator.legacy-cleanup', 'Failed to remove legacy completion pending files', {
+        workerId: signal.workerId,
+        jobId: job.jobId,
+        error,
+      });
+    }
 
     let compatibilityDelivered = false;
     const target = routedIdentity.worker.copilotSessionName;
@@ -266,11 +290,8 @@ export class CompletionCoordinator {
 }
 
 export function readLegacyCompletionPendingToken(sessionName: string): string | undefined {
-  const normalized = sessionName.trim();
-  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('\0')) {
-    return undefined;
-  }
-  const pendingPath = path.join(getHydraHome(), 'hooks', `notify-${normalized}.pending`);
+  const pendingPath = getLegacyCompletionPendingPath(sessionName);
+  if (!pendingPath) return undefined;
   try {
     const token = fs.readFileSync(pendingPath, 'utf-8').trim();
     return token || 'legacy';

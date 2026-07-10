@@ -347,6 +347,7 @@ async function acceptWorker(
     agentCommand: opts.agentCommand,
     resumeSessionId: bundle.hydraSession.agentSessionId,
     preservedWorkerInfo,
+    preserveWorkerId: false,
     notifyCopilot: false,
     fetchMode: 'best-effort',
   });

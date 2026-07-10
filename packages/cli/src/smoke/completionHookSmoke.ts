@@ -81,6 +81,7 @@ function createWorker(
   agent: string,
   workdir: string,
   copilotSessionName: string | null = null,
+  lifecycleEpoch?: string,
 ): WorkerInfo {
   const sessionName = `worker-${agent}`;
   const now = new Date().toISOString();
@@ -89,6 +90,7 @@ function createWorker(
     sessionName,
     displayName: `feat/${agent}`,
     workerId,
+    lifecycleEpoch,
     repo: 'hydra',
     repoRoot: '/tmp/hydra',
     branch: `feat/${agent}`,
@@ -282,7 +284,13 @@ async function main(): Promise<void> {
     );
 
     if (process.platform !== 'win32') {
-      const workers = agents.map(item => createWorker(item.workerId, item.agent, workdir));
+      const workers = agents.map(item => createWorker(
+        item.workerId,
+        item.agent,
+        workdir,
+        null,
+        item.epoch,
+      ));
       fs.writeFileSync(path.join(hydraHome, 'sessions.json'), `${JSON.stringify({
         copilots: {},
         workers: Object.fromEntries(workers.map(worker => [worker.sessionName, worker])),

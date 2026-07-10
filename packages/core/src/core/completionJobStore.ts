@@ -213,6 +213,30 @@ export class CompletionJobStore {
     });
   }
 
+  cancelPendingOutsideEpoch(
+    workerId: number,
+    lifecycleEpoch: string,
+    reason: string,
+  ): CompletionJob[] {
+    validateWorkerId(workerId);
+    validateRequiredString(lifecycleEpoch, 'lifecycleEpoch', MAX_ID_LENGTH);
+    validateRequiredString(reason, 'cancelReason', MAX_REASON_LENGTH);
+    return this.update(store => {
+      const cancelled: CompletionJob[] = [];
+      const cancelledAt = timestamp(this.now());
+      for (const job of store.jobs) {
+        if (job.workerId !== workerId
+          || job.status !== 'pending'
+          || job.lifecycleEpoch === lifecycleEpoch) {
+          continue;
+        }
+        cancelJobRecord(job, reason, cancelledAt);
+        cancelled.push(cloneJob(job));
+      }
+      return cancelled;
+    });
+  }
+
   private update<T>(mutator: (store: CompletionJobStoreFile) => T): T {
     return this.withLock(() => {
       const store = this.readStore();
