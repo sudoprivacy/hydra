@@ -90,9 +90,14 @@ async function start(): Promise<void> {
   const indexPath = path.join(__dirname, '..', 'index.html');
   const appUrl = pathToFileURL(indexPath).href;
   mainWindow = new BrowserWindow({
-    width: 1024,
-    height: 720,
+    width: 1280,
+    height: 800,
+    minWidth: 980,
+    minHeight: 640,
     title: 'Hydra',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 16 },
+    backgroundColor: '#f7f7f4',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

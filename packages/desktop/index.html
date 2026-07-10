@@ -17,107 +17,78 @@
     <style>
       :root {
         color-scheme: light dark;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      }
-      body {
-        margin: 0;
-      }
-      .hydra-shell {
-        display: flex;
-        min-height: 100vh;
-      }
-      .hydra-nav {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        width: 190px;
-        padding: 1rem;
-        border-right: 1px solid rgba(128, 128, 128, 0.3);
-      }
-      .hydra-brand {
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-      }
-      .hydra-content {
-        flex: 1;
-        padding: 1.25rem 1.75rem;
-      }
-      .hydra-status--error,
-      .hydra-list__meta {
-        opacity: 0.85;
-      }
-      .hydra-status--error {
-        color: #c0392b;
-      }
-      .hydra-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-      .hydra-list__item {
-        display: flex;
-        gap: 0.75rem;
-        align-items: baseline;
-        padding: 0.4rem 0;
-        border-bottom: 1px solid rgba(128, 128, 128, 0.15);
-      }
-      .hydra-list__title {
-        font-weight: 600;
-      }
-      .hydra-list__actions {
-        margin-left: auto;
-        display: flex;
-        gap: 0.75rem;
-      }
-      .hydra-empty {
-        opacity: 0.7;
-      }
-
-      /* ── Mission Control (M2) ─────────────────────────────────────────── */
-      :root {
-        --hy-bg: #ffffff;
-        --hy-panel: #f6f7f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+        --hy-bg: #fbfbfa;
+        --hy-canvas: #ffffff;
+        --hy-sidebar: rgba(222, 228, 226, 0.82);
+        --hy-sidebar-solid: #e5eae8;
+        --hy-panel: #f4f4f2;
+        --hy-panel-strong: #ededeb;
         --hy-tile: #ffffff;
-        --hy-border: rgba(0, 0, 0, 0.12);
-        --hy-border-strong: rgba(0, 0, 0, 0.2);
-        --hy-text: #1b1f24;
-        --hy-muted: rgba(0, 0, 0, 0.55);
-        --hy-accent: #2f6feb;
+        --hy-hover: rgba(0, 0, 0, 0.045);
+        --hy-selected: rgba(0, 0, 0, 0.07);
+        --hy-border: rgba(0, 0, 0, 0.085);
+        --hy-border-strong: rgba(0, 0, 0, 0.16);
+        --hy-text: #181817;
+        --hy-muted: rgba(24, 24, 23, 0.66);
+        --hy-faint: rgba(24, 24, 23, 0.46);
+        --hy-accent: #ff5a1f;
         --hy-accent-contrast: #ffffff;
-        --hy-danger: #c0392b;
-        --hy-warn: #b9761b;
-        --hy-ok: #2e9e5b;
-        --hy-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.08);
-        --hy-run-running: #2e9e5b;
-        --hy-run-idle: #6b7280;
-        --hy-run-needs-input: #b9761b;
-        --hy-run-error: #c0392b;
-        --hy-run-unknown: #9aa0a6;
+        --hy-danger: #c83f2f;
+        --hy-warn: #b46b1a;
+        --hy-ok: #2fa36a;
+        --hy-shadow: 0 10px 32px rgba(0, 0, 0, 0.11), 0 1px 2px rgba(0, 0, 0, 0.06);
+        --hy-soft-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        --hy-run-running: #2fa36a;
+        --hy-run-idle: #6f7471;
+        --hy-run-needs-input: #cc7a1f;
+        --hy-run-error: #c83f2f;
+        --hy-run-unknown: #a7aaa7;
+        --hy-terminal: #171716;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --hy-bg: #14171b;
-          --hy-panel: #1b1f24;
-          --hy-tile: #21262d;
-          --hy-border: rgba(255, 255, 255, 0.1);
-          --hy-border-strong: rgba(255, 255, 255, 0.2);
-          --hy-text: #e6e9ee;
-          --hy-muted: rgba(255, 255, 255, 0.55);
-          --hy-accent: #4f8cff;
-          --hy-danger: #e5645a;
-          --hy-warn: #e0a44a;
-          --hy-ok: #4cc07f;
-          --hy-run-running: #4cc07f;
-          --hy-run-idle: #9aa4b2;
-          --hy-run-needs-input: #e0a44a;
-          --hy-run-error: #e5645a;
-          --hy-run-unknown: #7d848e;
+          --hy-bg: #1c1c1a;
+          --hy-canvas: #20201e;
+          --hy-sidebar: rgba(44, 46, 44, 0.84);
+          --hy-sidebar-solid: #2b2d2b;
+          --hy-panel: #292a28;
+          --hy-panel-strong: #333431;
+          --hy-tile: #242522;
+          --hy-hover: rgba(255, 255, 255, 0.055);
+          --hy-selected: rgba(255, 255, 255, 0.09);
+          --hy-border: rgba(255, 255, 255, 0.09);
+          --hy-border-strong: rgba(255, 255, 255, 0.16);
+          --hy-text: #f2f1ed;
+          --hy-muted: rgba(242, 241, 237, 0.66);
+          --hy-faint: rgba(242, 241, 237, 0.44);
+          --hy-accent: #ff7a45;
+          --hy-danger: #ec6a5c;
+          --hy-warn: #e0a044;
+          --hy-ok: #55c985;
+          --hy-run-running: #55c985;
+          --hy-run-idle: #a2a39f;
+          --hy-run-needs-input: #e0a044;
+          --hy-run-error: #ec6a5c;
+          --hy-run-unknown: #777973;
+          --hy-terminal: #141412;
         }
       }
+      * {
+        box-sizing: border-box;
+      }
+      html,
       body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
         background: var(--hy-bg);
+      }
+      body {
         color: var(--hy-text);
+        font-size: 13px;
+        line-height: 1.35;
+        -webkit-font-smoothing: antialiased;
       }
 
       .hydra-board {
@@ -632,8 +603,8 @@
       }
       .hydra-resizer:hover,
       body.hydra-resizing .hydra-resizer {
-        background: var(--hy-accent);
-        border-right-color: var(--hy-accent);
+        background: transparent;
+        border-right-color: var(--hy-border-strong);
       }
       body.hydra-resizing {
         cursor: col-resize;
@@ -1255,6 +1226,644 @@
       .hydra-statusbar__count--warn strong { color: var(--hy-warn); }
       .hydra-statusbar__sep {
         opacity: 0.5;
+      }
+
+      /* Codex-inspired workbench polish. Keep this late so it unifies the older
+         milestone CSS without changing component behavior. */
+      .hydra-live,
+      .hydra-stat__label,
+      .hydra-runtime,
+      .hydra-chip,
+      .hydra-tree__title,
+      .hydra-terminal__status,
+      .hydra-statusbar__live {
+        letter-spacing: 0;
+      }
+
+      .hydra-app {
+        background: var(--hy-canvas);
+        overflow: hidden;
+      }
+      .hydra-app__main {
+        background: var(--hy-canvas);
+      }
+      .hydra-app__sidebar {
+        border-right: 1px solid var(--hy-border);
+      }
+      .hydra-resizer {
+        width: 8px;
+        margin-left: -4px;
+        border-right: 1px solid var(--hy-border) !important;
+        background: transparent !important;
+        position: relative;
+        z-index: 3;
+      }
+      .hydra-resizer::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 3px;
+        width: 1px;
+        background: transparent;
+      }
+      .hydra-resizer:hover,
+      body.hydra-resizing .hydra-resizer {
+        background: transparent !important;
+        border-right-color: var(--hy-border-strong) !important;
+      }
+      .hydra-resizer:hover::after,
+      body.hydra-resizing .hydra-resizer::after {
+        background: var(--hy-border-strong);
+      }
+
+      .hydra-sidebar {
+        background: var(--hy-sidebar);
+        backdrop-filter: blur(28px) saturate(1.05);
+        -webkit-backdrop-filter: blur(28px) saturate(1.05);
+      }
+      .hydra-sidebar__header {
+        min-height: 84px;
+        padding: 50px 12px 10px;
+        border-bottom: 0;
+        -webkit-app-region: drag;
+      }
+      .hydra-sidebar__brand {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: var(--hy-text);
+      }
+      .hydra-sidebar__tools,
+      .hydra-sidebar__tools *,
+      .hydra-tabbar,
+      .hydra-tabbar * {
+        -webkit-app-region: no-drag;
+      }
+      .hydra-sidebar__scroll {
+        padding: 2px 8px 12px;
+      }
+      .hydra-iconbtn {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        color: var(--hy-muted);
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .hydra-iconbtn:hover,
+      .hydra-iconbtn[aria-expanded='true'] {
+        background: var(--hy-hover);
+        border-color: transparent;
+        color: var(--hy-text);
+      }
+
+      .hydra-overview-entry,
+      .hydra-tree__head,
+      .hydra-repo__head,
+      .hydra-row,
+      .hydra-notification-row {
+        border-radius: 9px;
+      }
+      .hydra-overview-entry {
+        min-height: 30px;
+        margin: 0 0 8px;
+        padding: 5px 8px;
+        font-size: 13px;
+      }
+      .hydra-overview-entry__mark {
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--hy-muted);
+        border-radius: 5px;
+        flex: none;
+      }
+      .hydra-overview-entry:hover,
+      .hydra-tree__head:hover,
+      .hydra-repo__head:hover,
+      .hydra-row:hover,
+      .hydra-notification-row:hover,
+      .hydra-notification-row:focus-visible {
+        background: var(--hy-hover);
+      }
+      .hydra-overview-entry--selected,
+      .hydra-row--selected {
+        background: var(--hy-selected);
+        box-shadow: none;
+      }
+
+      .hydra-tree {
+        gap: 10px;
+      }
+      .hydra-tree__head,
+      .hydra-repo__head {
+        padding: 4px 8px;
+      }
+      .hydra-tree__title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--hy-muted);
+      }
+      .hydra-tree__count,
+      .hydra-repo__head .hydra-tree__count {
+        background: rgba(255, 255, 255, 0.38);
+        color: var(--hy-muted);
+        font-size: 11px;
+        min-width: 22px;
+        text-align: center;
+        padding: 1px 6px;
+      }
+      .hydra-repo {
+        margin-left: 2px;
+      }
+      .hydra-repo__body {
+        margin-left: 8px;
+      }
+      .hydra-repo__label {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .hydra-caret {
+        width: 14px;
+        font-size: 12px;
+        text-align: center;
+      }
+      .hydra-row {
+        min-height: 42px;
+        gap: 8px;
+        padding: 5px 6px 5px 9px;
+      }
+      .hydra-row__line {
+        gap: 5px;
+      }
+      .hydra-row__name {
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .hydra-row__num,
+      .hydra-row__agent,
+      .hydra-row__token,
+      .hydra-row__summary,
+      .hydra-row__sub {
+        font-size: 11px;
+      }
+      .hydra-row__agent {
+        color: var(--hy-faint);
+      }
+      .hydra-row__menu {
+        margin-right: -2px;
+        transition: opacity 120ms ease;
+      }
+      .hydra-row__menu .hydra-iconbtn {
+        width: 28px;
+        height: 28px;
+        font-size: 16px;
+      }
+      .hydra-notification-row {
+        width: calc(100% - 20px);
+        margin-left: 20px;
+        padding: 4px 7px;
+      }
+      .hydra-notification-row__badge {
+        width: 15px;
+        min-width: 15px;
+        height: 15px;
+        font-size: 10px;
+        border-color: var(--hy-border-strong);
+        color: var(--hy-muted);
+      }
+
+      .hydra-sdot {
+        width: 9px;
+        height: 9px;
+      }
+      .hydra-sdot--running,
+      .hydra-sdot--needs-input {
+        animation: none;
+        box-shadow: none;
+      }
+      .hydra-sdot--running::after {
+        display: none;
+      }
+      .hydra-sdot--idle {
+        border-width: 1.4px;
+      }
+      .hydra-chip,
+      .hydra-runtime,
+      .hydra-badge {
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .hydra-chip {
+        text-transform: none;
+        border-color: var(--hy-border);
+        background: transparent;
+      }
+      .hydra-chip--done {
+        color: var(--hy-ok);
+        background: rgba(47, 163, 106, 0.1);
+        border-color: rgba(47, 163, 106, 0.22);
+      }
+
+      .hydra-tabarea {
+        background: var(--hy-canvas);
+      }
+      .hydra-tabbar {
+        height: 42px;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--hy-border);
+        background: color-mix(in srgb, var(--hy-canvas) 96%, var(--hy-panel));
+        -webkit-app-region: drag;
+        scrollbar-width: none;
+      }
+      .hydra-tabbar::-webkit-scrollbar {
+        display: none;
+      }
+      .hydra-tab {
+        width: auto;
+        height: 28px;
+        min-width: max-content;
+        max-width: 218px;
+        padding: 0 10px;
+        justify-content: flex-start;
+        border: 1px solid color-mix(in srgb, var(--hy-border) 58%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--hy-panel) 44%, transparent);
+        font-size: 13px;
+        color: var(--hy-muted);
+        flex: 0 0 auto;
+      }
+      .hydra-tab:hover {
+        background: var(--hy-hover);
+        border-color: var(--hy-border);
+      }
+      .hydra-tab--active {
+        background: var(--hy-canvas);
+        border: 1px solid var(--hy-border);
+        color: var(--hy-text);
+        box-shadow: var(--hy-soft-shadow);
+      }
+      .hydra-tab--attention {
+        box-shadow: inset 0 2px 0 var(--hy-accent);
+      }
+      .hydra-tab__close {
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        opacity: 0;
+      }
+      .hydra-tab:hover .hydra-tab__close,
+      .hydra-tab:focus-within .hydra-tab__close,
+      .hydra-tab--active .hydra-tab__close {
+        opacity: 0.55;
+      }
+      .hydra-tab__close:hover {
+        background: var(--hy-hover);
+        opacity: 1;
+      }
+
+      .hydra-pane__toolbar {
+        min-height: 42px;
+        padding: 6px 14px;
+        background: var(--hy-canvas);
+      }
+      .hydra-pane__title {
+        font-size: 12px;
+      }
+      .hydra-pane__view {
+        padding: 10px 12px 12px;
+      }
+      .hydra-seg-toggle {
+        padding: 2px;
+        border: 1px solid var(--hy-border);
+        border-radius: 9px;
+        background: var(--hy-panel);
+      }
+      .hydra-seg-toggle__btn {
+        min-width: 72px;
+        padding: 4px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+      }
+      .hydra-seg-toggle__btn--active {
+        background: var(--hy-canvas);
+        border-color: transparent;
+        box-shadow: var(--hy-soft-shadow);
+      }
+
+      .hydra-overview {
+        background: var(--hy-canvas);
+        padding: 20px 26px 32px;
+      }
+      .hydra-board {
+        max-width: 1180px;
+        margin: 0 auto;
+        gap: 18px;
+      }
+      .hydra-board__bar {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        padding: 0 0 14px;
+        border-bottom: 1px solid var(--hy-border);
+      }
+      .hydra-board__heading h1 {
+        font-size: 18px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .hydra-live {
+        font-size: 12px;
+        text-transform: none;
+      }
+      .hydra-live--on .hydra-live__dot,
+      .hydra-statusbar__live--on .hydra-statusbar__dot {
+        box-shadow: none;
+      }
+      .hydra-board__stats {
+        gap: 14px;
+      }
+      .hydra-stat {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 4px;
+      }
+      .hydra-stat__value {
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .hydra-stat__label {
+        font-size: 12px;
+        text-transform: none;
+      }
+      .hydra-board__actions {
+        gap: 4px;
+        margin-left: 0;
+      }
+      .hydra-board__groups {
+        gap: 22px;
+      }
+      .hydra-group__head {
+        margin-bottom: 6px;
+        padding: 0 2px;
+      }
+      .hydra-group__title {
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .hydra-group__icon {
+        width: 12px;
+        height: 12px;
+        border: 1.4px solid var(--hy-muted);
+        border-radius: 4px;
+      }
+      .hydra-group__icon--copilots {
+        border-radius: 999px;
+      }
+      .hydra-group__icon--tasks {
+        border-radius: 3px;
+        border-style: dashed;
+      }
+      .hydra-group__count {
+        background: var(--hy-panel);
+        font-size: 12px;
+      }
+      .hydra-group__grid {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .hydra-tile {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(190px, 1.05fr) minmax(220px, 1fr) minmax(92px, 0.35fr);
+        align-items: center;
+        column-gap: 12px;
+        min-height: 38px;
+        padding: 5px 9px;
+        border: 0;
+        border-left: 0;
+        border-radius: 9px;
+        background: transparent;
+        box-shadow: none;
+      }
+      .hydra-tile:hover,
+      .hydra-tile:focus-within {
+        background: var(--hy-hover);
+      }
+      .hydra-tile--stopped {
+        opacity: 0.68;
+      }
+      .hydra-tile__top,
+      .hydra-tile__detail,
+      .hydra-tile__foot {
+        min-width: 0;
+      }
+      .hydra-tile__name {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .hydra-tile__number,
+      .hydra-tile__detail,
+      .hydra-tile__sub,
+      .hydra-tile__foot {
+        font-size: 12px;
+      }
+      .hydra-tile__sub {
+        display: none;
+      }
+      .hydra-tile__detail,
+      .hydra-tile__sub,
+      .hydra-tile__foot {
+        color: var(--hy-muted);
+      }
+      .hydra-tile__badges {
+        margin-left: auto;
+      }
+      .hydra-tile__foot {
+        justify-content: flex-end;
+      }
+      .hydra-tile__reason {
+        display: none;
+      }
+      .hydra-tile__actions {
+        position: absolute;
+        right: 7px;
+        top: 50%;
+        transform: translateY(-50%);
+        max-width: calc(100% - 14px);
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+        gap: 2px;
+        margin-top: 0;
+        padding: 2px;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--hy-canvas) 88%, transparent);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        opacity: 0;
+        transition: opacity 120ms ease;
+      }
+      .hydra-tile:hover .hydra-tile__actions,
+      .hydra-tile:focus-within .hydra-tile__actions {
+        opacity: 1;
+      }
+      .hydra-runtime {
+        padding: 1px 6px;
+        text-transform: none;
+        color: var(--hy-text);
+        background: var(--hy-panel-strong);
+      }
+      .hydra-runtime--running {
+        color: var(--hy-ok);
+        background: rgba(47, 163, 106, 0.11);
+      }
+      .hydra-runtime--needs-input {
+        color: var(--hy-warn);
+        background: rgba(204, 122, 31, 0.13);
+      }
+      .hydra-runtime--error {
+        color: var(--hy-danger);
+        background: rgba(200, 63, 47, 0.13);
+      }
+
+      .hydra-btn {
+        min-height: 28px;
+        padding: 5px 9px;
+        border-color: transparent;
+        border-radius: 8px;
+        background: transparent;
+        font-size: 13px;
+      }
+      .hydra-btn:hover {
+        background: var(--hy-hover);
+        border-color: transparent;
+      }
+      .hydra-btn--primary {
+        color: var(--hy-text);
+        background: transparent;
+        border-color: transparent;
+        font-weight: 600;
+      }
+      .hydra-btn--danger {
+        color: var(--hy-danger);
+        border-color: transparent;
+      }
+      .hydra-btn--danger:hover {
+        background: rgba(200, 63, 47, 0.1);
+        color: var(--hy-danger);
+      }
+      .hydra-btn--sm {
+        min-height: 24px;
+        padding: 3px 7px;
+        font-size: 12px;
+      }
+
+      .hydra-terminal {
+        gap: 7px;
+      }
+      .hydra-terminal__header {
+        min-height: 18px;
+        align-items: center;
+        gap: 8px;
+      }
+      .hydra-terminal__label {
+        display: none;
+      }
+      .hydra-terminal__session {
+        max-width: 52vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--hy-muted);
+      }
+      .hydra-terminal__status {
+        font-size: 11px;
+        text-transform: none;
+      }
+      .hydra-terminal__surface {
+        border-radius: 8px;
+        padding: 6px;
+        background: var(--hy-terminal);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+      }
+
+      .hydra-menu__panel,
+      .hydra-modal {
+        border-color: var(--hy-border);
+        border-radius: 14px;
+        background: color-mix(in srgb, var(--hy-canvas) 96%, var(--hy-panel));
+        box-shadow: var(--hy-shadow);
+      }
+      .hydra-menu__panel {
+        padding: 6px;
+        min-width: 190px;
+      }
+      .hydra-menu__item {
+        border-radius: 9px;
+        padding: 7px 9px;
+        font-size: 13px;
+      }
+      .hydra-menu__item:hover {
+        background: var(--hy-hover);
+      }
+      .hydra-modal__backdrop {
+        background: rgba(0, 0, 0, 0.18);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+      .hydra-modal__head {
+        padding: 12px 14px;
+      }
+      .hydra-modal__body {
+        padding: 14px;
+      }
+      .hydra-field__input {
+        min-height: 34px;
+        border-color: var(--hy-border);
+        border-radius: 9px;
+        background: var(--hy-canvas);
+      }
+      .hydra-field__input:focus {
+        outline: 2px solid color-mix(in srgb, var(--hy-accent) 45%, transparent);
+      }
+
+      .hydra-statusbar {
+        height: 28px;
+        padding: 0 10px;
+        border-top-color: var(--hy-border);
+        background: var(--hy-sidebar);
+        backdrop-filter: blur(28px);
+        -webkit-backdrop-filter: blur(28px);
+        font-size: 12px;
+      }
+      .hydra-statusbar__live {
+        font-weight: 600;
+      }
+
+      @media (max-width: 980px) {
+        .hydra-board__bar {
+          grid-template-columns: 1fr;
+          align-items: start;
+        }
+        .hydra-tile {
+          grid-template-columns: 1fr;
+          align-items: stretch;
+        }
+        .hydra-tile__actions {
+          position: static;
+          transform: none;
+          opacity: 1;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
       }
 
       /* Direct-action error banner, floated so it never disturbs the shell. */

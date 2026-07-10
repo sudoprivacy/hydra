@@ -69,7 +69,7 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       linkHandler: {
         activate: (_event, uri) => openTerminalLink(uri),
       },
-      theme: { background: '#1e1e1e' },
+      theme: { background: '#171716' },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -196,7 +196,7 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
   return (
     <section className="hydra-terminal">
       <header className="hydra-terminal__header">
-        <h1>Terminal</h1>
+        <span className="hydra-terminal__label">Terminal</span>
         <code className="hydra-terminal__session">{session || '(no session)'}</code>
         <span className={`hydra-terminal__status hydra-terminal__status--${status}`}>{status}</span>
       </header>

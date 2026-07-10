@@ -1,4 +1,4 @@
-// The tab strip. Overview is a permanent leftmost tab (⌂, no close); session
+// The tab strip. Overview is a permanent leftmost tab (no close); session
 // tabs carry a status dot (same vocabulary as the sidebar), a label, and a ×.
 // needs-input / error tabs get an accent so their state reads without switching.
 
@@ -35,7 +35,6 @@ export function TabBar(): JSX.Element {
               className={`hydra-tab hydra-tab--overview${active ? ' hydra-tab--active' : ''}`}
               onClick={() => tabs.focusTab(tab.id)}
             >
-              <span className="hydra-tab__glyph" aria-hidden="true">⌂</span>
               <span className="hydra-tab__label">Overview</span>
             </button>
           );

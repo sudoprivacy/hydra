@@ -50,24 +50,24 @@ function WorkerTile({ tile, actions }: { tile: WorkerTileModel; actions: TileAct
 
       <div className="hydra-tile__actions">
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'terminal')}>
-          terminal
+          Terminal
         </button>
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'diff')}>
-          diff
+          Diff
         </button>
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onSend(tile)}>
-          send
+          Send
         </button>
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onRename(tile)}>
-          rename
+          Rename
         </button>
         {tile.lifecycle === 'running' ? (
           <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onStop(tile)}>
-            stop
+            Stop
           </button>
         ) : (
           <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onStart(tile)}>
-            start
+            Start
           </button>
         )}
         <button
@@ -75,7 +75,7 @@ function WorkerTile({ tile, actions }: { tile: WorkerTileModel; actions: TileAct
           className="hydra-btn hydra-btn--sm hydra-btn--danger"
           onClick={() => actions.onDelete(tile)}
         >
-          delete
+          Delete
         </button>
       </div>
     </article>
@@ -107,18 +107,18 @@ function CopilotTile({ tile, actions }: { tile: CopilotTileModel; actions: TileA
       <div className="hydra-tile__actions">
         {tile.lifecycle !== 'stopped' ? (
           <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onOpen(tile, 'terminal')}>
-            terminal
+            Terminal
           </button>
         ) : null}
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onSend(tile)}>
-          send
+          Send
         </button>
         <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onRename(tile)}>
-          rename
+          Rename
         </button>
         {tile.lifecycle === 'stopped' ? (
           <button type="button" className="hydra-btn hydra-btn--sm" onClick={() => actions.onStart(tile)}>
-            start
+            Start
           </button>
         ) : null}
         <button
@@ -126,7 +126,7 @@ function CopilotTile({ tile, actions }: { tile: CopilotTileModel; actions: TileA
           className="hydra-btn hydra-btn--sm hydra-btn--danger"
           onClick={() => actions.onDelete(tile)}
         >
-          delete
+          Delete
         </button>
       </div>
     </article>
