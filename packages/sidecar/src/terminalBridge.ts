@@ -56,10 +56,19 @@ export class TerminalBridge {
   /** session → its current interactive owner socket (one owner per worker). */
   private readonly owners = new Map<string, WsWebSocket>();
 
-  handle(ws: WsWebSocket, url: URL): void {
+  constructor(private readonly authorizeSession: (session: string) => Promise<void>) {}
+
+  async handle(ws: WsWebSocket, url: URL): Promise<void> {
     const session = url.searchParams.get(WIRE_PARAMS.session);
     if (!session) {
       sendControl(ws, { t: 'error', message: 'terminal: session is required' });
+      ws.close();
+      return;
+    }
+    try {
+      await this.authorizeSession(session);
+    } catch (error) {
+      sendControl(ws, { t: 'error', message: errorMessage(error) });
       ws.close();
       return;
     }
@@ -68,9 +77,9 @@ export class TerminalBridge {
     const cols = clampInt(url.searchParams.get(WIRE_PARAMS.cols), 80, MIN_COLS, MAX_COLS);
     const rows = clampInt(url.searchParams.get(WIRE_PARAMS.rows), 24, MIN_ROWS, MAX_ROWS);
 
-    // Session-existence check before any attach (FINAL §Security). We ask tmux
-    // directly (not SessionManager) so the bridge stays decoupled from the
-    // engine and works against any tmux session the user can attach.
+    // Ownership authorization has already matched this live tmux session to
+    // Hydra state and metadata. Confirm it still exists immediately before the
+    // attach so a concurrent stop fails cleanly instead of spawning a dead PTY.
     if (!sessionExists(session)) {
       sendControl(ws, { t: 'error', message: `tmux session "${session}" not found` });
       ws.close();

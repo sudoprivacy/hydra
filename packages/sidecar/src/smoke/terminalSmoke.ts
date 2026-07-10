@@ -206,11 +206,57 @@ async function main(): Promise<void> {
   const { createLoopbackServer } = await import('../loopbackServer');
 
   const token = `tm-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
-  const appService = new HydraAppService({ backend: new FakeBackend() });
+  const backend = new FakeBackend();
+  backend.sessions.add(SESSION);
+  backend.workdirs.set(SESSION, tempHome);
+  backend.roles.set(SESSION, 'worker');
+  backend.workerIds.set(SESSION, 1);
+  fs.mkdirSync(process.env.HYDRA_HOME!, { recursive: true });
+  fs.writeFileSync(path.join(process.env.HYDRA_HOME!, 'sessions.json'), JSON.stringify({
+    copilots: {},
+    workers: {
+      [SESSION]: {
+        source: 'directory',
+        sessionName: SESSION,
+        displayName: SESSION,
+        workerId: 1,
+        repo: null,
+        repoRoot: null,
+        branch: null,
+        slug: SESSION,
+        status: 'running',
+        attached: false,
+        agent: 'codex',
+        workdir: tempHome,
+        managedWorkdir: false,
+        tmuxSession: SESSION,
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        sessionId: null,
+        copilotSessionName: null,
+      },
+    },
+    nextWorkerId: 2,
+    updatedAt: new Date().toISOString(),
+  }), 'utf8');
+  const appService = new HydraAppService({ backend });
   const server = await createLoopbackServer(appService, { token });
   const client = createHydraControlClient(new LoopbackHttpWsTransport({ url: server.url, token }));
 
   try {
+    console.log('0. Foreign session attach rejected');
+    const foreign = new Term(client, 'ordinary-user-tmux');
+    const foreignError = await foreign.waitFor(/Refusing to control unknown Hydra session/, 5000);
+    check('foreign tmux session is rejected before attach', foreignError !== null);
+    foreign.close();
+
+    backend.workerIds.set(SESSION, 2);
+    const mismatched = new Term(client, SESSION);
+    const mismatchError = await mismatched.waitFor(/worker identity does not match session state/, 5000);
+    check('mismatched Hydra worker identity is rejected before attach', mismatchError !== null);
+    mismatched.close();
+    backend.workerIds.set(SESSION, 1);
+
     // ── 1. bidirectional I/O (interactive attach) ──
     console.log('1. Bidirectional I/O');
     const t1 = new Term(client, SESSION, { mode: 'interactive', cols: 100, rows: 40 });
