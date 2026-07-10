@@ -330,13 +330,22 @@ async function main(): Promise<void> {
     console.log('copilotEnvE2eSmoke: ok');
   } finally {
     runTmux(['kill-server']);
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    cleanupTempRoot();
   }
+}
+
+function cleanupTempRoot(): void {
+  fs.rmSync(tempRoot, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
 
 void main().catch((error: unknown) => {
   try { runTmux(['kill-server']); } catch { /* best-effort */ }
-  fs.rmSync(tempRoot, { recursive: true, force: true });
+  cleanupTempRoot();
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 });
