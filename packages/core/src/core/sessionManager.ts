@@ -742,11 +742,11 @@ export class SessionManager {
       notifyCopilot: shouldNotifyCopilot,
     });
 
+    const peekState = this.readSessionState();
+    const workerId = peekState.workers[prepared.sessionName]?.workerId ??
+      prepared.preservedWorkerInfo?.workerId ??
+      peekState.nextWorkerId;
     if ((shouldNotifyCopilot || shouldInstallClaudeNeedsInputHooks) && prepared.copilotSessionName) {
-      const peekState = this.readSessionState();
-      const workerId = peekState.workers[prepared.sessionName]?.workerId ??
-        prepared.preservedWorkerInfo?.workerId ??
-        peekState.nextWorkerId;
       this.injectCompletionHook(prepared.workdir, prepared.agentType, {
         copilotSessionName: prepared.copilotSessionName,
         sessionName: prepared.sessionName,
@@ -766,6 +766,7 @@ export class SessionManager {
     await this.backend.createSession(prepared.sessionName, prepared.workdir);
     await this.backend.setSessionWorkdir(prepared.sessionName, prepared.workdir);
     await this.backend.setSessionRole(prepared.sessionName, 'worker');
+    await this.backend.setSessionWorkerId?.(prepared.sessionName, workerId);
     await this.backend.setSessionAgent(prepared.sessionName, prepared.agentType);
 
     const isResume = !!prepared.resumeSessionId;
@@ -834,6 +835,7 @@ export class SessionManager {
       state.updatedAt = now;
       return nextWorker;
     });
+    await this.backend.setSessionWorkerId?.(prepared.sessionName, workerInfo.workerId);
     logger.info('session.launchWorker', 'Worker session persisted', {
       source: workerInfo.source,
       sessionName: workerInfo.sessionName,
@@ -882,11 +884,14 @@ export class SessionManager {
     logger.info('session.delete', 'Deleting worker session', { ...context, phase: 'start' });
 
     try {
+      const ownership = await this.assertHydraSessionOwnership(sessionName, 'worker');
       if (worker && isDirectoryWorker(worker) && opts.deleteFiles && !worker.managedWorkdir) {
         throw new Error(`Worker "${sessionName}" uses a user-provided directory. --delete-files is only supported for Hydra-managed task workers.`);
       }
 
-      await this.killSessionOrConfirmAbsent(sessionName);
+      if (ownership.live) {
+        await this.killSessionOrConfirmAbsent(sessionName);
+      }
       logger.info('session.delete', 'Worker multiplexer session removed or absent', {
         ...context,
         phase: 'killSession',
@@ -1052,8 +1057,11 @@ export class SessionManager {
   }
 
   async stopWorker(sessionName: string): Promise<void> {
+    const ownership = await this.assertHydraSessionOwnership(sessionName, 'worker');
     try {
-      await this.backend.killSession(sessionName);
+      if (ownership.live) {
+        await this.backend.killSession(sessionName);
+      }
     } catch { /* Already dead */ }
 
     await this.updateSessionState((state) => {
@@ -1092,6 +1100,7 @@ export class SessionManager {
     await this.backend.createSession(sessionName, existingWorker.workdir);
     await this.backend.setSessionWorkdir(sessionName, existingWorker.workdir);
     await this.backend.setSessionRole(sessionName, 'worker');
+    await this.backend.setSessionWorkerId?.(sessionName, existingWorker.workerId);
     await this.backend.setSessionAgent(sessionName, agent);
 
     // Resume from stored session ID if available; otherwise fresh start
@@ -1178,6 +1187,8 @@ export class SessionManager {
         launchStartedAt,
       );
     }
+
+    await this.backend.setSessionWorkerId?.(sessionName, workerInfo.workerId);
 
     this.emitWorkerEvent('worker.started', workerInfo, { resumed: canResume });
     this.updateWorkerRuntimeState(workerInfo, 'running', 'worker-started');
@@ -1584,8 +1595,11 @@ export class SessionManager {
     logger.info('session.delete', 'Deleting copilot session', { ...context, phase: 'start' });
 
     try {
+      const ownership = await this.assertHydraSessionOwnership(sessionName, 'copilot');
       try {
-        await this.backend.killSession(sessionName);
+        if (ownership.live) {
+          await this.backend.killSession(sessionName);
+        }
       } catch { /* Already dead */ }
       logger.info('session.delete', 'Copilot multiplexer session removed or absent', {
         ...context,
@@ -1977,6 +1991,43 @@ export class SessionManager {
 
       throw error;
     }
+  }
+
+  async assertHydraSessionOwnership(
+    sessionName: string,
+    expectedKind?: 'worker' | 'copilot',
+  ): Promise<{ kind: 'worker' | 'copilot'; live: boolean }> {
+    const state = this.readSessionState();
+    const worker = state.workers[sessionName];
+    const copilot = state.copilots[sessionName];
+    const kind = worker ? 'worker' : copilot ? 'copilot' : undefined;
+    const session = worker ?? copilot;
+
+    if (!kind || !session || (expectedKind && kind !== expectedKind)) {
+      throw new Error(`Refusing to control unknown Hydra ${expectedKind ?? 'session'} "${sessionName}"`);
+    }
+
+    const live = await this.backend.hasSession(sessionName);
+    if (!live) {
+      return { kind, live: false };
+    }
+
+    const [role, tmuxWorkdir, tmuxWorkerId] = await Promise.all([
+      this.backend.getSessionRole(sessionName),
+      this.backend.getSessionWorkdir(sessionName),
+      kind === 'worker' ? this.backend.getSessionWorkerId?.(sessionName) : Promise.resolve(undefined),
+    ]);
+    const expectedWorkdir = toCanonicalPath(session.workdir);
+    const actualWorkdir = tmuxWorkdir ? toCanonicalPath(tmuxWorkdir) : undefined;
+
+    if (role !== kind || !expectedWorkdir || actualWorkdir !== expectedWorkdir) {
+      throw new Error(`Refusing to control foreign tmux session "${sessionName}": Hydra metadata does not match session state`);
+    }
+    if (worker && tmuxWorkerId !== undefined && tmuxWorkerId !== worker.workerId) {
+      throw new Error(`Refusing to control foreign tmux session "${sessionName}": worker identity does not match session state`);
+    }
+
+    return { kind, live: true };
   }
 
   private archiveEntry(
@@ -3598,6 +3649,7 @@ export class SessionManager {
         state.updatedAt = now;
         return nextWorker;
       });
+      await this.backend.setSessionWorkerId?.(sessionName, workerInfo.workerId);
 
       this.emitWorkerEvent('worker.started', workerInfo, {
         resumed: true,
@@ -3624,10 +3676,12 @@ export class SessionManager {
       await this.backend.createSession(sessionName, worktreePath);
       await this.backend.setSessionWorkdir(sessionName, worktreePath);
       await this.backend.setSessionRole(sessionName, 'worker');
+      const existingWorker = this.readSessionState().workers[sessionName] || savedWorker;
+      const workerId = existingWorker?.workerId ?? this.readSessionState().nextWorkerId;
+      await this.backend.setSessionWorkerId?.(sessionName, workerId);
       await this.backend.setSessionAgent(sessionName, agentType);
 
       const now = new Date().toISOString();
-      const existingWorker = this.readSessionState().workers[sessionName] || savedWorker;
       const storedSessionId = existingWorker?.sessionId;
       const requestedResumeSessionFile = resumeSessionFile ?? existingWorker?.agentSessionFile ?? null;
       const resolvedResumeSessionFile = storedSessionId
@@ -3722,6 +3776,7 @@ export class SessionManager {
         state.updatedAt = now;
         return nextWorker;
       });
+      await this.backend.setSessionWorkerId?.(sessionName, workerInfo.workerId);
 
       this.emitWorkerEvent('worker.started', workerInfo, {
         resumed: canResume,

@@ -40,13 +40,15 @@ class DeleteWorkerBackend implements MultiplexerBackendCore {
   readonly installHint = 'not needed';
 
   private readonly sessions = new Set<string>();
+  private readonly workers = new Map<string, WorkerRecord>();
 
   killError: Error | null = null;
   hasSessionError: Error | null = null;
 
-  constructor(sessionNames: string[] = []) {
-    for (const sessionName of sessionNames) {
-      this.sessions.add(sessionName);
+  constructor(workers: WorkerRecord[] = []) {
+    for (const worker of workers) {
+      this.sessions.add(worker.sessionName);
+      this.workers.set(worker.sessionName, worker);
     }
   }
 
@@ -80,20 +82,24 @@ class DeleteWorkerBackend implements MultiplexerBackendCore {
     return this.sessions.has(sessionName);
   }
 
-  async getSessionWorkdir(): Promise<string | undefined> {
-    this.unexpected();
+  async getSessionWorkdir(sessionName: string): Promise<string | undefined> {
+    return this.workers.get(sessionName)?.workdir;
   }
 
   async setSessionWorkdir(): Promise<void> {
     this.unexpected();
   }
 
-  async getSessionRole(): Promise<HydraRole | undefined> {
-    this.unexpected();
+  async getSessionRole(sessionName: string): Promise<HydraRole | undefined> {
+    return this.workers.has(sessionName) ? 'worker' : undefined;
   }
 
   async setSessionRole(): Promise<void> {
     this.unexpected();
+  }
+
+  async getSessionWorkerId(sessionName: string): Promise<number | undefined> {
+    return this.workers.get(sessionName)?.workerId;
   }
 
   async getSessionAgent(): Promise<string | undefined> {
@@ -268,7 +274,7 @@ async function main(): Promise<void> {
     writeWorkerState(sessionsFile, worker);
     writeJson(archiveFile, { entries: [] });
 
-    const backend = new DeleteWorkerBackend([worker.sessionName]);
+    const backend = new DeleteWorkerBackend([worker]);
     backend.killError = makeExecError('kill-session failed', 'permission denied');
 
     let removeWorktreeCalls = 0;
@@ -357,7 +363,7 @@ async function main(): Promise<void> {
     writeWorkerRuntimeState(runtimeStateFile, worker);
     writeJson(archiveFile, { entries: [] });
 
-    const backend = new DeleteWorkerBackend([worker.sessionName]);
+    const backend = new DeleteWorkerBackend([worker]);
 
     let removeWorktreeCalls = 0;
     const branchDeleteCommands: string[] = [];

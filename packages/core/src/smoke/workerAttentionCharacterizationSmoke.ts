@@ -70,8 +70,8 @@ const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'event-only-notification-clear': 'known-failure',
   'codex-turn-aborted-resolution': 'known-failure',
   'completion-pending-overwrite': 'known-failure',
-  'diff-symlink-escape': 'known-failure',
-  'foreign-tmux-stop': 'known-failure',
+  'diff-symlink-escape': 'fixed',
+  'foreign-tmux-stop': 'fixed',
   'archive-concurrent-update': 'known-failure',
 };
 

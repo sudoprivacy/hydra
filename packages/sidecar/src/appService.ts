@@ -30,7 +30,8 @@
 //  Op.getGitStatus          SessionManager.sync + git status --porcelain        (sidebar U:N)
 //  Topic.events             EventLog.read (poll — EventBus push is M2)           (events.ts)
 //  Topic.notifications      NotificationStateService.onDidChange
-//  openTerminal             node-pty ⇄ tmux attach (M3 — not yet implemented)
+//  openTerminal             reserved in-process terminal seam; loopback attach
+//                             is handled by TerminalBridge after ownership auth
 
 import * as os from 'node:os';
 
@@ -135,7 +136,7 @@ export class HydraAppService implements HydraAppServiceApi {
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
   }
 
-  // ── transport surface (the 3-method waist, server side) ──
+  // ── transport waist (3 methods) + sidecar-internal terminal authorization ──
 
   // `auth` is part of the HydraAppService contract but ignored in-process; it is
   // omitted here (optional params may be dropped by an implementer) and wired in
@@ -156,11 +157,15 @@ export class HydraAppService implements HydraAppServiceApi {
   }
 
   openTerminal(input: TerminalAttachInput): TerminalChannel {
-    // M3 delivers the node-pty ⇄ tmux attach bridge. The shape is fixed in
-    // @hydra/protocol so UI + transports are written against it today.
+    // Loopback terminal attach is implemented by TerminalBridge. The in-process
+    // transport keeps the frozen terminal method but has no PTY bridge.
     throw new Error(
       `attachTerminal (node-pty ⇄ tmux bridge) is implemented in milestone M3; requested session "${input.session}"`,
     );
+  }
+
+  async authorizeTerminal(input: TerminalAttachInput): Promise<void> {
+    await this.sessionManager.assertHydraSessionOwnership(input.session);
   }
 
   // ── request dispatch ──

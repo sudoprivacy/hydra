@@ -328,6 +328,35 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     await exec(`${tmuxCommand} set-option -t ${shellQuote(sessionName)} @hydra-role ${shellQuote(role)}`);
   }
 
+  async getSessionWorkerId(sessionName: string): Promise<number | undefined> {
+    try {
+      const tmuxCommand = getTmuxCommand();
+      const output = await exec(`${tmuxCommand} show-options -t ${shellQuote(sessionName)} -qv @hydra-worker-id`);
+      const value = output.trim();
+      if (!value) {
+        return undefined;
+      }
+      if (!/^[1-9]\d*$/.test(value)) {
+        throw new Error(`Malformed @hydra-worker-id on tmux session "${sessionName}": ${value}`);
+      }
+      const workerId = Number(value);
+      if (!Number.isSafeInteger(workerId)) {
+        throw new Error(`Malformed @hydra-worker-id on tmux session "${sessionName}": ${value}`);
+      }
+      return workerId;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Malformed @hydra-worker-id')) {
+        throw error;
+      }
+      return undefined;
+    }
+  }
+
+  async setSessionWorkerId(sessionName: string, workerId: number): Promise<void> {
+    const tmuxCommand = getTmuxCommand();
+    await exec(`${tmuxCommand} set-option -t ${shellQuote(sessionName)} @hydra-worker-id ${shellQuote(String(workerId))}`);
+  }
+
   async getSessionAgent(sessionName: string): Promise<string | undefined> {
     try {
       const tmuxCommand = getTmuxCommand();
