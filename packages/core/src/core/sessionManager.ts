@@ -14,9 +14,7 @@ import { logger } from './logger';
 import { hashText } from './logRedaction';
 import { EventLog, type HydraEventRole } from './events';
 import {
-  setWorkerRuntimeState,
   WorkerRuntimeStateStore,
-  type WorkerRuntimeState,
 } from './workerRuntimeState';
 import { ArchiveStore, type ArchiveStoreState } from './archiveStore';
 import {
@@ -25,6 +23,11 @@ import {
   installAgentHooks,
   removeAgentHooks,
 } from './agentHookAdapter';
+import {
+  buildCompletionHookScript,
+  getCompletionHookScriptPath,
+  refreshCompletionHookScripts,
+} from './completionHookScript';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -280,13 +283,10 @@ interface PreparedWorkerLaunch {
 }
 
 interface WorkerNotificationInfo {
-  copilotSessionName: string;
   sessionName: string;
   workerId: number;
-  displayName: string;
-  source: WorkerSource;
-  branch?: string | null;
-  workdir: string;
+  lifecycleEpoch: string;
+  agentType: string;
 }
 
 export interface CreateCopilotOpts {
@@ -305,8 +305,10 @@ export interface CreateCopilotOpts {
 
 export interface CreateWorkerResult {
   workerInfo: WorkerInfo;
-  /** Resolves after the delayed Enter is sent (for Claude trust prompt). CLI should await this. */
+  /** Resolves after the agent is ready. WorkerLifecycleService composes initial prompt delivery. */
   postCreatePromise: Promise<void>;
+  /** Low-level delivery closure consumed by WorkerLifecycleService after completion intent is armed. */
+  deliverInitialPrompt?: () => Promise<void>;
 }
 
 export interface CreateCopilotResult {
@@ -557,20 +559,22 @@ export class SessionManager {
     return this.readSessionState().workers[sessionName];
   }
 
-  armCompletionNotification(sessionName: string): boolean {
-    const hooksDir = path.join(getHydraHome(), 'hooks');
-    fs.mkdirSync(hooksDir, { recursive: true });
-    const pendingPath = this.getNotifyPendingPath(sessionName);
-    const created = !fs.existsSync(pendingPath);
-    fs.writeFileSync(pendingPath, `${randomUUID()}\n`, 'utf-8');
-    return created;
-  }
-
-  cancelCompletionNotification(sessionName: string): boolean {
-    const pendingPath = this.getNotifyPendingPath(sessionName);
-    const existed = fs.existsSync(pendingPath);
-    fs.rmSync(pendingPath, { force: true });
-    return existed;
+  ensureWorkerCompletionHook(worker: WorkerInfo, lifecycleEpoch: string): boolean {
+    if (!agentSupportsCompletionNotification(worker.agent)) return false;
+    const installed = this.injectCompletionHook(worker.workdir, worker.agent, {
+      sessionName: worker.sessionName,
+      workerId: worker.workerId,
+      lifecycleEpoch,
+      agentType: worker.agent,
+    }, true);
+    if (installed) {
+      refreshCompletionHookScripts(worker.sessionName, {
+        workerId: worker.workerId,
+        lifecycleEpoch,
+        agentType: worker.agent,
+      });
+    }
+    return installed;
   }
 
   async getCopilot(sessionName: string): Promise<CopilotInfo | undefined> {
@@ -625,8 +629,6 @@ export class SessionManager {
         agentCommand,
         task,
         savedWorker,
-        opts.copilotSessionName,
-        opts.notifyCopilot !== false,
         opts.resumeSessionFile,
       );
     }
@@ -768,9 +770,7 @@ export class SessionManager {
 
   private async launchPreparedWorker(prepared: PreparedWorkerLaunch): Promise<CreateWorkerResult> {
     let agentCommand = prepared.agentCommand;
-    const shouldNotifyCopilot = agentSupportsCompletionNotification(prepared.agentType) &&
-      prepared.notifyCopilot &&
-      !!prepared.copilotSessionName;
+    const shouldInstallCompletionHook = agentSupportsCompletionNotification(prepared.agentType);
     const shouldInstallNeedsInputHooks = getAgentHookDiagnostic(prepared.agentType)
       .capabilities.needsInput === 'hook' && !!prepared.copilotSessionName;
     logger.info('session.launchWorker', 'Launching worker session', {
@@ -783,25 +783,22 @@ export class SessionManager {
       isResume: !!prepared.resumeSessionId,
       taskLength: prepared.task?.length ?? 0,
       taskHash: prepared.task ? hashText(prepared.task) : undefined,
-      notifyCopilot: shouldNotifyCopilot,
+      notifyCopilot: prepared.notifyCopilot && !!prepared.copilotSessionName,
     });
 
     const peekState = this.readSessionState();
     const workerId = peekState.workers[prepared.sessionName]?.workerId ??
       prepared.preservedWorkerInfo?.workerId ??
       peekState.nextWorkerId;
-    if ((shouldNotifyCopilot || shouldInstallNeedsInputHooks) && prepared.copilotSessionName) {
+    if (shouldInstallCompletionHook || shouldInstallNeedsInputHooks) {
       const hooksInstalled = this.injectCompletionHook(prepared.workdir, prepared.agentType, {
-        copilotSessionName: prepared.copilotSessionName,
         sessionName: prepared.sessionName,
         workerId,
-        displayName: prepared.displayName,
-        source: prepared.source,
-        branch: prepared.branch,
-        workdir: prepared.workdir,
-      }, shouldNotifyCopilot);
+        lifecycleEpoch: `legacy-worker-${workerId}`,
+        agentType: prepared.agentType,
+      }, shouldInstallCompletionHook);
       if (prepared.agentType === 'codex' && hooksInstalled) {
-        const scriptPath = this.getNotifyScriptPath(prepared.sessionName);
+        const scriptPath = getCompletionHookScriptPath(workerId);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
         agentCommand = this.withCodexCompletionHookOverrides(agentCommand, trustRoots, scriptPath);
       }
@@ -892,8 +889,6 @@ export class SessionManager {
     if (!prepared.preservedWorkerInfo) {
       this.emitWorkerEvent('worker.created', workerInfo);
     }
-    this.updateWorkerRuntimeState(workerInfo, 'running', prepared.preservedWorkerInfo ? 'worker-restored' : 'worker-created');
-
     const postCreatePromise = this.withPostCreateTimeout((async () => {
       if (isResume) {
         await this.waitForAgentReady(prepared.sessionName, prepared.agentType);
@@ -906,10 +901,15 @@ export class SessionManager {
           launchStartedAt,
         );
       }
-      await this.sendInitialPrompt(prepared.sessionName, prepared.task, shouldNotifyCopilot);
     })(), prepared.sessionName, 'worker startup');
 
-    return { workerInfo, postCreatePromise };
+    return {
+      workerInfo,
+      postCreatePromise,
+      deliverInitialPrompt: prepared.task
+        ? () => this.sendInitialPrompt(prepared.sessionName, prepared.task)
+        : undefined,
+    };
   }
 
   async deleteWorker(sessionName: string, opts: DeleteWorkerOpts = {}): Promise<void> {
@@ -1074,7 +1074,7 @@ export class SessionManager {
             agentType: hookWorker.agent,
             workdir: hookWorker.workdir,
             sessionName,
-            completionScriptPath: this.getNotifyScriptPath(sessionName),
+            completionScriptPath: getCompletionHookScriptPath(hookWorker.workerId),
           });
           logger.info('session.delete', 'Removed worker agent hook configuration', {
             ...context,
@@ -1252,8 +1252,6 @@ export class SessionManager {
     await this.backend.setSessionWorkerId?.(sessionName, workerInfo.workerId);
 
     this.emitWorkerEvent('worker.started', workerInfo, { resumed: canResume });
-    this.updateWorkerRuntimeState(workerInfo, 'running', 'worker-started');
-
     return {
       workerInfo,
       postCreatePromise: this.withPostCreateTimeout(postCreatePromise, sessionName, 'worker startup'),
@@ -1891,27 +1889,6 @@ export class SessionManager {
     });
   }
 
-  private updateWorkerRuntimeState(worker: WorkerInfo, state: WorkerRuntimeState, reason: string): void {
-    try {
-      setWorkerRuntimeState({
-        sessionName: worker.sessionName,
-        state,
-        origin: 'session-manager',
-        reason,
-        workerId: worker.workerId,
-        agent: worker.agent,
-        workdir: worker.workdir,
-      }, 'session-manager', this.runtimeStateStore);
-    } catch (error) {
-      logger.warn('session.worker-runtime-state', 'Failed to update worker runtime state', {
-        sessionName: worker.sessionName,
-        state,
-        reason,
-        error,
-      });
-    }
-  }
-
   private clearWorkerRuntimeState(sessionName: string, reason: string): void {
     try {
       this.runtimeStateStore.clear(sessionName);
@@ -2392,18 +2369,13 @@ export class SessionManager {
   private async sendInitialPrompt(
     sessionName: string,
     task?: string,
-    notifyCopilot = false,
   ): Promise<void> {
     if (task) {
       logger.info('session.sendInitialPrompt', 'Sending initial worker prompt', {
         sessionName,
         promptLength: task.length,
         promptHash: hashText(task),
-        notifyCopilot,
       });
-      if (notifyCopilot) {
-        this.armCompletionNotification(sessionName);
-      }
       try {
         await this.backend.sendMessage(sessionName, task);
       } catch (error) {
@@ -2425,16 +2397,18 @@ export class SessionManager {
     includeCompletion = true,
   ): boolean {
     try {
-      const scriptPath = this.getNotifyScriptPath(info.sessionName);
+      const scriptPath = getCompletionHookScriptPath(info.workerId);
       const result = installAgentHooks({
         agentType,
         workdir: worktreePath,
         sessionName: info.sessionName,
         completion: includeCompletion ? {
           path: scriptPath,
-          content: process.platform === 'win32'
-            ? this.buildNotifyScriptPowerShell(info)
-            : this.buildNotifyScript(info),
+          content: buildCompletionHookScript({
+            workerId: info.workerId,
+            lifecycleEpoch: info.lifecycleEpoch,
+            agentType: info.agentType,
+          }),
           mode: 0o755,
         } : undefined,
       });
@@ -2493,206 +2467,6 @@ export class SessionManager {
       '-c',
       shellQuote(hooksConfig),
     ].join(' ');
-  }
-
-  private buildNotifyScript(info: WorkerNotificationInfo): string {
-    const sq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-    const pendingPath = this.getNotifyPendingPath(info.sessionName);
-    const title = info.source === 'directory'
-      ? 'TITLE="Task worker #${WORKER_ID} completed"'
-      : 'TITLE="Worker #${WORKER_ID} completed"';
-    const body = info.source === 'directory'
-      ? 'BODY="Task worker #${WORKER_ID} (${NAME}) has completed. Workdir: ${WORKDIR}. Use \\`hydra worker logs ${SESSION}\\` to review output."'
-      : 'BODY="Worker #${WORKER_ID} (${NAME}) has completed. Branch: ${BRANCH}. Use \\`hydra worker logs ${SESSION}\\` to review output."';
-    return [
-      '#!/bin/sh',
-      '# Auto-generated by Hydra: parent copilot completion notification.',
-      '',
-      `COPILOT=${sq(info.copilotSessionName)}`,
-      `SESSION=${sq(info.sessionName)}`,
-      `WORKER_ID=${sq(String(info.workerId))}`,
-      `NAME=${sq(info.displayName)}`,
-      `BRANCH=${sq(info.branch || '')}`,
-      `WORKDIR=${sq(info.workdir)}`,
-      `PENDING=${sq(pendingPath)}`,
-      'LOCKDIR="${PENDING}.lock"',
-      '',
-      '# Only Hydra-armed copilot messages should notify on completion.',
-      '[ -f "$PENDING" ] || exit 0',
-      'if ! mkdir "$LOCKDIR" 2>/dev/null; then',
-      '  exit 0',
-      'fi',
-      'cleanup() { rm -rf "$LOCKDIR"; }',
-      'trap cleanup EXIT HUP INT TERM',
-      '[ -f "$PENDING" ] || exit 0',
-      '',
-      'TOKEN=$(cat "$PENDING" 2>/dev/null | tr -d \'\\r\\n\')',
-      '[ -n "$TOKEN" ] || TOKEN=legacy',
-      'DEDUPE="completion:${SESSION}:${TOKEN}"',
-      title,
-      body,
-      'MSG="$BODY"',
-      '',
-      '# Create structured notification data first. This is best-effort and',
-      '# remains idempotent across repeated hook attempts for the same pending token.',
-      'HYDRA_CLI=$(command -v hydra 2>/dev/null || true)',
-      '[ -n "$HYDRA_CLI" ] || HYDRA_CLI="$HOME/.hydra/bin/hydra"',
-      'if [ -x "$HYDRA_CLI" ]; then',
-      '  "$HYDRA_CLI" notify create \\',
-      '    --session "$COPILOT" \\',
-      '    --from "$SESSION" \\',
-      '    --kind complete \\',
-      '    --title "$TITLE" \\',
-      '    --body "$BODY" \\',
-      '    --dedupe-key "$DEDUPE" \\',
-      '    --action open-session \\',
-      '    --action-session "$SESSION" \\',
-      '    --worker-id "$WORKER_ID" \\',
-      '    --branch "$BRANCH" \\',
-      '    --workdir "$WORKDIR" \\',
-      '    --event-source hook \\',
-      '    --json >/dev/null 2>&1 || true',
-      'fi',
-      '',
-      '# Resolve tmux command (honors HYDRA_TMUX_SOCKET if set)',
-      't=tmux',
-      'if [ -n "$HYDRA_TMUX_SOCKET" ]; then',
-      '  case "$HYDRA_TMUX_SOCKET" in',
-      '    /*|./*|../*) t="tmux -S $HYDRA_TMUX_SOCKET" ;;',
-      '    *) t="tmux -L $HYDRA_TMUX_SOCKET" ;;',
-      '  esac',
-      'fi',
-      '',
-      '# Only notify if copilot session still exists',
-      '$t has-session -t "$COPILOT" 2>/dev/null || exit 0',
-      '',
-      '# Use load-buffer/paste-buffer to avoid the Enter-swallow issue (see PR #122)',
-      'f=$(mktemp) || exit 0',
-      'printf \'%s\' "$MSG" > "$f"',
-      'b="hydra-$$"',
-      'if $t load-buffer -b "$b" "$f" 2>/dev/null \\',
-      '  && $t paste-buffer -b "$b" -t "$COPILOT" -d 2>/dev/null \\',
-      '  && sleep 0.1 \\',
-      '  && $t send-keys -t "$COPILOT" Enter 2>/dev/null; then',
-      '  rm -f "$PENDING"',
-      'fi',
-      'rm -f "$f"',
-    ].join('\n') + '\n';
-  }
-
-  // Windows variant of buildNotifyScript. Same control flow as the sh version
-  // (early-out on missing PENDING marker, atomic mkdir-lock, has-session probe,
-  // load-buffer/paste-buffer/send-keys Enter, consume the PENDING marker on
-  // success) but expressed in PowerShell so it actually runs on Windows. See
-  // issue #225 §3.
-  private buildNotifyScriptPowerShell(info: WorkerNotificationInfo): string {
-    const pendingPath = this.getNotifyPendingPath(info.sessionName);
-    // PowerShell single-quoted string: no expansion, internal single quotes
-    // are escaped by doubling.
-    const psq = (s: string) => `'${s.replace(/'/g, "''")}'`;
-
-    // PowerShell expands $WORKER_ID etc. inside double-quoted strings. Use
-    // straight single quotes around the worker subcommand instead of backticks
-    // — backticks are PS's escape character and would need awkward doubling.
-    const title = info.source === 'directory'
-      ? '$TITLE = "Task worker #$WORKER_ID completed"'
-      : '$TITLE = "Worker #$WORKER_ID completed"';
-    const body = info.source === 'directory'
-      ? `$BODY = "Task worker #$WORKER_ID ($NAME) has completed. Workdir: $WORKDIR. Use 'hydra worker logs $SESSION' to review output."`
-      : `$BODY = "Worker #$WORKER_ID ($NAME) has completed. Branch: $BRANCH. Use 'hydra worker logs $SESSION' to review output."`;
-
-    return [
-      '# Auto-generated by Hydra: parent copilot completion notification.',
-      "$ErrorActionPreference = 'SilentlyContinue'",
-      '',
-      `$COPILOT = ${psq(info.copilotSessionName)}`,
-      `$SESSION = ${psq(info.sessionName)}`,
-      `$WORKER_ID = ${psq(String(info.workerId))}`,
-      `$NAME = ${psq(info.displayName)}`,
-      `$BRANCH = ${psq(info.branch || '')}`,
-      `$WORKDIR = ${psq(info.workdir)}`,
-      `$PENDING = ${psq(pendingPath)}`,
-      '$LOCKDIR = "$PENDING.lock"',
-      '',
-      '# Only Hydra-armed copilot messages should notify on completion.',
-      'if (-not (Test-Path -LiteralPath $PENDING)) { exit 0 }',
-      '',
-      '# Atomic lock via directory creation. Stop on failure so we exit cleanly.',
-      'try { [void](New-Item -ItemType Directory -Path $LOCKDIR -ErrorAction Stop) } catch { exit 0 }',
-      '',
-      'try {',
-      '  if (-not (Test-Path -LiteralPath $PENDING)) { exit 0 }',
-      '',
-      '  $TOKEN = (Get-Content -LiteralPath $PENDING -Raw -ErrorAction SilentlyContinue).Trim()',
-      "  if (-not $TOKEN) { $TOKEN = 'legacy' }",
-      '  $DEDUPE = "completion:${SESSION}:$TOKEN"',
-      `  ${title}`,
-      `  ${body}`,
-      '  $MSG = $BODY',
-      '',
-      '  # Create structured notification data first. This is best-effort and',
-      '  # remains idempotent across repeated hook attempts for the same pending token.',
-      '  $hydra = Get-Command hydra -ErrorAction SilentlyContinue',
-      '  $hydraPath = if ($hydra) { $hydra.Source } else { $null }',
-      '  if (-not $hydraPath) {',
-      "    foreach ($candidate in @((Join-Path $HOME '.hydra\\bin\\hydra.cmd'), (Join-Path $HOME '.hydra\\bin\\hydra.ps1'), (Join-Path $HOME '.hydra\\bin\\hydra'))) {",
-      '      if (Test-Path -LiteralPath $candidate) { $hydraPath = $candidate; break }',
-      '    }',
-      '  }',
-      '  if ($hydraPath) {',
-      '    & $hydraPath notify create --session $COPILOT --from $SESSION --kind complete --title $TITLE --body $BODY --dedupe-key $DEDUPE --action open-session --action-session $SESSION --worker-id $WORKER_ID --branch $BRANCH --workdir $WORKDIR --event-source hook --json *> $null',
-      '  }',
-      '',
-      '  # Resolve psmux command (honors HYDRA_TMUX_SOCKET if set).',
-      "  $tmuxBin = 'psmux'",
-      '  $tmuxArgs = @()',
-      '  $sock = $env:HYDRA_TMUX_SOCKET',
-      '  if ($sock) {',
-      "    if ($sock -match '^([\\\\/]|[A-Za-z]:[\\\\/])') { $tmuxArgs = @('-S', $sock) }",
-      "    else { $tmuxArgs = @('-L', $sock) }",
-      '  }',
-      '',
-      '  # Only notify if copilot session still exists.',
-      '  & $tmuxBin @tmuxArgs has-session -t $COPILOT 2>$null',
-      '  if ($LASTEXITCODE -ne 0) { exit 0 }',
-      '',
-      '  # Use load-buffer/paste-buffer to avoid the Enter-swallow issue (see PR #122).',
-      '  $f = [System.IO.Path]::GetTempFileName()',
-      '  $b = "hydra-$PID"',
-      '  try {',
-      '    [System.IO.File]::WriteAllText($f, $MSG)',
-      '    & $tmuxBin @tmuxArgs load-buffer -b $b $f 2>$null',
-      '    if ($LASTEXITCODE -eq 0) {',
-      '      & $tmuxBin @tmuxArgs paste-buffer -b $b -t $COPILOT -d 2>$null',
-      '      if ($LASTEXITCODE -eq 0) {',
-      '        Start-Sleep -Milliseconds 100',
-      '        & $tmuxBin @tmuxArgs send-keys -t $COPILOT Enter 2>$null',
-      '        if ($LASTEXITCODE -eq 0) {',
-      '          Remove-Item -LiteralPath $PENDING -Force -ErrorAction SilentlyContinue',
-      '        }',
-      '      }',
-      '    }',
-      '  } finally {',
-      '    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue',
-      '  }',
-      '} finally {',
-      '  Remove-Item -LiteralPath $LOCKDIR -Recurse -Force -ErrorAction SilentlyContinue',
-      '}',
-    ].join('\r\n') + '\r\n';
-  }
-
-  private getNotifyPendingPath(sessionName: string): string {
-    return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.pending`);
-  }
-
-  // Resolve the on-disk path of the completion-notification script for a
-  // session. Single source of truth so the file actually written by
-  // injectCompletionHook (.ps1 on Windows, .sh elsewhere) and the path
-  // embedded in Codex's inline hook override always agree. See issue #225 §3
-  // (codex review round 1).
-  private getNotifyScriptPath(sessionName: string): string {
-    const ext = process.platform === 'win32' ? 'ps1' : 'sh';
-    return path.join(getHydraHome(), 'hooks', `notify-${sessionName}.${ext}`);
   }
 
   // Prefix a command with an inline `HYDRA_COPILOT_SESSION=<value>` assignment
@@ -3343,19 +3117,11 @@ export class SessionManager {
     agentCommand: string,
     task?: string,
     savedWorkerMatch?: SavedWorkerMatch,
-    copilotSessionName?: string,
-    notifyCopilot = false,
     resumeSessionFile?: string | null,
   ): Promise<CreateWorkerResult> {
     const savedWorker = savedWorkerMatch?.worker;
     const slug = savedWorker?.slug || coreGit.branchNameToSlug(branchName, this.backend);
     const sessionName = savedWorker?.sessionName || this.backend.buildSessionName(repoSessionNamespace, slug);
-    const existingWorkerState = this.readSessionState().workers[sessionName] || savedWorker;
-    const shouldNotifyCopilot = agentSupportsCompletionNotification(agentType) &&
-      notifyCopilot &&
-      !!copilotSessionName &&
-      !!task &&
-      existingWorkerState?.copilotSessionName === copilotSessionName;
 
     const isRunning = await this.backend.hasSession(sessionName);
     if (isRunning) {
@@ -3369,8 +3135,6 @@ export class SessionManager {
           throw new Error(`Branch "${branchName}" exists but saved worker identity was not found for "${sessionName}".`);
         }
       }
-
-      await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
 
       const workdir = sessionWorkdir || savedWorker?.workdir || '';
       const agent = await this.backend.getSessionAgent(sessionName) || agentType;
@@ -3415,11 +3179,12 @@ export class SessionManager {
         resumed: true,
         alreadyRunning: true,
       });
-      this.updateWorkerRuntimeState(workerInfo, 'running', task ? 'worker-started-with-task' : 'worker-started');
-
       return {
         workerInfo,
         postCreatePromise: this.withPostCreateTimeout(Promise.resolve(), sessionName, 'worker startup'),
+        deliverInitialPrompt: task
+          ? () => this.sendInitialPrompt(sessionName, task)
+          : undefined,
       };
     }
 
@@ -3475,7 +3240,6 @@ export class SessionManager {
         // Skip Phase 1 (sessionId already known). Phase 2 only: send task if provided.
         postCreatePromise = (async () => {
           await this.waitForAgentReady(sessionName, agentType);
-          await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
         })();
       } else {
         // ── Fresh start: Phase 1 (capture sessionId) → Phase 2 (send task) ──
@@ -3499,7 +3263,6 @@ export class SessionManager {
             worktreePath,
             launchStartedAt,
           );
-          await this.sendInitialPrompt(sessionName, task, shouldNotifyCopilot);
         })();
       }
 
@@ -3542,11 +3305,12 @@ export class SessionManager {
         resumed: canResume,
         alreadyRunning: false,
       });
-      this.updateWorkerRuntimeState(workerInfo, 'running', task ? 'worker-started-with-task' : 'worker-started');
-
       return {
         workerInfo,
         postCreatePromise: this.withPostCreateTimeout(postCreatePromise, sessionName, 'worker startup'),
+        deliverInitialPrompt: task
+          ? () => this.sendInitialPrompt(sessionName, task)
+          : undefined,
       };
     }
 

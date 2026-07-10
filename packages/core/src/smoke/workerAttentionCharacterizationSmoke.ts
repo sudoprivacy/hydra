@@ -16,6 +16,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ArchiveStore } from '../core/archiveStore';
+import { CompletionJobStore } from '../core/completionJobStore';
 import { DiffService } from '../core/diff';
 import { EventLog } from '../core/events';
 import { NotificationStateService } from '../core/notificationStateService';
@@ -65,7 +66,7 @@ const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'stale-notification-runtime-rollback': 'fixed',
   'event-only-notification-clear': 'fixed',
   'codex-turn-aborted-resolution': 'known-failure',
-  'completion-pending-overwrite': 'known-failure',
+  'completion-pending-overwrite': 'fixed',
   'diff-symlink-escape': 'fixed',
   'foreign-tmux-stop': 'fixed',
   'archive-concurrent-update': 'fixed',
@@ -297,16 +298,13 @@ async function characterizeCodexTurnAbortedResolution(): Promise<ScenarioResult>
 
 async function characterizeCompletionPendingOverwrite(): Promise<ScenarioResult> {
   return withContext('hydra-characterize-pending-', (ctx) => {
-    const sessionName = 'worker-pending-overwrite';
-    const manager = new SessionManager(new RecordingBackend());
-    const pendingPath = path.join(ctx.hydraHome, 'hooks', `notify-${sessionName}.pending`);
-    manager.armCompletionNotification(sessionName);
-    const firstToken = fs.readFileSync(pendingPath, 'utf-8').trim();
-    manager.armCompletionNotification(sessionName);
-    const secondToken = fs.readFileSync(pendingPath, 'utf-8').trim();
+    const store = new CompletionJobStore(path.join(ctx.hydraHome, 'completion-jobs.json'));
+    const input = { workerId: 7, lifecycleEpoch: 'epoch-pending', runId: 'run-pending' };
+    const first = store.armForDispatch(input, { runtimeActive: true, runtimeRunId: input.runId });
+    const second = store.armForDispatch(input, { runtimeActive: true, runtimeRunId: input.runId });
     return {
-      fixed: firstToken === secondToken,
-      detail: `first=${firstToken} second=${secondToken} markerCount=1`,
+      fixed: first.job.jobId === second.job.jobId && store.list('pending').length === 1,
+      detail: `first=${first.job.jobId} second=${second.job.jobId} pending=${store.list('pending').length}`,
     };
   });
 }

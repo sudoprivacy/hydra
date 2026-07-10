@@ -214,6 +214,7 @@ async function main(): Promise<void> {
   const agentConfig = await import('../core/agentConfig');
   const coreGit = await import('../core/git') as unknown as Record<string, unknown>;
   const { SessionManager } = await import('../core/sessionManager');
+  const { WorkerLifecycleService } = await import('../core/workerLifecycleService');
 
   const launchCommand = agentConfig.buildAgentLaunchCommand('codex', 'codex');
   assert.equal(launchCommand, `codex ${BYPASS_FLAGS}`);
@@ -522,10 +523,13 @@ async function main(): Promise<void> {
       await result.postCreatePromise;
 
       const command = lastSendKeysFor(backend, 'worker-restored');
-      assert.equal(
-        command,
-        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
-      );
+      assert.ok(command.startsWith(`${smokeCodexCommand} -c `), 'restored worker should enable structured hooks');
+      assert.ok(command.includes('features.hooks=true'));
+      assert.ok(command.includes('completion-worker-2.sh'));
+      assert.ok(command.includes(BYPASS_FLAGS));
+      assert.ok(command.endsWith(
+        `resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
+      ));
       assert.equal(result.workerInfo.sessionName, 'worker-restored');
       assert.equal(result.workerInfo.sessionId, '44444444-4444-4444-8444-444444444444');
       assert.ok(
@@ -605,8 +609,9 @@ async function main(): Promise<void> {
       backend.paneOutputs.set('repo-ns_foo-bar-2', '⏵');
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'foo/bar',
         agentType: 'codex',
@@ -683,11 +688,13 @@ async function main(): Promise<void> {
     try {
       const backend = new FakeBackend();
       await backend.createSession('repo-ns_live-branch', liveWorktree);
+      await backend.setSessionRole('repo-ns_live-branch', 'worker');
       await backend.setSessionAgent('repo-ns_live-branch', 'codex');
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'live/branch',
         agentType: 'codex',
@@ -775,8 +782,9 @@ async function main(): Promise<void> {
       );
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'foo/bar',
         agentType: 'codex',

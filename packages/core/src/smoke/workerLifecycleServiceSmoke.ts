@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { CompletionJobStore } from '../core/completionJobStore';
 import { EventLog } from '../core/events';
 import { NotificationStore } from '../core/notifications';
 import {
@@ -26,6 +27,7 @@ import type {
 } from '../core/types';
 import { WorkerLifecycleService } from '../core/workerLifecycleService';
 import { WorkerRuntimeStateStore } from '../core/workerRuntimeState';
+import { WorkerRuntimeStateStoreV2 } from '../core/workerRuntimeV2';
 
 interface TestContext {
   root: string;
@@ -35,6 +37,8 @@ interface TestContext {
   eventLog: EventLog;
   notificationStore: NotificationStore;
   runtimeStateStore: WorkerRuntimeStateStore;
+  runtimeV2Store: WorkerRuntimeStateStoreV2;
+  jobStore: CompletionJobStore;
 }
 
 type OperationError =
@@ -82,19 +86,27 @@ class RecordingBackend implements MultiplexerBackendCore {
   sanitizeSessionName(name: string): string { return name; }
 }
 
+class FailingCompletionJobStore extends CompletionJobStore {
+  override cancelJob(): ReturnType<CompletionJobStore['cancelJob']> {
+    throw new Error('completion cleanup failure');
+  }
+
+  override cancelPending(): ReturnType<CompletionJobStore['cancelPending']> {
+    throw new Error('completion cleanup failure');
+  }
+}
+
 class FakeSessionManager extends SessionManager {
   readonly workers = new Map<string, WorkerInfo>();
   readonly archived = new Map<string, ArchivedSessionInfo>();
-  readonly pending = new Set<string>();
-  readonly armCalls: string[] = [];
-  readonly cancelCalls: string[] = [];
   readonly stopCalls: string[] = [];
   readonly deleteCalls: Array<{ sessionName: string; options: DeleteWorkerOpts }> = [];
   readonly renameCalls: Array<{ sessionName: string; branch: string }> = [];
   liveLookupCalls = 0;
   ownershipError: Error | null = null;
-  cancelError: Error | null = null;
   postCreateError: Error | null = null;
+  postCreateGate: Promise<void> | null = null;
+  deliverInitialPrompt: (() => Promise<void>) | undefined;
   operationErrors = new Map<OperationError, Error>();
 
   constructor(backend: MultiplexerBackendCore, workers: WorkerInfo[]) {
@@ -148,21 +160,6 @@ class FakeSessionManager extends SessionManager {
       throw new Error(`Refusing to control unknown Hydra worker "${sessionName}"`);
     }
     return { kind: 'worker', live: true };
-  }
-
-  override armCompletionNotification(sessionName: string): boolean {
-    this.armCalls.push(sessionName);
-    const created = !this.pending.has(sessionName);
-    this.pending.add(sessionName);
-    return created;
-  }
-
-  override cancelCompletionNotification(sessionName: string): boolean {
-    this.cancelCalls.push(sessionName);
-    if (this.cancelError) {
-      throw this.cancelError;
-    }
-    return this.pending.delete(sessionName);
   }
 
   override async createWorker(): Promise<CreateWorkerResult> {
@@ -220,7 +217,8 @@ class FakeSessionManager extends SessionManager {
       workerInfo,
       postCreatePromise: this.postCreateError
         ? Promise.reject(this.postCreateError)
-        : Promise.resolve(),
+        : this.postCreateGate ?? Promise.resolve(),
+      deliverInitialPrompt: this.deliverInitialPrompt,
     };
   }
 
@@ -263,13 +261,30 @@ function createContext(): TestContext {
     path.join(hydraHome, 'worker-runtime-state.json'),
     eventLog,
   );
+  const runtimeV2Store = new WorkerRuntimeStateStoreV2(
+    path.join(hydraHome, 'worker-runtime-state-v2.json'),
+  );
   const notificationStore = new NotificationStore(
     path.join(hydraHome, 'notifications.json'),
     1000,
     eventLog,
     runtimeStateStore,
+    Date.now,
+    undefined,
+    runtimeV2Store,
   );
-  return { root, home, hydraHome, configPath, eventLog, notificationStore, runtimeStateStore };
+  const jobStore = new CompletionJobStore(path.join(hydraHome, 'completion-jobs.json'));
+  return {
+    root,
+    home,
+    hydraHome,
+    configPath,
+    eventLog,
+    notificationStore,
+    runtimeStateStore,
+    runtimeV2Store,
+    jobStore,
+  };
 }
 
 async function withContext<T>(fn: (ctx: TestContext) => Promise<T>): Promise<T> {
@@ -332,12 +347,16 @@ function createService(
   ctx: TestContext,
   backend: MultiplexerBackendCore,
   sessionManager: SessionManager,
+  jobStore: CompletionJobStore = ctx.jobStore,
 ): WorkerLifecycleService {
   return new WorkerLifecycleService({
     backend,
     sessionManager,
     notificationStore: ctx.notificationStore,
     runtimeStateStore: ctx.runtimeStateStore,
+    runtimeV2Store: ctx.runtimeV2Store,
+    completionJobStore: jobStore,
+    eventLog: ctx.eventLog,
     eventSource: 'cli',
   });
 }
@@ -373,7 +392,7 @@ async function testPostCreateErrorsPublishOnce(): Promise<void> {
 
 async function testSendOrderingAndCompletionIntent(): Promise<void> {
   await withContext(async (ctx) => {
-    const worker = createWorker(11, 'worker-send-order');
+    const worker = createWorker(11, 'worker-send-order', { copilotSessionName: null });
     const backend = new RecordingBackend();
     const manager = new FakeSessionManager(backend, [worker]);
     const service = createService(ctx, backend, manager);
@@ -381,19 +400,68 @@ async function testSendOrderingAndCompletionIntent(): Promise<void> {
     backend.onSend = (sessionName) => {
       assert.equal(sessionName, worker.sessionName);
       assert.equal(ctx.runtimeStateStore.get(worker.sessionName)?.state, 'running');
-      assert.deepEqual(manager.armCalls, [worker.sessionName]);
+      assert.equal(ctx.jobStore.getPending(worker.workerId)?.status, 'pending');
     };
 
-    const result = await service.sendWorkerMessage(worker.workerId, 'Implement the change', {
-      actorSessionName: worker.copilotSessionName,
-    });
+    const result = await service.sendWorkerMessage(worker.workerId, 'Implement the change');
 
     assert.equal(result.worker.sessionName, worker.sessionName);
     assert.equal(result.completionArmed, true);
     assert.equal(manager.liveLookupCalls, 0, 'persisted worker lookup must not reconcile away mutation targets');
-    assert.equal(manager.pending.has(worker.sessionName), true);
+    assert.equal(ctx.jobStore.getPending(worker.workerId)?.status, 'pending');
     assert.deepEqual(backend.sent, [{ sessionName: worker.sessionName, message: 'Implement the change' }]);
     assert.equal(ctx.runtimeStateStore.get(worker.sessionName)?.reason, 'worker-send');
+  });
+}
+
+async function testInitialPromptArmsOnlyAfterReadiness(): Promise<void> {
+  await withContext(async (ctx) => {
+    const worker = createWorker(12, 'worker-initial-order', { copilotSessionName: null });
+    const backend = new RecordingBackend();
+    const manager = new FakeSessionManager(backend, [worker]);
+    let releaseReadiness: (() => void) | undefined;
+    manager.postCreateGate = new Promise<void>((resolve) => {
+      releaseReadiness = resolve;
+    });
+    backend.onSend = () => {
+      assert.equal(ctx.jobStore.getPending(worker.workerId)?.status, 'pending');
+      assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'running');
+    };
+    manager.deliverInitialPrompt = () => backend.sendMessage(worker.sessionName, 'initial task');
+    const service = createService(ctx, backend, manager);
+    const result = await service.createWorker({
+      repoRoot: '/tmp/hydra',
+      branchName: 'feat/initial-order',
+      task: 'initial task',
+    });
+
+    assert.equal(ctx.jobStore.getPending(worker.workerId), undefined);
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId), undefined);
+    releaseReadiness?.();
+    await result.postCreatePromise;
+    assert.equal(ctx.jobStore.getPending(worker.workerId)?.status, 'pending');
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'running');
+    assert.deepEqual(backend.sent, [{ sessionName: worker.sessionName, message: 'initial task' }]);
+  });
+}
+
+async function testUnavailableHookDoesNotBlockDelivery(): Promise<void> {
+  await withContext(async (ctx) => {
+    const workdir = path.join(ctx.root, 'malformed-hook-worker');
+    const hooksPath = path.join(workdir, '.codex', 'hooks.json');
+    fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+    fs.writeFileSync(hooksPath, '{"hooks":[', 'utf-8');
+    const worker = createWorker(13, 'worker-hook-unavailable', { workdir });
+    const backend = new RecordingBackend();
+    const manager = new FakeSessionManager(backend, [worker]);
+    const service = createService(ctx, backend, manager);
+
+    const result = await service.sendWorkerMessage(worker.sessionName, 'deliver anyway');
+    assert.equal(result.completionArmed, false);
+    assert.equal(ctx.jobStore.getPending(worker.workerId), undefined);
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'running');
+    assert.deepEqual(backend.sent, [{ sessionName: worker.sessionName, message: 'deliver anyway' }]);
+    assert.equal(fs.readFileSync(hooksPath, 'utf-8'), '{"hooks":[');
   });
 }
 
@@ -402,10 +470,13 @@ async function testDeliveryFailureCleanup(): Promise<void> {
     const newWorker = createWorker(21, 'worker-delivery-new');
     const existingWorker = createWorker(22, 'worker-delivery-existing');
     const backend = new RecordingBackend();
-    backend.sendError = new Error('simulated backend delivery failure');
     const manager = new FakeSessionManager(backend, [newWorker, existingWorker]);
-    manager.pending.add(existingWorker.sessionName);
     const service = createService(ctx, backend, manager);
+
+    await service.sendWorkerMessage(existingWorker.sessionName, 'prime existing run');
+    const existingJob = ctx.jobStore.getPending(existingWorker.workerId);
+    assert.ok(existingJob);
+    backend.sendError = new Error('simulated backend delivery failure');
 
     await assert.rejects(
       service.sendWorkerMessage(newWorker.sessionName, 'new run', {
@@ -413,8 +484,11 @@ async function testDeliveryFailureCleanup(): Promise<void> {
       }),
       /simulated backend delivery failure/,
     );
-    assert.equal(manager.pending.has(newWorker.sessionName), false);
-    assert.deepEqual(manager.cancelCalls, [newWorker.sessionName]);
+    assert.equal(ctx.jobStore.getPending(newWorker.workerId), undefined);
+    assert.equal(
+      ctx.jobStore.list().find(job => job.workerId === newWorker.workerId)?.status,
+      'cancelled',
+    );
     assert.equal(ctx.runtimeStateStore.get(newWorker.sessionName)?.state, 'error');
     const created = ctx.notificationStore.list({ sourceSession: newWorker.sessionName }).notifications;
     assert.equal(created.length, 1);
@@ -426,12 +500,7 @@ async function testDeliveryFailureCleanup(): Promise<void> {
       }),
       /simulated backend delivery failure/,
     );
-    assert.equal(manager.pending.has(existingWorker.sessionName), true);
-    assert.deepEqual(
-      manager.cancelCalls,
-      [newWorker.sessionName],
-      'delivery failure must not cancel completion intent that predated this send',
-    );
+    assert.equal(ctx.jobStore.getPending(existingWorker.workerId)?.jobId, existingJob.jobId);
   });
 }
 
@@ -446,14 +515,19 @@ async function testStopDeleteAndBroadcast(): Promise<void> {
       backend,
       [stoppedWorker, deletedWorker, broadcastWorker, ignoredWorker],
     );
-    manager.pending.add(stoppedWorker.sessionName);
-    manager.pending.add(deletedWorker.sessionName);
     const service = createService(ctx, backend, manager);
+
+    await service.sendWorkerMessage(stoppedWorker.sessionName, 'prime stop');
+    await service.sendWorkerMessage(deletedWorker.sessionName, 'prime delete');
+    assert.ok(ctx.jobStore.getPending(stoppedWorker.workerId));
+    assert.ok(ctx.jobStore.getPending(deletedWorker.workerId));
 
     await service.stopWorker(stoppedWorker.sessionName);
     await service.deleteWorker(deletedWorker.workerId, { deleteFiles: true });
-    assert.equal(manager.pending.has(stoppedWorker.sessionName), false);
-    assert.equal(manager.pending.has(deletedWorker.sessionName), false);
+    assert.equal(ctx.jobStore.getPending(stoppedWorker.workerId), undefined);
+    assert.equal(ctx.jobStore.getPending(deletedWorker.workerId), undefined);
+    assert.equal(ctx.runtimeV2Store.get(stoppedWorker.workerId), undefined);
+    assert.equal(ctx.runtimeV2Store.get(deletedWorker.workerId), undefined);
     assert.deepEqual(manager.stopCalls, [stoppedWorker.sessionName]);
     assert.deepEqual(manager.deleteCalls, [{
       sessionName: deletedWorker.sessionName,
@@ -481,8 +555,10 @@ async function testCleanupFailureDoesNotMaskLifecycleOutcome(): Promise<void> {
     const backend = new RecordingBackend();
     backend.sendError = new Error('original delivery failure');
     const manager = new FakeSessionManager(backend, [worker]);
-    manager.cancelError = new Error('completion cleanup failure');
-    const service = createService(ctx, backend, manager);
+    const failingJobStore = new FailingCompletionJobStore(
+      path.join(ctx.hydraHome, 'completion-jobs.json'),
+    );
+    const service = createService(ctx, backend, manager, failingJobStore);
 
     await assert.rejects(
       service.sendWorkerMessage(worker.sessionName, 'message', {
@@ -494,7 +570,6 @@ async function testCleanupFailureDoesNotMaskLifecycleOutcome(): Promise<void> {
     assert.equal(ctx.notificationStore.list({ sourceSession: worker.sessionName }).count, 1);
 
     backend.sendError = null;
-    manager.pending.add(worker.sessionName);
     await service.stopWorker(worker.sessionName);
     assert.deepEqual(manager.stopCalls, [worker.sessionName]);
   });
@@ -570,6 +645,8 @@ async function testLifecycleErrorTitles(): Promise<void> {
 async function main(): Promise<void> {
   await testPostCreateErrorsPublishOnce();
   await testSendOrderingAndCompletionIntent();
+  await testInitialPromptArmsOnlyAfterReadiness();
+  await testUnavailableHookDoesNotBlockDelivery();
   await testDeliveryFailureCleanup();
   await testStopDeleteAndBroadcast();
   await testCleanupFailureDoesNotMaskLifecycleOutcome();

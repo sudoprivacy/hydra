@@ -141,6 +141,7 @@ export class HydraAppService implements HydraAppServiceApi {
       sessionManager: this.sessionManager,
       notificationStore: this.notificationStore,
       runtimeStateStore: this.runtimeStateStore,
+      eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
     });
   }
