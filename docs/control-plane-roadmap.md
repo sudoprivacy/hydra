@@ -3,6 +3,12 @@
 This roadmap records the order for building cmux-inspired control-plane
 capabilities in Hydra without turning Hydra into a terminal/runtime app.
 
+> **Implementation contract:** The notification, worker-runtime, completion,
+> needs-input, and attention-inbox re-architecture is governed by
+> [`worker-attention-control-plane-plan.md`](./worker-attention-control-plane-plan.md).
+> That document freezes semantics, pull-request boundaries, migration, and
+> acceptance gates for the implementation.
+
 ## Core Judgment
 
 Hydra should first convert worker signals from terminal input into structured
