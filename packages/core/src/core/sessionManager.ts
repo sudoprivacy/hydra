@@ -19,6 +19,7 @@ import {
   WorkerRuntimeStateStore,
   type WorkerRuntimeState,
 } from './workerRuntimeState';
+import { ArchiveStore, type ArchiveStoreState } from './archiveStore';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -181,8 +182,18 @@ export interface ArchivedSessionInfo {
   data: WorkerInfo | CopilotInfo;
 }
 
-export interface ArchiveState {
-  entries: ArchivedSessionInfo[];
+export type ArchiveState = ArchiveStoreState<ArchivedSessionInfo>;
+
+function isArchivedSessionInfo(value: unknown): value is ArchivedSessionInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entry = value as Partial<ArchivedSessionInfo>;
+  if (entry.type !== 'worker' && entry.type !== 'copilot') return false;
+  if (typeof entry.sessionName !== 'string' || !entry.sessionName) return false;
+  if (entry.agentSessionId !== null && typeof entry.agentSessionId !== 'string') return false;
+  if (entry.agentSessionFile !== undefined && entry.agentSessionFile !== null && typeof entry.agentSessionFile !== 'string') return false;
+  if (typeof entry.archivedAt !== 'string' || !Number.isFinite(Date.parse(entry.archivedAt))) return false;
+  if (!entry.data || typeof entry.data !== 'object' || Array.isArray(entry.data)) return false;
+  return entry.data.sessionName === entry.sessionName;
 }
 
 interface SavedWorkerMatch {
@@ -347,6 +358,10 @@ export class SessionManager {
     private backend: MultiplexerBackendCore,
     private readonly eventLog: EventLog = new EventLog(),
     private readonly runtimeStateStore: WorkerRuntimeStateStore = new WorkerRuntimeStateStore(undefined, eventLog),
+    private readonly archiveStore: ArchiveStore<ArchivedSessionInfo> = new ArchiveStore(
+      getHydraArchiveFile(),
+      isArchivedSessionInfo,
+    ),
   ) {}
 
   // ── Sync: reconcile sessions.json <-> live multiplexer ──
@@ -1692,11 +1707,11 @@ export class SessionManager {
   // ── Archive ──
 
   listArchived(): ArchivedSessionInfo[] {
-    return this.readArchiveState().entries;
+    return this.archiveStore.list();
   }
 
   getArchivedAll(sessionName: string): ArchivedSessionInfo[] {
-    return this.readArchiveState().entries.filter(e => e.sessionName === sessionName);
+    return this.archiveStore.list().filter(e => e.sessionName === sessionName);
   }
 
   getArchived(sessionName: string): ArchivedSessionInfo | undefined {
@@ -1705,7 +1720,7 @@ export class SessionManager {
   }
 
   listArchivedLatest(): ArchivedSessionInfo[] {
-    const entries = this.readArchiveState().entries;
+    const entries = this.archiveStore.list();
     const latest = new Map<string, ArchivedSessionInfo>();
     for (const entry of entries) {
       latest.set(entry.sessionName, entry);
@@ -2036,8 +2051,7 @@ export class SessionManager {
     agentSessionId: string | null,
     data: WorkerInfo | CopilotInfo,
   ): void {
-    const archive = this.readArchiveState();
-    archive.entries.push({
+    this.archiveStore.append({
       type,
       sessionName,
       agentSessionId,
@@ -2045,7 +2059,6 @@ export class SessionManager {
       archivedAt: new Date().toISOString(),
       data: { ...data },
     });
-    this.writeArchiveState(archive);
     logger.info('session.archive', 'Archived session metadata', {
       type,
       sessionName,
@@ -2080,25 +2093,6 @@ export class SessionManager {
     } catch {
       return { ...data, agentSessionFile: sessionFile };
     }
-  }
-
-  private readArchiveState(): ArchiveState {
-    const archiveFile = getHydraArchiveFile();
-    try {
-      if (fs.existsSync(archiveFile)) {
-        const raw = fs.readFileSync(archiveFile, 'utf-8');
-        const parsed = JSON.parse(raw);
-        return { entries: parsed.entries || [] };
-      }
-    } catch {
-      // Corrupted file — start fresh
-    }
-    return { entries: [] };
-  }
-
-  private writeArchiveState(archive: ArchiveState): void {
-    const archiveFile = getHydraArchiveFile();
-    this.writeJsonAtomically(archiveFile, JSON.stringify(archive, null, 2));
   }
 
   private readSessionState(): SessionState {
@@ -3484,7 +3478,7 @@ export class SessionManager {
     if (!options?.includeArchive) return undefined;
 
     let latestArchived: ArchivedSessionInfo | undefined;
-    for (const entry of this.readArchiveState().entries) {
+    for (const entry of this.archiveStore.list()) {
       if (entry.type !== 'worker') continue;
       const worker = entry.data as WorkerInfo;
       if (!this.workerMatchesRepoBranch(worker, repoRoot, branchName)) continue;

@@ -15,6 +15,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { ArchiveStore } from '../core/archiveStore';
 import { DiffService } from '../core/diff';
 import { EventLog } from '../core/events';
 import { NotificationStateService } from '../core/notificationStateService';
@@ -60,11 +61,6 @@ interface TestContext {
   configPath: string;
 }
 
-interface ArchiveInternals {
-  readArchiveState(): ArchiveState;
-  writeArchiveState(state: ArchiveState): void;
-}
-
 const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'stale-notification-runtime-rollback': 'fixed',
   'event-only-notification-clear': 'fixed',
@@ -72,7 +68,7 @@ const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'completion-pending-overwrite': 'known-failure',
   'diff-symlink-escape': 'fixed',
   'foreign-tmux-stop': 'fixed',
-  'archive-concurrent-update': 'known-failure',
+  'archive-concurrent-update': 'fixed',
 };
 
 class RecordingBackend implements MultiplexerBackendCore {
@@ -408,15 +404,16 @@ async function characterizeArchiveConcurrentUpdate(): Promise<ScenarioResult> {
 }
 
 function runArchiveWriterChild(id: string, barrierDir: string): void {
-  const manager = new SessionManager(new RecordingBackend());
-  const internals = manager as unknown as ArchiveInternals;
-  const archive = internals.readArchiveState();
+  const archiveFile = path.join(process.env.HYDRA_HOME ?? '', 'archive.json');
+  const store = new ArchiveStore<ArchivedSessionInfo>(archiveFile);
   fs.writeFileSync(path.join(barrierDir, `ready-${id}`), 'ready', 'utf-8');
   while (!fs.existsSync(path.join(barrierDir, 'go'))) {
     sleepSync(10);
   }
-  archive.entries.push(createArchiveEntry(id));
-  internals.writeArchiveState(archive);
+  store.update(archive => {
+    archive.entries.push(createArchiveEntry(id));
+    sleepSync(50);
+  });
 }
 
 function createArchiveEntry(id: string): ArchivedSessionInfo {
