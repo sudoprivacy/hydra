@@ -26,8 +26,18 @@ import {
 import {
   buildCompletionHookScript,
   getCompletionHookScriptPath,
+  getLegacyCompletionHookScriptPath,
+  removeLegacyCompletionHookScripts,
+  removeLegacyCompletionPendingFiles,
   refreshCompletionHookScripts,
 } from './completionHookScript';
+import {
+  createWorkerLifecycleEpoch,
+  ensureWorkerIdentityMigrationBackup,
+  getWorkerLifecycleEpoch,
+  normalizeWorkerSessionAliases,
+  workerMatchesSessionRoute,
+} from './workerIdentity';
 
 const POST_CREATE_TIMEOUT_MS = AGENT_READY_TIMEOUT_MS + 75000;
 const SESSION_STATE_LOCK_TIMEOUT_MS = 10000;
@@ -119,7 +129,8 @@ export function lookupWorkerId(sessionName: string): number | undefined {
     const sessionsFile = getHydraSessionsFile();
     if (fs.existsSync(sessionsFile)) {
       const parsed = JSON.parse(fs.readFileSync(sessionsFile, 'utf-8'));
-      return parsed.workers?.[sessionName]?.workerId;
+      const workers = Object.values(parsed.workers || {}) as WorkerInfo[];
+      return workers.find(worker => workerMatchesSessionRoute(worker, sessionName))?.workerId;
     }
   } catch {
     // Best-effort
@@ -137,6 +148,10 @@ export interface WorkerInfo {
   /** Human-friendly name for display (branch slug or task name). */
   displayName: string;
   workerId: number;
+  /** Stable for one worker process lifecycle and rotated on recreation/restore. */
+  lifecycleEpoch?: string;
+  /** Previous mutable session routes retained for compatibility lookup. */
+  sessionAliases?: string[];
   repo: string | null;
   repoRoot: string | null;
   branch: string | null;
@@ -227,6 +242,8 @@ export interface CreateRepoWorkerOpts {
   notifyCopilot?: boolean;
   /** Existing persisted identity to preserve when restoring an archived worker. */
   preservedWorkerInfo?: WorkerInfo;
+  /** Internal import control. Restore preserves workerId; cross-install imports allocate a local ID. */
+  preserveWorkerId?: boolean;
   /**
    * Pre-create fetch behaviour:
    *   'best-effort' — default, swallow errors (used for ad-hoc abs-path repos)
@@ -255,6 +272,8 @@ export interface CreateDirectoryWorkerOpts {
   notifyCopilot?: boolean;
   /** Existing persisted identity to preserve when restoring an archived worker. */
   preservedWorkerInfo?: WorkerInfo;
+  /** Internal import control. Restore preserves workerId; cross-install imports allocate a local ID. */
+  preserveWorkerId?: boolean;
 }
 
 export interface DeleteWorkerOpts {
@@ -280,6 +299,7 @@ interface PreparedWorkerLaunch {
   notifyCopilot: boolean;
   preservedWorkerInfo?: WorkerInfo;
   preservedStateKey?: string;
+  preserveWorkerId: boolean;
 }
 
 interface WorkerNotificationInfo {
@@ -287,6 +307,12 @@ interface WorkerNotificationInfo {
   workerId: number;
   lifecycleEpoch: string;
   agentType: string;
+}
+
+interface ReservedWorkerIdentity {
+  workerId: number;
+  lifecycleEpoch: string;
+  sessionAliases: string[];
 }
 
 export interface CreateCopilotOpts {
@@ -323,6 +349,7 @@ export interface CreateCopilotResult {
 // mutator actually changed anything. Callers that don't set it keep the legacy
 // unconditional-write semantics.
 const SESSION_STATE_DIRTY_KEY = '__hydraDirty';
+const SESSION_IDENTITY_MIGRATION_KEY = '__hydraIdentityMigration';
 const TASK_WORKER_SESSION_NAMESPACE = 'task';
 
 export function getWorkerSource(worker: WorkerInfo): WorkerSource {
@@ -344,6 +371,25 @@ function markSessionStateDirty(state: SessionState, dirty: boolean): void {
     configurable: true,
     writable: true,
   });
+}
+
+function markSessionIdentityMigration(state: SessionState): void {
+  Object.defineProperty(state, SESSION_IDENTITY_MIGRATION_KEY, {
+    value: true,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+
+function consumeSessionIdentityMigration(state: SessionState): boolean {
+  const marked = hasSessionIdentityMigration(state);
+  delete (state as unknown as Record<string, unknown>)[SESSION_IDENTITY_MIGRATION_KEY];
+  return marked;
+}
+
+function hasSessionIdentityMigration(state: SessionState): boolean {
+  return (state as unknown as Record<string, unknown>)[SESSION_IDENTITY_MIGRATION_KEY] === true;
 }
 
 function consumeSessionStateDirty(state: SessionState): boolean | undefined {
@@ -377,6 +423,7 @@ export class SessionManager {
     const liveSessions = await this.backend.listSessions();
     const liveSessionMap = new Map(liveSessions.map(s => [s.name, s]));
     const orphanedWorkerSessions: string[] = [];
+    const migratedWorkerIds = new Set<number>();
     const discoveredSessions = new Map<string, {
       role: 'worker' | 'copilot';
       agent: string;
@@ -402,6 +449,24 @@ export class SessionManager {
     const state = await this.updateSessionState((state) => {
       const now = new Date().toISOString();
       let dirty = false;
+      let identityDirty = false;
+      const storedIdentityMigration = hasSessionIdentityMigration(state);
+      const validWorkerIds = Object.values(state.workers)
+        .map(worker => worker.workerId)
+        .filter((workerId): workerId is number => Number.isSafeInteger(workerId) && workerId > 0);
+      const normalizedNextWorkerId = Math.max(
+        state.nextWorkerId,
+        ...validWorkerIds.map(workerId => workerId + 1),
+        1,
+      );
+      if (state.nextWorkerId !== normalizedNextWorkerId) {
+        state.nextWorkerId = normalizedNextWorkerId;
+        dirty = true;
+        identityDirty = true;
+      }
+      const claimedWorkerIds = new Set<number>();
+      const currentSessionRoutes = new Set(Object.values(state.workers).map(worker => worker.sessionName));
+      const claimedAliases = new Set<string>();
 
       // Reconcile workers — only mark dirty on real status/attached/membership changes.
       // lastSeenAt is deliberately NOT bumped on every sidebar read; the real mutation
@@ -409,10 +474,37 @@ export class SessionManager {
       for (const [key, worker] of Object.entries(state.workers)) {
         const source = getWorkerSource(worker);
         // Backfill workerId for workers created before this feature
-        if (worker.workerId == null) {
+        let workerIdentityChanged = false;
+        let workerIdChanged = false;
+        if (!Number.isSafeInteger(worker.workerId)
+          || worker.workerId <= 0
+          || claimedWorkerIds.has(worker.workerId)) {
           worker.workerId = state.nextWorkerId++;
+          workerIdChanged = true;
           dirty = true;
+          identityDirty = true;
+          workerIdentityChanged = true;
         }
+        claimedWorkerIds.add(worker.workerId);
+        const lifecycleEpoch = workerIdChanged
+          ? createWorkerLifecycleEpoch()
+          : getWorkerLifecycleEpoch(worker);
+        if (worker.lifecycleEpoch !== lifecycleEpoch) {
+          worker.lifecycleEpoch = lifecycleEpoch;
+          dirty = true;
+          identityDirty = true;
+          workerIdentityChanged = true;
+        }
+        const sessionAliases = normalizeWorkerSessionAliases(worker)
+          .filter(alias => !currentSessionRoutes.has(alias) && !claimedAliases.has(alias));
+        for (const alias of sessionAliases) claimedAliases.add(alias);
+        if (JSON.stringify(worker.sessionAliases ?? []) !== JSON.stringify(sessionAliases)) {
+          worker.sessionAliases = sessionAliases;
+          dirty = true;
+          identityDirty = true;
+          workerIdentityChanged = true;
+        }
+        if (workerIdentityChanged) migratedWorkerIds.add(worker.workerId);
         if (worker.source !== source) {
           worker.source = source;
           dirty = true;
@@ -456,7 +548,10 @@ export class SessionManager {
 
       // Discover live sessions with @hydra-role not yet in JSON
       const knownSessionNames = new Set([
-        ...Object.values(state.workers).map(w => w.sessionName),
+        ...Object.values(state.workers).flatMap(worker => [
+          worker.sessionName,
+          ...normalizeWorkerSessionAliases(worker),
+        ]),
         ...Object.values(state.copilots).map(c => c.sessionName),
       ]);
 
@@ -479,6 +574,8 @@ export class SessionManager {
             sessionName: session.name,
             displayName: slug,
             workerId: state.nextWorkerId++,
+            lifecycleEpoch: createWorkerLifecycleEpoch(),
+            sessionAliases: [],
             repo: repoRoot ? path.basename(repoRoot) : null,
             repoRoot: repoRoot || null,
             branch: null,
@@ -516,11 +613,20 @@ export class SessionManager {
       }
 
       if (dirty) state.updatedAt = now;
+      if (identityDirty) markSessionIdentityMigration(state);
+      if (storedIdentityMigration) {
+        for (const worker of Object.values(state.workers)) migratedWorkerIds.add(worker.workerId);
+      }
       markSessionStateDirty(state, dirty);
       return state;
     });
     for (const sessionName of orphanedWorkerSessions) {
       this.clearWorkerRuntimeState(sessionName, 'sync-orphan');
+    }
+    for (const workerId of migratedWorkerIds) {
+      const worker = Object.values(state.workers)
+        .find(candidate => candidate.workerId === workerId);
+      if (worker) this.ensureWorkerCompletionHook(worker);
     }
     return state;
   }
@@ -552,15 +658,71 @@ export class SessionManager {
 
   async getWorker(sessionName: string): Promise<WorkerInfo | undefined> {
     const state = await this.sync();
-    return state.workers[sessionName];
+    return Object.values(state.workers)
+      .find(worker => workerMatchesSessionRoute(worker, sessionName));
   }
 
   getPersistedWorker(sessionName: string): WorkerInfo | undefined {
-    return this.readSessionState().workers[sessionName];
+    return Object.values(this.readSessionState().workers)
+      .find(worker => workerMatchesSessionRoute(worker, sessionName));
   }
 
-  ensureWorkerCompletionHook(worker: WorkerInfo, lifecycleEpoch: string): boolean {
+  async ensurePersistedWorkerIdentities(): Promise<void> {
+    await this.updateSessionState((state) => {
+      const storedIdentityMigration = hasSessionIdentityMigration(state);
+      const workers = Object.values(state.workers);
+      const validWorkerIds = workers
+        .map(worker => worker.workerId)
+        .filter((workerId): workerId is number => Number.isSafeInteger(workerId) && workerId > 0);
+      const normalizedNextWorkerId = Math.max(
+        state.nextWorkerId,
+        ...validWorkerIds.map(workerId => workerId + 1),
+        1,
+      );
+      let changed = state.nextWorkerId !== normalizedNextWorkerId;
+      state.nextWorkerId = normalizedNextWorkerId;
+      const claimedWorkerIds = new Set<number>();
+      const currentRoutes = new Set(workers.map(worker => worker.sessionName));
+      const claimedAliases = new Set<string>();
+      for (const worker of workers) {
+        let workerIdChanged = false;
+        if (!Number.isSafeInteger(worker.workerId)
+          || worker.workerId <= 0
+          || claimedWorkerIds.has(worker.workerId)) {
+          worker.workerId = state.nextWorkerId++;
+          workerIdChanged = true;
+          changed = true;
+        }
+        claimedWorkerIds.add(worker.workerId);
+        const lifecycleEpoch = workerIdChanged
+          ? createWorkerLifecycleEpoch()
+          : getWorkerLifecycleEpoch(worker);
+        if (worker.lifecycleEpoch !== lifecycleEpoch) {
+          worker.lifecycleEpoch = lifecycleEpoch;
+          changed = true;
+        }
+        const aliases = normalizeWorkerSessionAliases(worker)
+          .filter(alias => !currentRoutes.has(alias) && !claimedAliases.has(alias));
+        for (const alias of aliases) claimedAliases.add(alias);
+        if (JSON.stringify(worker.sessionAliases ?? []) !== JSON.stringify(aliases)) {
+          worker.sessionAliases = aliases;
+          changed = true;
+        }
+      }
+      if (changed) {
+        state.updatedAt = new Date().toISOString();
+        markSessionIdentityMigration(state);
+      } else if (storedIdentityMigration) {
+        markSessionIdentityMigration(state);
+      }
+      markSessionStateDirty(state, changed || storedIdentityMigration);
+    });
+  }
+
+  ensureWorkerCompletionHook(worker: WorkerInfo): boolean {
     if (!agentSupportsCompletionNotification(worker.agent)) return false;
+    const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
+    if (!this.removeLegacyWorkerAgentHooks(worker)) return false;
     const installed = this.injectCompletionHook(worker.workdir, worker.agent, {
       sessionName: worker.sessionName,
       workerId: worker.workerId,
@@ -568,13 +730,40 @@ export class SessionManager {
       agentType: worker.agent,
     }, true);
     if (installed) {
-      refreshCompletionHookScripts(worker.sessionName, {
+      refreshCompletionHookScripts([
+        worker.sessionName,
+        ...normalizeWorkerSessionAliases(worker),
+      ], {
         workerId: worker.workerId,
         lifecycleEpoch,
         agentType: worker.agent,
       });
     }
     return installed;
+  }
+
+  private removeLegacyWorkerAgentHooks(worker: WorkerInfo): boolean {
+    try {
+      for (const sessionName of [worker.sessionName, ...normalizeWorkerSessionAliases(worker)]) {
+        const legacyPath = getLegacyCompletionHookScriptPath(sessionName);
+        if (!legacyPath || !fs.existsSync(legacyPath)) continue;
+        removeAgentHooks({
+          agentType: worker.agent,
+          workdir: worker.workdir,
+          sessionName,
+          completionScriptPath: legacyPath,
+        });
+      }
+      return true;
+    } catch (error) {
+      logger.warn('session.migrateAgentHooks', 'Worker legacy hook configuration was left unchanged', {
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        agent: worker.agent,
+        error,
+      });
+      return false;
+    }
   }
 
   async getCopilot(sessionName: string): Promise<CopilotInfo | undefined> {
@@ -629,6 +818,7 @@ export class SessionManager {
         agentCommand,
         task,
         savedWorker,
+        opts.preserveWorkerId !== false,
         opts.resumeSessionFile,
       );
     }
@@ -702,6 +892,7 @@ export class SessionManager {
       notifyCopilot: opts.notifyCopilot !== false,
       preservedWorkerInfo: preservedWorker?.worker,
       preservedStateKey: preservedWorker?.stateKey,
+      preserveWorkerId: opts.preserveWorkerId !== false,
     });
   }
 
@@ -765,6 +956,7 @@ export class SessionManager {
       copilotSessionName: opts.copilotSessionName,
       notifyCopilot: opts.notifyCopilot !== false,
       preservedWorkerInfo: preservedWorker,
+      preserveWorkerId: opts.preserveWorkerId !== false,
     });
   }
 
@@ -786,17 +978,41 @@ export class SessionManager {
       notifyCopilot: prepared.notifyCopilot && !!prepared.copilotSessionName,
     });
 
-    const peekState = this.readSessionState();
-    const workerId = peekState.workers[prepared.sessionName]?.workerId ??
-      prepared.preservedWorkerInfo?.workerId ??
-      peekState.nextWorkerId;
+    const identity = await this.reserveWorkerIdentity(prepared);
+    const { workerId, lifecycleEpoch } = identity;
     if (shouldInstallCompletionHook || shouldInstallNeedsInputHooks) {
-      const hooksInstalled = this.injectCompletionHook(prepared.workdir, prepared.agentType, {
+      const now = new Date().toISOString();
+      const hookWorker: WorkerInfo = {
+        source: prepared.source,
         sessionName: prepared.sessionName,
+        displayName: prepared.displayName,
         workerId,
-        lifecycleEpoch: `legacy-worker-${workerId}`,
-        agentType: prepared.agentType,
-      }, shouldInstallCompletionHook);
+        lifecycleEpoch,
+        sessionAliases: identity.sessionAliases,
+        repo: prepared.repo,
+        repoRoot: prepared.repoRoot,
+        branch: prepared.branch,
+        slug: prepared.slug,
+        status: 'stopped',
+        attached: false,
+        agent: prepared.agentType,
+        workdir: prepared.workdir,
+        managedWorkdir: prepared.managedWorkdir,
+        tmuxSession: prepared.sessionName,
+        createdAt: prepared.preservedWorkerInfo?.createdAt ?? now,
+        lastSeenAt: now,
+        sessionId: prepared.resumeSessionId ?? null,
+        agentSessionFile: prepared.resumeSessionFile ?? null,
+        copilotSessionName: prepared.copilotSessionName ?? null,
+      };
+      const hooksInstalled = shouldInstallCompletionHook
+        ? this.ensureWorkerCompletionHook(hookWorker)
+        : this.injectCompletionHook(prepared.workdir, prepared.agentType, {
+          sessionName: prepared.sessionName,
+          workerId,
+          lifecycleEpoch,
+          agentType: prepared.agentType,
+        }, false);
       if (prepared.agentType === 'codex' && hooksInstalled) {
         const scriptPath = getCompletionHookScriptPath(workerId);
         const trustRoots = prepared.repoRoot ? [prepared.repoRoot, prepared.workdir] : [prepared.workdir];
@@ -848,13 +1064,19 @@ export class SessionManager {
       }
 
       const existingWorker = state.workers[prepared.sessionName] || prepared.preservedWorkerInfo;
-      const workerId = existingWorker?.workerId ?? state.nextWorkerId++;
+      const conflictingWorker = Object.values(state.workers)
+        .find(candidate => candidate.workerId === workerId && candidate.sessionName !== prepared.sessionName);
+      if (conflictingWorker) {
+        throw new Error(`Worker #${workerId} is already assigned to "${conflictingWorker.sessionName}"`);
+      }
 
       const nextWorker: WorkerInfo = {
         source: prepared.source,
         sessionName: prepared.sessionName,
         displayName: prepared.displayName,
         workerId,
+        lifecycleEpoch,
+        sessionAliases: identity.sessionAliases,
         repo: prepared.repo,
         repoRoot: prepared.repoRoot,
         branch: prepared.branch,
@@ -910,6 +1132,84 @@ export class SessionManager {
         ? () => this.sendInitialPrompt(prepared.sessionName, prepared.task)
         : undefined,
     };
+  }
+
+  private async reserveWorkerIdentity(prepared: PreparedWorkerLaunch): Promise<ReservedWorkerIdentity> {
+    return this.reserveWorkerIdentityValues(
+      prepared.sessionName,
+      prepared.preservedWorkerInfo,
+      prepared.preserveWorkerId,
+      prepared.preservedStateKey,
+    );
+  }
+
+  private async reserveWorkerIdentityValues(
+    sessionName: string,
+    preservedWorker: WorkerInfo | undefined,
+    preserveWorkerId: boolean,
+    preservedStateKey?: string,
+  ): Promise<ReservedWorkerIdentity> {
+    return this.updateSessionState((state) => {
+      const usedWorkerIds = Object.values(state.workers)
+        .map(worker => worker.workerId)
+        .filter((workerId): workerId is number => Number.isSafeInteger(workerId) && workerId > 0);
+      state.nextWorkerId = Math.max(
+        state.nextWorkerId,
+        ...usedWorkerIds.map(workerId => workerId + 1),
+        1,
+      );
+      const persistedWorker = state.workers[sessionName]
+        ?? (preservedStateKey ? state.workers[preservedStateKey] : undefined);
+      const existingWorker = persistedWorker ?? preservedWorker;
+      const routeConflict = Object.values(state.workers)
+        .find(candidate => workerMatchesSessionRoute(candidate, sessionName)
+          && candidate !== persistedWorker);
+      if (routeConflict) {
+        throw new Error(`Session route "${sessionName}" is reserved by worker #${routeConflict.workerId}`);
+      }
+      let workerId: number;
+      if (existingWorker && preserveWorkerId) {
+        if (!Number.isSafeInteger(existingWorker.workerId) || existingWorker.workerId <= 0) {
+          throw new Error('Preserved worker identity is missing a valid workerId');
+        }
+        const conflict = Object.values(state.workers)
+          .find(candidate => candidate.workerId === existingWorker.workerId
+            && candidate.sessionName !== existingWorker.sessionName);
+        if (conflict) {
+          throw new Error(`Worker #${existingWorker.workerId} is already assigned to "${conflict.sessionName}"`);
+        }
+        workerId = existingWorker.workerId;
+        state.nextWorkerId = Math.max(state.nextWorkerId, workerId + 1);
+      } else {
+        workerId = state.nextWorkerId++;
+      }
+      const lifecycleEpoch = createWorkerLifecycleEpoch();
+      const sessionAliases = existingWorker && preserveWorkerId
+        ? normalizeWorkerSessionAliases(existingWorker)
+        : [];
+      if (existingWorker && preserveWorkerId) {
+        if (preservedStateKey && preservedStateKey !== sessionName) {
+          delete state.workers[preservedStateKey];
+          sessionAliases.push(preservedStateKey);
+        }
+        state.workers[sessionName] = {
+          ...existingWorker,
+          sessionName,
+          tmuxSession: sessionName,
+          workerId,
+          lifecycleEpoch,
+          sessionAliases: [...new Set(sessionAliases)].filter(alias => alias !== sessionName),
+          status: 'stopped',
+          attached: false,
+        };
+      }
+      state.updatedAt = new Date().toISOString();
+      return {
+        workerId,
+        lifecycleEpoch,
+        sessionAliases: [...new Set(sessionAliases)].filter(alias => alias !== sessionName),
+      };
+    });
   }
 
   async deleteWorker(sessionName: string, opts: DeleteWorkerOpts = {}): Promise<void> {
@@ -1089,6 +1389,12 @@ export class SessionManager {
             error,
           });
         }
+        const legacyRoutes = [
+          hookWorker.sessionName,
+          ...normalizeWorkerSessionAliases(hookWorker),
+        ];
+        removeLegacyCompletionHookScripts(legacyRoutes);
+        removeLegacyCompletionPendingFiles(legacyRoutes);
       }
 
       logger.info('session.delete', 'Deleted worker session', {
@@ -1149,7 +1455,7 @@ export class SessionManager {
     }
 
     const agent = agentType || existingWorker.agent || getHydraGlobalDefaultAgent().agent;
-    const command = await this.resolveAgentCommand(agentCommand || this.getDefaultAgentCommand(agent));
+    let command = await this.resolveAgentCommand(agentCommand || this.getDefaultAgentCommand(agent));
     logger.info('session.startWorker', 'Starting worker session', {
       sessionName,
       workdir: existingWorker.workdir,
@@ -1158,6 +1464,29 @@ export class SessionManager {
       hasStoredSessionId: !!existingWorker.sessionId,
     });
 
+    const rotatedWorker = await this.updateSessionState((currentState) => {
+      const currentWorker = currentState.workers[sessionName];
+      if (!currentWorker) {
+        throw new Error(`Worker "${sessionName}" not found in sessions.json`);
+      }
+      currentWorker.lifecycleEpoch = createWorkerLifecycleEpoch();
+      currentWorker.sessionAliases = normalizeWorkerSessionAliases(currentWorker);
+      currentWorker.agent = agent;
+      currentState.updatedAt = new Date().toISOString();
+      return { ...currentWorker };
+    });
+    const hooksInstalled = this.ensureWorkerCompletionHook(rotatedWorker);
+    if (agent === 'codex' && hooksInstalled) {
+      const trustRoots = rotatedWorker.repoRoot
+        ? [rotatedWorker.repoRoot, rotatedWorker.workdir]
+        : [rotatedWorker.workdir];
+      command = this.withCodexCompletionHookOverrides(
+        command,
+        trustRoots,
+        getCompletionHookScriptPath(rotatedWorker.workerId),
+      );
+    }
+
     await this.backend.createSession(sessionName, existingWorker.workdir);
     await this.backend.setSessionWorkdir(sessionName, existingWorker.workdir);
     await this.backend.setSessionRole(sessionName, 'worker');
@@ -1165,15 +1494,15 @@ export class SessionManager {
     await this.backend.setSessionAgent(sessionName, agent);
 
     // Resume from stored session ID if available; otherwise fresh start
-    const storedSessionId = existingWorker.sessionId;
+    const storedSessionId = rotatedWorker.sessionId;
     const resolvedResumeSessionFile = storedSessionId
-      ? resolveAgentSessionFile(agent, existingWorker.workdir, storedSessionId, existingWorker.agentSessionFile)
+      ? resolveAgentSessionFile(agent, rotatedWorker.workdir, storedSessionId, rotatedWorker.agentSessionFile)
       : null;
     const canResume = this.canResumeAgentSession(
       agent,
       command,
       storedSessionId,
-      existingWorker.workdir,
+      rotatedWorker.workdir,
       resolvedResumeSessionFile,
     );
 
@@ -1188,7 +1517,7 @@ export class SessionManager {
         agent,
         command,
         storedSessionId,
-        existingWorker.workdir,
+        rotatedWorker.workdir,
         resolvedResumeSessionFile,
       );
       workerInfo = await this.updateSessionState((currentState) => {
@@ -1200,7 +1529,7 @@ export class SessionManager {
         currentWorker.status = 'running';
         currentWorker.attached = false;
         currentWorker.agent = agent;
-        currentWorker.agentSessionFile = resolvedResumeSessionFile ?? existingWorker.agentSessionFile ?? currentWorker.agentSessionFile ?? null;
+        currentWorker.agentSessionFile = resolvedResumeSessionFile ?? rotatedWorker.agentSessionFile ?? currentWorker.agentSessionFile ?? null;
         currentWorker.lastSeenAt = new Date().toISOString();
         currentState.updatedAt = currentWorker.lastSeenAt;
         return { ...currentWorker };
@@ -1244,7 +1573,7 @@ export class SessionManager {
         sessionName,
         agent,
         preAssignedSessionId,
-        existingWorker.workdir,
+        rotatedWorker.workdir,
         launchStartedAt,
       );
     }
@@ -1368,8 +1697,11 @@ export class SessionManager {
       isResume: !!opts.resumeSessionId,
     });
 
+    const persistedState = this.readSessionState();
+    const reservedWorkerRoute = Object.values(persistedState.workers)
+      .some(worker => workerMatchesSessionRoute(worker, sessionName));
     const exists = await this.backend.hasSession(sessionName);
-    if (exists) {
+    if (exists || persistedState.copilots[sessionName] || reservedWorkerRoute) {
       throw new Error(`Session "${sessionName}" already exists`);
     }
 
@@ -1503,11 +1835,25 @@ export class SessionManager {
     const newWorktreePath = path.join(worktreesDir, newSlug);
 
     // Check conflicts
-    if (newSessionName !== oldSessionName && (state.workers[newSessionName] || state.copilots[newSessionName])) {
+    const routeConflict = Object.values(state.workers)
+      .some(candidate => candidate.workerId !== worker.workerId
+        && workerMatchesSessionRoute(candidate, newSessionName));
+    if (newSessionName !== oldSessionName && (routeConflict || state.copilots[newSessionName])) {
       throw new Error(`Session "${newSessionName}" already exists`);
     }
     if (await coreGit.localBranchExists(worker.repoRoot, newBranchName)) {
       throw new Error(`Branch "${newBranchName}" already exists`);
+    }
+
+    try {
+      removeAgentHooks({
+        agentType: worker.agent,
+        workdir: worker.workdir,
+        sessionName: worker.sessionName,
+        completionScriptPath: getCompletionHookScriptPath(worker.workerId),
+      });
+    } catch (error) {
+      throw new Error(`Worker hook route migration failed before rename: ${getErrorMessage(error)}`);
     }
 
     // 1. Rename git branch
@@ -1563,7 +1909,7 @@ export class SessionManager {
       }
     }
 
-    return this.updateSessionState((currentState) => {
+    const renamedWorker = await this.updateSessionState((currentState) => {
       const currentWorker = currentState.workers[oldSessionName];
       if (!currentWorker) {
         throw new Error(`Worker "${oldSessionName}" not found`);
@@ -1571,9 +1917,13 @@ export class SessionManager {
 
       const oldWorkdir = currentWorker.workdir;
       const oldAgentSessionFile = currentWorker.agentSessionFile ?? null;
+      const sessionAliases = new Set(normalizeWorkerSessionAliases(currentWorker));
+      if (oldSessionName !== newSessionName) sessionAliases.add(oldSessionName);
+      sessionAliases.delete(newSessionName);
       const worktreeMoved = newSlug !== currentWorker.slug && fs.existsSync(newWorktreePath);
       delete currentState.workers[oldSessionName];
       currentWorker.sessionName = newSessionName;
+      currentWorker.sessionAliases = [...sessionAliases];
       currentWorker.displayName = newSlug;
       currentWorker.tmuxSession = newSessionName;
       currentWorker.branch = newBranchName;
@@ -1594,6 +1944,14 @@ export class SessionManager {
       currentState.updatedAt = new Date().toISOString();
       return { ...currentWorker };
     });
+    if (!this.ensureWorkerCompletionHook(renamedWorker)) {
+      logger.warn('session.renameWorker', 'Renamed worker does not have a supported completion hook', {
+        workerId: renamedWorker.workerId,
+        sessionName: renamedWorker.sessionName,
+        agent: renamedWorker.agent,
+      });
+    }
+    return renamedWorker;
   }
 
   async renameCopilot(oldSessionName: string, newSessionName: string): Promise<CopilotInfo> {
@@ -1610,7 +1968,9 @@ export class SessionManager {
     }
 
     // Check conflict
-    if (state.copilots[newSessionName] || state.workers[newSessionName]) {
+    const reservedWorkerRoute = Object.values(state.workers)
+      .some(worker => workerMatchesSessionRoute(worker, newSessionName));
+    if (state.copilots[newSessionName] || reservedWorkerRoute) {
       throw new Error(`Session "${newSessionName}" already exists`);
     }
 
@@ -1742,7 +2102,9 @@ export class SessionManager {
    */
   async captureAndPersistSessionId(sessionName: string, agentType: string): Promise<void> {
     const state = this.readSessionState();
-    const saved = state.workers[sessionName] || state.copilots[sessionName];
+    const saved = Object.values(state.workers)
+      .find(worker => workerMatchesSessionRoute(worker, sessionName))
+      ?? state.copilots[sessionName];
     const workdir = saved?.workdir || await this.backend.getSessionWorkdir(sessionName) || '';
     const session = await this.captureAgentSessionInfo(sessionName, agentType, workdir);
     await this.updateAgentSessionInfo(sessionName, session.sessionId, session.agentSessionFile);
@@ -1755,7 +2117,9 @@ export class SessionManager {
   }
 
   getArchivedAll(sessionName: string): ArchivedSessionInfo[] {
-    return this.archiveStore.list().filter(e => e.sessionName === sessionName);
+    return this.archiveStore.list().filter(entry => entry.sessionName === sessionName
+      || (entry.type === 'worker'
+        && workerMatchesSessionRoute(entry.data as WorkerInfo, sessionName)));
   }
 
   getArchived(sessionName: string): ArchivedSessionInfo | undefined {
@@ -1880,6 +2244,7 @@ export class SessionManager {
       workdir: worker.workdir,
       payload: {
         workerId: worker.workerId,
+        lifecycleEpoch: getWorkerLifecycleEpoch(worker),
         source: getWorkerSource(worker),
         branch: isRepoWorker(worker) ? worker.branch : null,
         repo: isRepoWorker(worker) ? worker.repo : null,
@@ -1961,7 +2326,9 @@ export class SessionManager {
     const sessionName = this.backend.buildSessionName(TASK_WORKER_SESSION_NAMESPACE, slug);
     const state = this.readSessionState();
     const liveExists = await this.backend.hasSession(sessionName);
-    if (state.workers[sessionName] || state.copilots[sessionName] || liveExists) {
+    const reservedRoute = Object.values(state.workers)
+      .some(worker => workerMatchesSessionRoute(worker, sessionName));
+    if (reservedRoute || state.copilots[sessionName] || liveExists) {
       throw new Error(`Task worker "${slug}" already exists. Use a different --name or start/delete the existing worker.`);
     }
   }
@@ -2132,12 +2499,17 @@ export class SessionManager {
         };
         // Backward compat: ensure sessionId and displayName fields exist for legacy entries
         for (const w of Object.values(state.workers)) {
+          const hasWorkerId = Number.isSafeInteger(w.workerId) && w.workerId > 0;
+          const needsIdentityMigration = !hasWorkerId || !w.lifecycleEpoch || !w.lifecycleEpoch.trim();
           const source = getWorkerSource(w);
           w.source ??= source;
           w.sessionId ??= null;
           w.agentSessionFile ??= null;
           w.displayName ??= w.slug || this.extractSlugFromSessionName(w.sessionName);
           w.managedWorkdir ??= false;
+          if (hasWorkerId) w.lifecycleEpoch = getWorkerLifecycleEpoch(w);
+          w.sessionAliases = normalizeWorkerSessionAliases(w);
+          if (needsIdentityMigration) markSessionIdentityMigration(state);
           if (source === 'directory') {
             w.repo ??= null;
             w.repoRoot ??= null;
@@ -2176,7 +2548,9 @@ export class SessionManager {
       // actually changed via markSessionStateDirty(). Other callers keep the
       // legacy unconditional-write behavior.
       const dirty = consumeSessionStateDirty(state);
-      if (dirty === undefined || dirty) {
+      const identityMigration = consumeSessionIdentityMigration(state);
+      if (dirty === undefined || dirty || identityMigration) {
+        if (identityMigration) ensureWorkerIdentityMigrationBackup();
         this.writeSessionState(state);
       }
       return result;
@@ -2928,14 +3302,17 @@ export class SessionManager {
     agentSessionFile: string | null,
   ): Promise<void> {
     const eventInfo = await this.updateSessionState((state) => {
-      if (state.workers[sessionName]) {
-        state.workers[sessionName].sessionId = sessionId;
-        state.workers[sessionName].agentSessionFile = agentSessionFile;
+      const worker = Object.values(state.workers)
+        .find(candidate => workerMatchesSessionRoute(candidate, sessionName));
+      if (worker) {
+        worker.sessionId = sessionId;
+        worker.agentSessionFile = agentSessionFile;
         state.updatedAt = new Date().toISOString();
         return {
           role: 'worker' as const,
-          agent: state.workers[sessionName].agent,
-          workdir: state.workers[sessionName].workdir,
+          sessionName: worker.sessionName,
+          agent: worker.agent,
+          workdir: worker.workdir,
         };
       } else if (state.copilots[sessionName]) {
         state.copilots[sessionName].sessionId = sessionId;
@@ -2943,6 +3320,7 @@ export class SessionManager {
         state.updatedAt = new Date().toISOString();
         return {
           role: 'copilot' as const,
+          sessionName,
           agent: state.copilots[sessionName].agent,
           workdir: state.copilots[sessionName].workdir,
         };
@@ -2951,7 +3329,7 @@ export class SessionManager {
     });
     if (sessionId && eventInfo) {
       this.emitLifecycleEvent('session.id.captured', eventInfo.role, {
-        sessionName,
+        sessionName: eventInfo.sessionName,
         agent: eventInfo.agent,
         workdir: eventInfo.workdir,
         payload: {
@@ -3039,6 +3417,8 @@ export class SessionManager {
     const repoSessionNamespace = coreGit.getRepoSessionNamespace(repoRoot, this.backend);
     return {
       ...worker,
+      lifecycleEpoch: getWorkerLifecycleEpoch(worker),
+      sessionAliases: normalizeWorkerSessionAliases(worker),
       source: 'repo',
       repoRoot: worker.repoRoot || repoRoot,
       repo: worker.repo || coreGit.getRepoName(repoRoot),
@@ -3117,6 +3497,7 @@ export class SessionManager {
     agentCommand: string,
     task?: string,
     savedWorkerMatch?: SavedWorkerMatch,
+    preserveWorkerId = true,
     resumeSessionFile?: string | null,
   ): Promise<CreateWorkerResult> {
     const savedWorker = savedWorkerMatch?.worker;
@@ -3139,6 +3520,15 @@ export class SessionManager {
       const workdir = sessionWorkdir || savedWorker?.workdir || '';
       const agent = await this.backend.getSessionAgent(sessionName) || agentType;
       const now = new Date().toISOString();
+      const persistedWorker = this.readSessionState().workers[sessionName];
+      const reservedIdentity = !persistedWorker || !preserveWorkerId
+        ? await this.reserveWorkerIdentityValues(
+          sessionName,
+          persistedWorker ?? savedWorker,
+          preserveWorkerId,
+          savedWorkerMatch?.stateKey,
+        )
+        : undefined;
 
       const workerInfo = await this.updateSessionState((state) => {
         if (savedWorkerMatch?.stateKey && savedWorkerMatch.stateKey !== sessionName) {
@@ -3146,12 +3536,16 @@ export class SessionManager {
         }
 
         const existingWorker = state.workers[sessionName] || savedWorker;
-        const workerId = existingWorker?.workerId ?? state.nextWorkerId++;
+        const workerId = reservedIdentity?.workerId ?? existingWorker?.workerId ?? state.nextWorkerId++;
         const nextWorker: WorkerInfo = {
           source: 'repo',
           sessionName,
           displayName: existingWorker?.displayName || slug,
           workerId,
+          lifecycleEpoch: reservedIdentity?.lifecycleEpoch
+            ?? (existingWorker ? getWorkerLifecycleEpoch(existingWorker) : createWorkerLifecycleEpoch()),
+          sessionAliases: reservedIdentity?.sessionAliases
+            ?? (existingWorker ? normalizeWorkerSessionAliases(existingWorker) : []),
           repo: coreGit.getRepoName(repoRoot),
           repoRoot,
           branch: branchName,
@@ -3198,11 +3592,53 @@ export class SessionManager {
       !savedWorker && branchName.trim() !== slug,
     );
     if (worktreePath && fs.existsSync(worktreePath)) {
+      const existingWorker = this.readSessionState().workers[sessionName] || savedWorker;
+      const identity = await this.reserveWorkerIdentityValues(
+        sessionName,
+        existingWorker,
+        preserveWorkerId,
+        savedWorkerMatch?.stateKey,
+      );
+      let resumeAgentCommand = agentCommand;
+      const hookWorker: WorkerInfo = {
+        ...(existingWorker ?? {
+          source: 'repo' as const,
+          sessionName,
+          displayName: slug,
+          repo: coreGit.getRepoName(repoRoot),
+          repoRoot,
+          branch: branchName,
+          slug,
+          status: 'stopped' as const,
+          attached: false,
+          agent: agentType,
+          workdir: worktreePath,
+          managedWorkdir: false,
+          tmuxSession: sessionName,
+          createdAt: new Date().toISOString(),
+          lastSeenAt: new Date().toISOString(),
+          sessionId: null,
+          copilotSessionName: null,
+        }),
+        workerId: identity.workerId,
+        lifecycleEpoch: identity.lifecycleEpoch,
+        sessionAliases: identity.sessionAliases,
+        sessionName,
+        agent: agentType,
+        workdir: worktreePath,
+      };
+      const hooksInstalled = this.ensureWorkerCompletionHook(hookWorker);
+      if (agentType === 'codex' && hooksInstalled) {
+        resumeAgentCommand = this.withCodexCompletionHookOverrides(
+          resumeAgentCommand,
+          [repoRoot, worktreePath],
+          getCompletionHookScriptPath(identity.workerId),
+        );
+      }
       await this.backend.createSession(sessionName, worktreePath);
       await this.backend.setSessionWorkdir(sessionName, worktreePath);
       await this.backend.setSessionRole(sessionName, 'worker');
-      const existingWorker = this.readSessionState().workers[sessionName] || savedWorker;
-      const workerId = existingWorker?.workerId ?? this.readSessionState().nextWorkerId;
+      const workerId = identity.workerId;
       await this.backend.setSessionWorkerId?.(sessionName, workerId);
       await this.backend.setSessionAgent(sessionName, agentType);
 
@@ -3216,7 +3652,7 @@ export class SessionManager {
       // Resume or fresh start
       const canResume = this.canResumeAgentSession(
         agentType,
-        agentCommand,
+        resumeAgentCommand,
         storedSessionId,
         worktreePath,
         resolvedResumeSessionFile,
@@ -3231,7 +3667,7 @@ export class SessionManager {
         await this.launchAgentResume(
           sessionName,
           agentType,
-          agentCommand,
+          resumeAgentCommand,
           storedSessionId,
           worktreePath,
           resolvedResumeSessionFile,
@@ -3249,7 +3685,7 @@ export class SessionManager {
         // review round 1).
         const shellTarget = await this.detectShellTarget(sessionName);
         const launchCmd = buildAgentLaunchCommand(
-          agentType, agentCommand, undefined, preAssignedSessionId ?? undefined,
+          agentType, resumeAgentCommand, undefined, preAssignedSessionId ?? undefined,
           { shellTarget },
         );
         const launchStartedAt = Date.now();
@@ -3272,12 +3708,14 @@ export class SessionManager {
         }
 
         const currentWorker = state.workers[sessionName] || savedWorker;
-        const workerId = currentWorker?.workerId ?? state.nextWorkerId++;
+        const workerId = identity.workerId;
         const nextWorker: WorkerInfo = {
           source: 'repo',
           sessionName,
           displayName: currentWorker?.displayName || slug,
           workerId,
+          lifecycleEpoch: identity.lifecycleEpoch,
+          sessionAliases: identity.sessionAliases,
           repo: coreGit.getRepoName(repoRoot),
           repoRoot,
           branch: branchName,

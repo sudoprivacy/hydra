@@ -182,11 +182,11 @@ async function main(): Promise<void> {
       notifyCopilot: false,
     });
     await raced.postCreatePromise;
-    assert.equal(raced.workerInfo.workerId, 9, 'persisted allocation observes the advanced nextWorkerId');
+    assert.equal(raced.workerInfo.workerId, 1, 'worker identity is reserved before backend launch');
     assert.deepEqual(
       raceBackend.workerIdWrites.map(write => write.workerId),
-      [1, 9],
-      'tmux worker metadata is corrected from authoritative persisted WorkerInfo',
+      [1, 1],
+      'hook and tmux metadata use the same reserved worker identity',
     );
 
     const sessionName = 'hydra-owned';

@@ -138,6 +138,7 @@ function createCoordinator(
     jobStore?: CompletionJobStore;
     notificationStore?: NotificationStore;
     readLegacyPendingToken?: (sessionName: string) => string | undefined;
+    removeLegacyPendingFiles?: (sessionNames: readonly string[]) => string[];
     deliverCompatibility?: (targetSession: string, message: string) => Promise<void>;
   } = {},
 ): CompletionCoordinator {
@@ -152,6 +153,7 @@ function createCoordinator(
     }),
     eventSource: 'hook',
     readLegacyPendingToken: overrides.readLegacyPendingToken ?? (() => undefined),
+    removeLegacyPendingFiles: overrides.removeLegacyPendingFiles ?? (() => []),
   });
 }
 
@@ -316,10 +318,16 @@ async function testLegacyPendingReadOnlyMigration(): Promise<void> {
   try {
     seedRunning(ctx, 'run-legacy');
     let reads = 0;
+    const removedRoutes: string[][] = [];
+    ctx.worker.worker.sessionAliases = ['worker-before-rename'];
     const coordinator = createCoordinator(ctx, {
-      readLegacyPendingToken: () => {
+      readLegacyPendingToken: (sessionName) => {
         reads += 1;
-        return 'legacy-token';
+        return sessionName === 'worker-before-rename' ? 'legacy-token' : undefined;
+      },
+      removeLegacyPendingFiles: (sessionNames) => {
+        removedRoutes.push([...sessionNames]);
+        return [];
       },
     });
     const result = await coordinator.complete({ workerId: 7, lifecycleEpoch: 'epoch-7' });
@@ -327,7 +335,8 @@ async function testLegacyPendingReadOnlyMigration(): Promise<void> {
     assert.equal(result.migratedLegacyPending, true);
     assert.equal(result.job?.runId, 'run-legacy');
     assert.equal(result.job?.status, 'fired');
-    assert.equal(reads, 1);
+    assert.equal(reads, 2);
+    assert.deepEqual(removedRoutes, [[ctx.worker.worker.sessionName, 'worker-before-rename']]);
 
     const current = ctx.runtimeStore.get(7)!;
     const nextRun = createRuntimeCoordinator(ctx).apply({

@@ -117,6 +117,24 @@ function testCancellationFilters(): void {
   }
 }
 
+function testCancelPendingOutsideEpoch(): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-completion-job-epoch-cancel-'));
+  try {
+    const store = createStore(root);
+    const old = store.armForDispatch(
+      { workerId: 15, lifecycleEpoch: 'epoch-old', runId: 'run-old' },
+      { runtimeActive: true, runtimeRunId: 'run-old' },
+    );
+    const cancelled = store.cancelPendingOutsideEpoch(15, 'epoch-new', 'stale-lifecycle-epoch');
+    assert.equal(cancelled.length, 1);
+    assert.equal(cancelled[0].jobId, old.job.jobId);
+    assert.equal(cancelled[0].cancelReason, 'stale-lifecycle-epoch');
+    assert.deepEqual(store.cancelPendingOutsideEpoch(15, 'epoch-new', 'stale-lifecycle-epoch'), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function testFailClosedPersistence(): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-completion-job-corrupt-'));
   const filePath = path.join(root, 'completion-jobs.json');
@@ -200,6 +218,7 @@ function main(): void {
   testConcurrentFirstDispatchConverges();
   testEndedRunIsCancelledBeforeNewArm();
   testCancellationFilters();
+  testCancelPendingOutsideEpoch();
   testFailClosedPersistence();
   testStaleLockRecovery();
   console.log('completionJobStoreSmoke: ok');

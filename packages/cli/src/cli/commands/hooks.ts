@@ -13,6 +13,7 @@ import { TmuxBackendCore } from '@hydra/core/tmux';
 import { WorkerRuntimeCoordinator } from '@hydra/core/workerRuntimeCoordinator';
 import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
 import { WorkerRuntimeStateStoreV2 } from '@hydra/core/workerRuntimeV2';
+import { getWorkerLifecycleEpoch } from '@hydra/core/workerIdentity';
 
 interface NeedsInputHookOptions {
   agent?: string;
@@ -45,6 +46,9 @@ export function registerHooksCommands(program: Command): void {
         if (!lifecycleEpoch) throw new Error('--lifecycle-epoch is required');
         await readStdinJson();
 
+        const backend = new TmuxBackendCore();
+        const sessionManager = new SessionManager(backend);
+        await sessionManager.ensurePersistedWorkerIdentities();
         const runtimeStore = new WorkerRuntimeStateStoreV2();
         const compatibilityStore = new WorkerRuntimeStateStore();
         const eventLog = new EventLog();
@@ -53,8 +57,7 @@ export function registerHooksCommands(program: Command): void {
           if (!worker) return undefined;
           return {
             worker,
-            lifecycleEpoch: runtimeStore.get(candidateId)?.lifecycleEpoch
-              ?? `legacy-worker-${candidateId}`,
+            lifecycleEpoch: getWorkerLifecycleEpoch(worker),
           };
         };
         const identity = resolveWorker(workerId);
@@ -78,8 +81,6 @@ export function registerHooksCommands(program: Command): void {
           compatibilityStore,
           eventLog,
         );
-        const backend = new TmuxBackendCore();
-        const sessionManager = new SessionManager(backend);
         const coordinator = new CompletionCoordinator({
           resolveWorker,
           jobStore: new CompletionJobStore(),
@@ -158,6 +159,8 @@ export function registerHooksCommands(program: Command): void {
       const globalOpts = program.opts() as OutputOpts;
       try {
         const payload = await readStdinJson();
+        const sessionManager = new SessionManager(new TmuxBackendCore());
+        await sessionManager.ensurePersistedWorkerIdentities();
         const worker = readWorkerSessionByName(opts.session || '');
         if (!worker) {
           outputResult({ status: 'ignored', reason: 'worker-not-found' }, globalOpts, () => {});
