@@ -487,7 +487,7 @@ async function testBatchReadAndClearEventSources(): Promise<void> {
   }
 }
 
-async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
+async function testEventOnlyCompletionDoesNotReconstructAttention(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-event-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -509,13 +509,11 @@ async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
           },
         });
 
-        await waitFor(
-          () => service.getLatestSourceCompletion('repo_worker')?.id === 'event-only-complete',
-          'event-only completion projection',
-        );
+        await sleep(200);
         assert.equal(service.getSnapshot().totalCount, 0);
-        assert.equal(service.getLatestSourceCompletion('repo_worker')?.action?.session, 'repo_worker');
-        assert.ok(changes > 0, 'event-only completion projection should emit a change');
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(changes, 0, 'event history must not reconstruct current notification state');
       } finally {
         listener.dispose();
         service.dispose();
@@ -572,15 +570,13 @@ async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
             actionSession: 'repo_worker',
           },
         });
-        await waitFor(
-          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-newer-error',
-          'event source attention overrides older stored notifications',
-        );
-        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'error');
+        await sleep(200);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, complete.id);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'complete');
         assert.equal(
           service.getLatestSourceCompletion('repo_worker')?.id,
           complete.id,
-          'completion compatibility projection should remain available while latest attention is error',
+          'event history must not override the durable occurrence projection',
         );
 
         service.clear({ targetSession: 'repo_copilot' });
@@ -615,7 +611,7 @@ async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
   }
 }
 
-async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
+async function testEventOnlyErrorDoesNotReconstructAttention(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-event-error-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -642,18 +638,10 @@ async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
           },
         });
 
-        await waitFor(
-          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-only-error',
-          'event-only error projection',
-        );
+        await sleep(200);
         assert.equal(service.getSnapshot().totalCount, 0);
-        const projected = service.getLatestSourceAttention('repo_worker');
-        assert.equal(projected?.kind, 'error');
-        assert.equal(projected?.title, 'Worker failed during startup');
-        assert.equal(projected?.action?.session, 'repo_worker');
-        assert.equal(projected?.context?.workerId, 4);
-        assert.equal(projected?.context?.workdir, ctx.tmp);
-        assert.ok(changes > 0, 'event-only error projection should emit a change');
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(changes, 0, 'event history must remain audit-only');
       } finally {
         listener.dispose();
         service.dispose();
@@ -664,7 +652,7 @@ async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
   }
 }
 
-async function testKindScopedClearPreservesEventOnlyAttention(): Promise<void> {
+async function testKindScopedClearDoesNotReplayEventHistory(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-kind-clear-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -700,11 +688,7 @@ async function testKindScopedClearPreservesEventOnlyAttention(): Promise<void> {
         const cleared = service.clear({ session: 'repo_worker', kind: 'complete' });
         assert.equal(cleared.cleared, 1);
         assert.equal(service.getById(storedComplete.id), undefined);
-        assert.equal(
-          service.getLatestSourceAttention('repo_worker')?.id,
-          'event-only-needs-input',
-          'complete-only clear must preserve event-only needs-input attention',
-        );
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
         assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
       } finally {
         service.dispose();
@@ -939,10 +923,10 @@ async function main(): Promise<void> {
   await testWorkerClearScopeClearsSourceNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
-  await testEventOnlyCompletionProjectionEmitsChange();
+  await testEventOnlyCompletionDoesNotReconstructAttention();
   await testSourceAttentionProjectionUsesLatestStatus();
-  await testEventOnlyErrorProjectionEmitsChange();
-  await testKindScopedClearPreservesEventOnlyAttention();
+  await testEventOnlyErrorDoesNotReconstructAttention();
+  await testKindScopedClearDoesNotReplayEventHistory();
   await testStoredNotificationWinsOverDuplicateEventProjection();
   await testInitializeSignatureWindow();
   await testDuplicateAndMalformedEventTolerance();

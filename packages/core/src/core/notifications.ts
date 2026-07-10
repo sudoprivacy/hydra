@@ -4,6 +4,16 @@ import { randomUUID } from 'crypto';
 import { getHydraHome } from './path';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
+import {
+  NotificationStoreV2,
+  type CreateNotificationV2Input,
+  type HydraNotificationV2,
+  type NotificationStatus,
+} from './notificationV2';
+import {
+  WorkerRuntimeStateStoreV2,
+  type WorkerRuntimeSnapshotV2,
+} from './workerRuntimeV2';
 
 export type NotificationKind = 'complete' | 'needs-input' | 'error' | 'blocked' | 'info';
 
@@ -45,11 +55,16 @@ export interface CreateNotificationInput {
   action?: NotificationAction;
   context?: HydraNotification['context'];
   eventSource?: HydraEventSource;
+  occurrenceId?: string;
+  lifecycleEpoch?: string;
+  runId?: string;
+  signalId?: string;
 }
 
 export interface CreateNotificationResult {
   notification: HydraNotification;
   created: boolean;
+  occurrence?: HydraNotificationV2;
 }
 
 export interface NotificationListFilters {
@@ -85,6 +100,13 @@ export interface NotificationMarkSessionReadResult {
 
 export interface NotificationClearResult {
   cleared: number;
+  tombstoneId?: string;
+}
+
+export interface NotificationStatusMutationResult {
+  notification: HydraNotification;
+  changed: boolean;
+  status: NotificationStatus;
 }
 
 export interface NotificationOpenResult {
@@ -109,21 +131,39 @@ export function getHydraNotificationsFile(): string {
 }
 
 export class NotificationStore {
+  private readonly v2Store: NotificationStoreV2;
+  private readonly runtimeV2Store: WorkerRuntimeStateStoreV2;
+
   constructor(
     private readonly filePath: string = getHydraNotificationsFile(),
     private readonly retentionLimit: number = DEFAULT_RETENTION_LIMIT,
     private readonly eventLog: EventLog = new EventLog(),
     legacyRuntimeStateStore?: unknown,
     private readonly now: () => number = Date.now,
+    v2Store?: NotificationStoreV2,
+    runtimeV2Store?: WorkerRuntimeStateStoreV2,
   ) {
     void legacyRuntimeStateStore;
+    this.v2Store = v2Store ?? new NotificationStoreV2(
+      path.join(path.dirname(filePath), 'notifications-v2.json'),
+      retentionLimit,
+      undefined,
+      now,
+    );
+    this.runtimeV2Store = runtimeV2Store ?? new WorkerRuntimeStateStoreV2(
+      path.join(path.dirname(filePath), 'worker-runtime-state-v2.json'),
+    );
   }
 
   create(input: CreateNotificationInput): CreateNotificationResult {
     return this.withLock(() => {
       const store = this.readStore();
+      this.reconcileCompatibility(store);
       const dedupeKey = normalizeOptionalString(input.dedupeKey, MAX_DEDUPE_KEY_LENGTH);
-      if (dedupeKey) {
+      const canUseV2Dedupe = Number.isSafeInteger(input.context?.workerId)
+        && (input.context?.workerId ?? 0) > 0
+        && !!normalizeOptionalString(input.sourceSession, MAX_SESSION_LENGTH);
+      if (dedupeKey && !canUseV2Dedupe) {
         const existing = store.notifications.find(notification => notification.dedupeKey === dedupeKey);
         if (existing) {
           return { notification: existing, created: false };
@@ -132,7 +172,13 @@ export class NotificationStore {
 
       const notification: HydraNotification = {
         id: randomUUID(),
-        createdAt: getNextNotificationTimestamp(store.notifications, this.now()),
+        createdAt: getNextNotificationTimestamp(
+          [
+            ...store.notifications,
+            ...this.v2Store.list().map(item => toLegacyNotification(item)),
+          ],
+          this.now(),
+        ),
         readAt: null,
         kind: input.kind,
         title: truncate(input.title.trim() || 'Notification', MAX_TITLE_LENGTH),
@@ -152,51 +198,103 @@ export class NotificationStore {
         notification.context = context;
       }
 
+      const runtimeSnapshot = typeof notification.context?.workerId === 'number'
+        ? this.runtimeV2Store.get(notification.context.workerId)
+        : undefined;
+      const v2Input = buildNotificationV2Input(notification, input, dedupeKey, runtimeSnapshot);
+      let occurrence: HydraNotificationV2 | undefined;
+      if (v2Input) {
+        const v2Result = this.v2Store.create(v2Input);
+        if (!v2Result.created) {
+          const projected = store.notifications.find(item => item.id === v2Result.notification.id)
+            ?? toLegacyNotification(v2Result.notification, notification);
+          return { notification: projected, created: false, occurrence: v2Result.notification };
+        }
+        occurrence = v2Result.notification;
+      }
+
       store.notifications = [notification, ...store.notifications].slice(0, this.retentionLimit);
       this.writeStore(store);
-      this.emitNotificationEvent('notify.created', notification, input.eventSource || 'cli');
-      return { notification, created: true };
+      if (occurrence) this.v2Store.acknowledgeCompatibility({ [occurrence.id]: 'upsert' });
+      this.emitNotificationEvent('notify.created', notification, input.eventSource || 'cli', occurrence);
+      return { notification, created: true, occurrence };
     });
   }
 
   list(filters: NotificationListFilters = {}): NotificationListResult {
     const store = this.readStore();
-    let notifications = store.notifications.filter(notification => matchesFilters(notification, filters));
+    const v2Snapshot = this.v2Store.snapshot();
+    const occurrences = v2Snapshot.notifications;
+    const occurrenceById = new Map(occurrences.map(notification => [notification.id, notification]));
+    const receiptById = new Map(Object.values(v2Snapshot.signalReceipts).map(receipt => [receipt.id, receipt]));
+    const merged = new Map<string, HydraNotification>();
+    for (const notification of store.notifications) {
+      const occurrence = occurrenceById.get(notification.id);
+      const receipt = receiptById.get(notification.id);
+      if (occurrence && occurrence.status !== 'active') continue;
+      if (!occurrence && receipt && receipt.status !== 'active') continue;
+      merged.set(notification.id, cloneNotification(notification));
+    }
+    for (const occurrence of occurrences) {
+      if (occurrence.status !== 'active') continue;
+      const legacy = merged.get(occurrence.id);
+      merged.set(occurrence.id, toLegacyNotification(occurrence, legacy));
+    }
+
+    const allNotifications = [...merged.values()].sort(compareNotificationsNewestFirst);
+    let notifications = allNotifications.filter(notification => matchesFilters(notification, filters));
     if (filters.limit != null) {
       notifications = notifications.slice(0, filters.limit);
     }
     return {
       notifications,
       count: notifications.length,
-      unreadCount: store.notifications.filter(notification => notification.readAt === null).length,
-      totalCount: store.notifications.length,
+      unreadCount: allNotifications.filter(notification => notification.readAt === null).length,
+      totalCount: allNotifications.length,
     };
   }
 
   markRead(id: string, eventSource: HydraEventSource = 'cli'): NotificationReadResult {
     return this.withLock(() => {
       const store = this.readStore();
+      this.reconcileCompatibility(store);
       const index = store.notifications.findIndex(notification => notification.id === id);
-      if (index < 0) {
+      const occurrence = this.v2Store.get(id);
+      if (index < 0 && !occurrence) {
         throw new Error(`Notification "${id}" not found`);
       }
-      const existing = store.notifications[index];
-      if (existing.readAt) {
-        return { notification: existing, markedRead: 0 };
+
+      const existing = index >= 0 ? store.notifications[index] : undefined;
+      const readAt = new Date(this.now()).toISOString();
+      const occurrenceResult = occurrence ? this.v2Store.markRead(id, readAt) : undefined;
+      const updated = occurrenceResult
+        ? toLegacyNotification(occurrenceResult.notification, existing)
+        : existing!.readAt
+          ? cloneNotification(existing!)
+          : { ...existing!, readAt };
+      const changed = occurrenceResult ? occurrenceResult.changed : existing?.readAt === null;
+      if (index >= 0) {
+        store.notifications[index] = updated;
+        if (existing?.readAt !== updated.readAt) this.writeStore(store);
       }
-      const updated = { ...existing, readAt: new Date().toISOString() };
-      store.notifications[index] = updated;
-      this.writeStore(store);
-      this.emitNotificationEvent('notify.read', updated, eventSource);
-      return { notification: updated, markedRead: 1 };
+      if (occurrenceResult) this.v2Store.acknowledgeCompatibility({ [id]: 'update-if-present' });
+      if (changed) this.emitNotificationEvent('notify.read', updated, eventSource, occurrenceResult?.notification);
+      return { notification: updated, markedRead: changed ? 1 : 0 };
     });
   }
 
   markSessionRead(sessionName: string, eventSource: HydraEventSource = 'cli'): NotificationMarkSessionReadResult {
     return this.withLock(() => {
       const store = this.readStore();
-      const readAt = new Date().toISOString();
-      const updatedNotifications: HydraNotification[] = [];
+      this.reconcileCompatibility(store);
+      const readAt = new Date(this.now()).toISOString();
+      const updatedById = new Map<string, HydraNotification>();
+      const updatedOccurrences = this.v2Store.markMatchingRead({ session: sessionName }, readAt);
+      for (const occurrence of updatedOccurrences) {
+        const existing = store.notifications.find(notification => notification.id === occurrence.id);
+        updatedById.set(occurrence.id, toLegacyNotification(occurrence, existing));
+      }
+
       store.notifications = store.notifications.map(notification => {
         if (
           notification.readAt !== null ||
@@ -205,15 +303,19 @@ export class NotificationStore {
           return notification;
         }
         const updated = { ...notification, readAt };
-        updatedNotifications.push(updated);
+        updatedById.set(updated.id, updated);
         return updated;
       });
 
-      if (updatedNotifications.length > 0) {
+      const updatedNotifications = [...updatedById.values()];
+      if (store.notifications.some(notification => updatedById.has(notification.id))) {
         this.writeStore(store);
-        for (const notification of updatedNotifications) {
-          this.emitNotificationEvent('notify.read', notification, eventSource);
-        }
+      }
+      this.v2Store.acknowledgeCompatibility(Object.fromEntries(
+        updatedOccurrences.map(notification => [notification.id, 'update-if-present' as const]),
+      ));
+      for (const notification of updatedNotifications) {
+        this.emitNotificationEvent('notify.read', notification, eventSource, this.v2Store.get(notification.id));
       }
 
       return {
@@ -229,15 +331,63 @@ export class NotificationStore {
   ): NotificationClearResult {
     return this.withLock(() => {
       const store = this.readStore();
+      this.reconcileCompatibility(store);
+      const throughEventSequence = this.eventLog.readLastSeq();
+      const clearResult = this.v2Store.clear(
+        filters,
+        throughEventSequence,
+        new Date(this.now()).toISOString(),
+      );
       const before = store.notifications.length;
+      const removedIds = new Set(
+        store.notifications
+          .filter(notification => matchesFilters(notification, filters))
+          .map(notification => notification.id),
+      );
       store.notifications = store.notifications.filter(notification => !matchesFilters(notification, filters));
-      const cleared = before - store.notifications.length;
-      if (cleared > 0) {
+      const removedFromV1 = before - store.notifications.length;
+      if (removedFromV1 > 0) {
         this.writeStore(store);
-        this.emitClearEvent(cleared, filters, eventSource);
       }
-      return { cleared };
+      this.v2Store.acknowledgeCompatibility(Object.fromEntries(
+        clearResult.notifications.map(notification => [notification.id, 'remove' as const]),
+      ));
+      for (const notification of clearResult.notifications) removedIds.add(notification.id);
+      const cleared = removedIds.size;
+      this.emitClearEvent(
+        cleared,
+        filters,
+        eventSource,
+        clearResult.tombstone.id,
+        throughEventSequence,
+      );
+      return { cleared, tombstoneId: clearResult.tombstone.id };
     });
+  }
+
+  resolve(
+    id: string,
+    reason: string,
+    eventSource: HydraEventSource = 'session-manager',
+  ): NotificationStatusMutationResult {
+    return this.changeStatus(id, 'resolved', reason, eventSource);
+  }
+
+  dismiss(
+    id: string,
+    eventSource: HydraEventSource = 'cli',
+  ): NotificationStatusMutationResult {
+    return this.changeStatus(id, 'dismissed', 'dismissed', eventSource);
+  }
+
+  supersede(
+    id: string,
+    reason: string,
+    eventSource: HydraEventSource = 'session-manager',
+  ): NotificationStatusMutationResult {
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error('Notification supersede reason is required');
+    return this.changeStatus(id, 'superseded', truncate(normalizedReason, MAX_TITLE_LENGTH), eventSource);
   }
 
   open(id: string, eventSource: HydraEventSource = 'cli'): NotificationOpenResult {
@@ -248,6 +398,84 @@ export class NotificationStore {
       opened: false,
       markedRead: read.markedRead,
     };
+  }
+
+  listOccurrences(status?: NotificationStatus): HydraNotificationV2[] {
+    return this.v2Store.list(status);
+  }
+
+  private changeStatus(
+    id: string,
+    status: 'resolved' | 'superseded' | 'dismissed',
+    reason: string,
+    eventSource: HydraEventSource,
+  ): NotificationStatusMutationResult {
+    return this.withLock(() => {
+      const store = this.readStore();
+      this.reconcileCompatibility(store);
+      const existing = store.notifications.find(notification => notification.id === id);
+      const changedAt = new Date(this.now()).toISOString();
+      const result = status === 'resolved'
+        ? this.v2Store.resolve(id, reason, changedAt)
+        : status === 'superseded'
+          ? this.v2Store.supersede(id, changedAt)
+          : this.v2Store.dismiss(id, changedAt);
+      const before = store.notifications.length;
+      store.notifications = store.notifications.filter(notification => notification.id !== id);
+      if (store.notifications.length !== before) this.writeStore(store);
+      this.v2Store.acknowledgeCompatibility({ [id]: 'remove' });
+
+      const notification = toLegacyNotification(result.notification, existing);
+      if (result.changed) {
+        this.emitNotificationEvent(
+          status === 'resolved'
+            ? 'notify.resolved'
+            : status === 'superseded'
+              ? 'notify.superseded'
+              : 'notify.dismissed',
+          notification,
+          eventSource,
+          result.notification,
+          reason,
+        );
+      }
+      return { notification, changed: result.changed, status: result.notification.status };
+    });
+  }
+
+  private reconcileCompatibility(store: NotificationStoreFile): void {
+    const v2Snapshot = this.v2Store.snapshot();
+    const pending = v2Snapshot.pendingCompatibility;
+    const pendingEntries = Object.entries(pending);
+    if (pendingEntries.length === 0) return;
+
+    const occurrences = new Map(v2Snapshot.notifications.map(notification => [notification.id, notification]));
+    let changed = false;
+    for (const [id, operation] of pendingEntries) {
+      const index = store.notifications.findIndex(notification => notification.id === id);
+      const occurrence = occurrences.get(id);
+      if (operation === 'remove' || !occurrence || occurrence.status !== 'active') {
+        if (index >= 0) {
+          store.notifications.splice(index, 1);
+          changed = true;
+        }
+        continue;
+      }
+      if (operation === 'update-if-present' && index < 0) continue;
+
+      const projected = toLegacyNotification(occurrence, index >= 0 ? store.notifications[index] : undefined);
+      if (index >= 0) {
+        if (JSON.stringify(store.notifications[index]) !== JSON.stringify(projected)) {
+          store.notifications[index] = projected;
+          changed = true;
+        }
+      } else {
+        store.notifications = [projected, ...store.notifications].slice(0, this.retentionLimit);
+        changed = true;
+      }
+    }
+    if (changed) this.writeStore(store);
+    this.v2Store.acknowledgeCompatibility(pending);
   }
 
   private readStore(): NotificationStoreFile {
@@ -321,7 +549,13 @@ export class NotificationStore {
     }
   }
 
-  private emitNotificationEvent(type: 'notify.created' | 'notify.read', notification: HydraNotification, source: HydraEventSource): void {
+  private emitNotificationEvent(
+    type: 'notify.created' | 'notify.read' | 'notify.resolved' | 'notify.superseded' | 'notify.dismissed',
+    notification: HydraNotification,
+    source: HydraEventSource,
+    occurrence?: Partial<HydraNotificationV2>,
+    reason?: string,
+  ): void {
     try {
       this.eventLog.append({
         type,
@@ -340,6 +574,14 @@ export class NotificationStore {
           branch: notification.context?.branch,
           workdir: notification.context?.workdir,
           agent: notification.context?.agent,
+          occurrenceId: occurrence?.occurrenceId,
+          lifecycleEpoch: occurrence?.lifecycleEpoch,
+          runId: occurrence?.runId,
+          signalId: occurrence?.signalId,
+          notificationStatus: occurrence?.status,
+          resolvedAt: occurrence?.resolvedAt,
+          dismissedAt: occurrence?.dismissedAt,
+          reason,
         },
       });
     } catch (error) {
@@ -355,6 +597,8 @@ export class NotificationStore {
     cleared: number,
     filters: NotificationClearFilters,
     source: HydraEventSource,
+    tombstoneId: string,
+    throughEventSequence: number,
   ): void {
     try {
       this.eventLog.append({
@@ -367,6 +611,8 @@ export class NotificationStore {
           targetSession: filters.targetSession,
           sourceSession: filters.sourceSession,
           kind: filters.kind,
+          tombstoneId,
+          throughEventSequence,
         },
       });
     } catch (error) {
@@ -376,6 +622,83 @@ export class NotificationStore {
       });
     }
   }
+}
+
+function buildNotificationV2Input(
+  notification: HydraNotification,
+  input: CreateNotificationInput,
+  dedupeKey: string | null,
+  runtimeSnapshot?: WorkerRuntimeSnapshotV2,
+): CreateNotificationV2Input | undefined {
+  const workerId = notification.context?.workerId;
+  if (!Number.isSafeInteger(workerId) || (workerId as number) <= 0 || !notification.sourceSession) {
+    return undefined;
+  }
+
+  const lifecycleEpoch = normalizeOptionalString(input.lifecycleEpoch, MAX_DEDUPE_KEY_LENGTH)
+    ?? runtimeSnapshot?.lifecycleEpoch
+    ?? `legacy-worker-${workerId}`;
+  const runId = normalizeOptionalString(input.runId, MAX_DEDUPE_KEY_LENGTH)
+    ?? runtimeSnapshot?.runId
+    ?? `legacy-run:${workerId}:${notification.sourceSession}`;
+  const signalId = normalizeOptionalString(input.signalId, MAX_DEDUPE_KEY_LENGTH)
+    ?? dedupeKey
+    ?? notification.id;
+  const occurrenceId = normalizeOptionalString(input.occurrenceId, MAX_DEDUPE_KEY_LENGTH)
+    ?? notification.id;
+
+  return {
+    id: notification.id,
+    occurrenceId,
+    workerId: workerId as number,
+    lifecycleEpoch,
+    runId,
+    signalId,
+    kind: notification.kind,
+    title: notification.title,
+    body: notification.body,
+    createdAt: notification.createdAt,
+    sourceSession: notification.sourceSession,
+    targetSession: notification.targetSession,
+    action: notification.action && { ...notification.action },
+  };
+}
+
+function toLegacyNotification(
+  notification: HydraNotificationV2,
+  fallback?: HydraNotification,
+): HydraNotification {
+  const projected: HydraNotification = {
+    id: notification.id,
+    createdAt: notification.createdAt,
+    readAt: notification.readAt,
+    kind: notification.kind,
+    title: notification.title,
+    body: notification.body,
+    targetSession: notification.targetSession,
+    sourceSession: notification.sourceSession,
+    context: {
+      ...fallback?.context,
+      workerId: notification.workerId,
+    },
+  };
+  if (fallback?.dedupeKey) projected.dedupeKey = fallback.dedupeKey;
+  const action = notification.action ?? fallback?.action;
+  if (action) projected.action = { ...action };
+  return projected;
+}
+
+function cloneNotification(notification: HydraNotification): HydraNotification {
+  return {
+    ...notification,
+    action: notification.action && { ...notification.action },
+    context: notification.context && { ...notification.context },
+  };
+}
+
+function compareNotificationsNewestFirst(a: HydraNotification, b: HydraNotification): number {
+  const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  return timeDiff !== 0 ? timeDiff : a.id.localeCompare(b.id);
 }
 
 function getNextNotificationTimestamp(notifications: readonly HydraNotification[], wallClockMs: number): string {

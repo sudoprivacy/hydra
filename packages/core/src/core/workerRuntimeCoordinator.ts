@@ -262,6 +262,7 @@ export function projectLegacyNotificationRuntime(
   notification: HydraNotification,
   eventSource: HydraEventSource,
   compatibilityStore: WorkerRuntimeV1ProjectionStore,
+  occurrence?: Pick<WorkerRuntimeSignalV2, 'lifecycleEpoch' | 'runId'>,
 ): SetWorkerRuntimeStateResult | undefined {
   if (!notification.sourceSession || typeof notification.context?.workerId !== 'number') return undefined;
   const state = notification.kind === 'complete' ? 'idle'
@@ -277,6 +278,8 @@ export function projectLegacyNotificationRuntime(
     notificationId: notification.id,
     occurrenceId: notification.id,
     workerId: notification.context.workerId,
+    lifecycleEpoch: occurrence?.lifecycleEpoch,
+    runId: occurrence?.runId,
     agent: notification.context.agent,
     workdir: notification.context.workdir,
     updatedAt: notification.createdAt,

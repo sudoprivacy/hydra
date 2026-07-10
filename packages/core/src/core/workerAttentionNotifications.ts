@@ -120,7 +120,7 @@ export function publishWorkerRuntimeErrorNotification(
       'session-manager',
       options.eventSource || 'session-manager',
       options.runtimeStateStore,
-      result.notification?.id,
+      'occurrence' in result ? result.occurrence : undefined,
     );
   }
   return result;
@@ -159,7 +159,7 @@ export function publishWorkerNeedsInputNotification(
       signal.source === 'codex-transcript' ? 'codex-transcript' : 'hook',
       options.eventSource || 'hook',
       options.runtimeStateStore,
-      result.notification?.id,
+      'occurrence' in result ? result.occurrence : undefined,
     );
   }
   return result;
@@ -196,7 +196,7 @@ function updateWorkerRuntimeStateFromAttention(
   origin: WorkerRuntimeSignalOrigin,
   eventSource: HydraEventSource,
   runtimeStateStore?: WorkerRuntimeStateStore,
-  occurrenceId?: string,
+  occurrence?: CreateNotificationResult['occurrence'],
 ): void {
   try {
     setWorkerRuntimeState({
@@ -205,7 +205,9 @@ function updateWorkerRuntimeStateFromAttention(
       origin,
       reason,
       workerId: worker.workerId,
-      occurrenceId,
+      occurrenceId: occurrence?.occurrenceId,
+      lifecycleEpoch: occurrence?.lifecycleEpoch,
+      runId: occurrence?.runId,
       agent: worker.agent,
       workdir: worker.workdir,
     }, eventSource, runtimeStateStore ?? new WorkerRuntimeStateStore());

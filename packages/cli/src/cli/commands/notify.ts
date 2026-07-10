@@ -93,7 +93,12 @@ export function registerNotifyCommands(program: Command): void {
           eventSource,
         });
         if (result.created) {
-          projectLegacyNotificationRuntime(result.notification, eventSource, new WorkerRuntimeStateStore());
+          projectLegacyNotificationRuntime(
+            result.notification,
+            eventSource,
+            new WorkerRuntimeStateStore(),
+            result.occurrence,
+          );
         }
 
         outputResult(
