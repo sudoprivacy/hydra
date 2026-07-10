@@ -1,6 +1,6 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Approved implementation contract — Wave 2 complete; Wave 3 next
+**Status:** Approved implementation contract — Wave 3 complete; Wave 4 next
 
 **Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
@@ -741,9 +741,9 @@ After each merged wave, update only these sections:
 - [x] PR4 Notification v2 (#281, `d09675b`)
 - [x] PR6 ArchiveStore (#282, `43b2af7`)
 - [x] PR5 AgentHookAdapter (#283, `9075994`)
-- [ ] PR7 WorkerLifecycleService
-- [ ] PR8 CompletionJobStore/Coordinator
-- [ ] PR9 Stable identity migration
+- [x] PR7 WorkerLifecycleService (#285, `35b529e`)
+- [x] PR8 CompletionJobStore/Coordinator (#286, `d10a633`)
+- [x] PR9 Stable identity migration (#287, `b558fe4`)
 - [ ] PR10A Codex/Supervisor
 - [ ] PR10B Claude/agent adapters
 - [ ] PR10C Desktop Inbox
@@ -806,3 +806,32 @@ After each merged wave, update only these sections:
   concurrency are `fixed`. Codex abort resolution and completion pending-job
   overwrite remain `known-failure` for their owning waves.
 - No frozen decision or PR dependency was changed during Wave 2.
+
+### Wave 3 — 2026-07-10
+
+- Validated integration commit: `d7ddcc1` on
+  `feat/worker-attention-control-plane`.
+- PR7, PR8, and PR9 each passed the repository Claude Code Review workflow
+  with no review comments or inline findings before squash merge.
+- Follow-up PR #288 (`d7ddcc1`) added retry handling for macOS `ENOTEMPTY`
+  races during temporary-directory cleanup. Its Claude Code Review also passed
+  with no review comments or inline findings.
+- `npm run lint`
+- `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
+- `git diff --check`
+- Worker create, start, send, stop, delete, rename, restart, and restore
+  mutations now converge through `WorkerLifecycleService`, with lifecycle
+  errors published consistently.
+- Completion intent now uses locked, atomic `completion-jobs.json` records and
+  `CompletionCoordinator` claim/finalize recovery instead of `.pending` files.
+  Hook signals are structured inputs whose current routing is resolved when
+  the signal is processed.
+- Worker identity is now keyed by durable `workerId` and lifecycle epoch across
+  runtime, completion, notification, and events. Session aliases preserve
+  compatibility across rename, restart, and restore, while stale hooks and
+  pending legacy state are cleaned up through a one-time fail-closed migration.
+- Characterization ledger after validation: completion pending-job overwrite
+  joins runtime rollback, event-only notification clear, symlink escape,
+  foreign tmux ownership, and archive concurrency as `fixed`. Codex turn abort
+  resolution remains `known-failure` for PR10A.
+- No frozen decision or PR dependency was changed during Wave 3.
