@@ -217,6 +217,34 @@ export class NotificationStoreV2 {
     });
   }
 
+  rerouteActiveWorker(workerId: number, sourceSession: string): HydraNotificationV2[] {
+    if (!Number.isSafeInteger(workerId) || workerId <= 0) {
+      throw new Error('Notification v2 workerId must be a positive safe integer');
+    }
+    validateRequiredString(sourceSession, 'sourceSession', MAX_SESSION_LENGTH);
+    return this.update(store => {
+      const updated: HydraNotificationV2[] = [];
+      for (const notification of store.notifications) {
+        if (notification.status !== 'active' || notification.workerId !== workerId) continue;
+        const previousSource = notification.sourceSession;
+        let changed = false;
+        if (previousSource !== sourceSession) {
+          notification.sourceSession = sourceSession;
+          changed = true;
+        }
+        if (notification.action?.session === previousSource && notification.action.session !== sourceSession) {
+          notification.action = { ...notification.action, session: sourceSession };
+          changed = true;
+        }
+        if (!changed) continue;
+        store.signalReceipts[signalIdentityKey(notification)] = receiptFromNotification(notification);
+        store.pendingCompatibility[notification.id] = 'update-if-present';
+        updated.push(cloneNotificationV2(notification));
+      }
+      return updated;
+    });
+  }
+
   resolve(
     id: string,
     reason: string,

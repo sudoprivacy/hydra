@@ -415,6 +415,32 @@ export class NotificationStore {
     return this.v2Store.list(status);
   }
 
+  rerouteActiveWorker(workerId: number, sourceSession: string): HydraNotification[] {
+    return this.withLock(() => {
+      const store = this.readStore();
+      this.reconcileCompatibility(store);
+      const updatedOccurrences = this.v2Store.rerouteActiveWorker(workerId, sourceSession);
+      if (updatedOccurrences.length === 0) return [];
+
+      const updatedById = new Map(updatedOccurrences.map(notification => [notification.id, notification]));
+      let compatibilityChanged = false;
+      store.notifications = store.notifications.map(notification => {
+        const occurrence = updatedById.get(notification.id);
+        if (!occurrence) return notification;
+        compatibilityChanged = true;
+        return toLegacyNotification(occurrence, notification);
+      });
+      if (compatibilityChanged) this.writeStore(store);
+      this.v2Store.acknowledgeCompatibility(Object.fromEntries(
+        updatedOccurrences.map(notification => [notification.id, 'update-if-present' as const]),
+      ));
+      return updatedOccurrences.map(notification => {
+        const legacy = store.notifications.find(item => item.id === notification.id);
+        return toLegacyNotification(notification, legacy);
+      });
+    });
+  }
+
   private changeStatus(
     id: string,
     status: 'resolved' | 'superseded' | 'dismissed',
