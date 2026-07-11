@@ -1,6 +1,6 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Approved implementation contract — Wave 4 complete; Wave 5 validation passed on candidate branch, integration pending
+**Status:** Implementation complete through Wave 5; dependency-ordered promotion to `main` pending
 
 **Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
@@ -749,7 +749,7 @@ After each merged wave, update only these sections:
 - [x] PR10C Desktop Inbox (#293, `28036a1`)
 - [x] PR10D VS Code/CLI convergence (#294, `30499c9`)
 - [x] PR10E EventHub/stream/retention (#295, `1068214`)
-- [ ] Wave 5 migration and release validation
+- [x] Wave 5 migration and release validation (#296, `b75ecdf`)
 
 ## 18. Validation evidence
 
@@ -857,11 +857,12 @@ After each merged wave, update only these sections:
 - `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
 - No frozen decision or PR dependency was changed during Wave 4.
 
-### Wave 5 candidate validation — 2026-07-11
+### Wave 5 — 2026-07-11
 
-- Validation branch: `feat/wa-wave-5-validation`, based on integration commit
-  `1068214`. The final validated integration commit is recorded after this
-  branch is squash-merged.
+- Validated integration commit: `b75ecdf` on
+  `feat/worker-attention-control-plane`.
+- PR #296 passed the repository Claude Code Review workflow with no ordinary
+  comments or inline findings before squash merge.
 - Added `smoke:wave5-migration` to the default `npm test` contract. It verifies
   a 100,000-event segmented log, cursor reads and EventHub replay ordering, a
   100,000-notification v2 store with active-attention preservation and bounded
@@ -912,4 +913,4 @@ After each merged wave, update only these sections:
 - Packaged artifacts:
   `packages/desktop/dist/Hydra-0.3.2026062800-arm64.dmg` and
   `packages/desktop/dist/Hydra-0.3.2026062800-arm64-mac.zip`.
-- No frozen decision or PR dependency was changed during candidate validation.
+- No frozen decision or PR dependency was changed during Wave 5.
