@@ -6,6 +6,7 @@ import {
   type HydraEventSource,
 } from './events';
 import { logger } from './logger';
+import type { EventHub } from './eventHub';
 import {
   getHydraNotificationsFile,
   NotificationStore,
@@ -39,6 +40,7 @@ export interface NotificationStateServiceOptions {
   readonly eventsFile?: string;
   readonly store?: NotificationStore;
   readonly eventLog?: EventLog;
+  readonly eventHub?: EventHub;
 }
 
 type NotificationSnapshotListener = (snapshot: NotificationSnapshot) => void;
@@ -49,6 +51,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 export class NotificationStateService implements Disposable {
   private readonly store: NotificationStore;
   private readonly eventLog: EventLog;
+  private readonly eventHub: EventHub | undefined;
   private readonly notificationsFile: string;
   private readonly eventsFile: string;
   private readonly debounceMs: number;
@@ -62,6 +65,7 @@ export class NotificationStateService implements Disposable {
   private lastNotificationSignature = 'missing';
   private lastEventSignature = 'missing';
   private lastMalformedEventSignature: string | undefined;
+  private eventIterator: AsyncIterableIterator<HydraEvent> | undefined;
   private sourceAttentionBySession = new Map<string, HydraNotification>();
   private sourceCompletionBySession = new Map<string, HydraNotification>();
   private readonly notificationFileListener = (current: fs.Stats, previous: fs.Stats) => {
@@ -81,6 +85,7 @@ export class NotificationStateService implements Disposable {
     this.notificationsFile = options.notificationsFile ?? getHydraNotificationsFile();
     this.eventsFile = options.eventsFile ?? getHydraEventsFile();
     this.eventLog = options.eventLog ?? new EventLog(this.eventsFile);
+    this.eventHub = options.eventHub;
     this.store = options.store ?? new NotificationStore(this.notificationsFile, undefined, this.eventLog);
     this.debounceMs = Math.max(0, Math.trunc(options.debounceMs ?? DEFAULT_RELOAD_DEBOUNCE_MS));
     this.pollIntervalMs = Math.max(50, Math.trunc(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS));
@@ -96,15 +101,16 @@ export class NotificationStateService implements Disposable {
     const initialNotificationSignature = getFileSignature(this.notificationsFile);
     this.lastNotificationSignature = initialNotificationSignature;
     this.lastEventSignature = getFileSignature(this.eventsFile);
-    this.startWatching();
-
     const baselineSeq = this.safeReadLastSeq();
     this.lastEventSeq = baselineSeq;
+    this.startWatching();
     this.reloadNow({ emit: false, reason: 'initialize' });
     if (getFileSignature(this.notificationsFile) !== initialNotificationSignature) {
       this.reloadNow({ emit: false, reason: 'initialize-signature-changed' });
     }
-    this.processEventChangesAfter(baselineSeq, { reload: 'immediate', emit: false });
+    if (!this.eventHub) {
+      this.processEventChangesAfter(baselineSeq, { reload: 'immediate', emit: false });
+    }
   }
 
   dispose(): void {
@@ -113,7 +119,12 @@ export class NotificationStateService implements Disposable {
       this.reloadTimer = undefined;
     }
     fs.unwatchFile(this.notificationsFile, this.notificationFileListener);
-    fs.unwatchFile(this.eventsFile, this.eventFileListener);
+    if (this.eventHub) {
+      void this.eventIterator?.return?.();
+      this.eventIterator = undefined;
+    } else {
+      fs.unwatchFile(this.eventsFile, this.eventFileListener);
+    }
     this.listeners.clear();
     this.disposed = true;
     this.initialized = false;
@@ -234,7 +245,25 @@ export class NotificationStateService implements Disposable {
 
   private startWatching(): void {
     fs.watchFile(this.notificationsFile, { interval: this.pollIntervalMs }, this.notificationFileListener);
-    fs.watchFile(this.eventsFile, { interval: this.pollIntervalMs }, this.eventFileListener);
+    if (this.eventHub) {
+      this.eventIterator = this.eventHub.subscribe(this.lastEventSeq);
+      void this.consumeEventHub(this.eventIterator);
+    } else {
+      fs.watchFile(this.eventsFile, { interval: this.pollIntervalMs }, this.eventFileListener);
+    }
+  }
+
+  private async consumeEventHub(iterator: AsyncIterableIterator<HydraEvent>): Promise<void> {
+    try {
+      for await (const event of iterator) {
+        if (this.disposed) return;
+        this.applyEventChanges([event], { reload: 'debounced', emit: true });
+      }
+    } catch (error) {
+      if (!this.disposed) {
+        logger.warn('notification-state.event-hub', 'Notification event subscription failed', { error });
+      }
+    }
   }
 
   private handleNotificationFileChange(): void {
@@ -275,7 +304,11 @@ export class NotificationStateService implements Disposable {
       return;
     }
 
-    this.lastEventSeq = Math.max(after, ...events.map(event => event.seq));
+    this.applyEventChanges(events, options);
+  }
+
+  private applyEventChanges(events: HydraEvent[], options: { reload: 'debounced' | 'immediate'; emit: boolean }): void {
+    this.lastEventSeq = Math.max(this.lastEventSeq, ...events.map(event => event.seq));
     if (events.some(event => event.type.startsWith('notify.'))) {
       if (options.reload === 'immediate') {
         this.reloadNow({ emit: options.emit, reason: 'notification-event' });

@@ -216,9 +216,11 @@ one event record, not a wrapper object. `--after` and `--cursor-file` have the
 same meaning as non-follow mode; the cursor file is updated after each printed
 event.
 
-The first event-log version does not rotate `events.jsonl`. Consumers should
-track by `seq`, not byte offset, so a future rotation implementation can remain
-compatible.
+The event log rotates the active `events.jsonl` into bounded sequence-named
+segments. `EventLog.read()` reads retained segments transparently and preserves
+monotonic `seq` values through `events.state.json`; consumers must track by
+`seq`, not filename or byte offset. The default retention keeps up to 16
+segments of 4 MiB each for at most 30 days.
 
 ### `hydra notify create --json`
 
