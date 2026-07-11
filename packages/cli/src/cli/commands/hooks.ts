@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { CompletionCoordinator } from '@hydra/core/completionCoordinator';
 import { CompletionJobStore } from '@hydra/core/completionJobStore';
+import { AgentHookEventCoordinator } from '@hydra/core/agentHookEventCoordinator';
 import { EventLog } from '@hydra/core/events';
 import { NotificationStore } from '@hydra/core/notifications';
 import { outputError, outputResult, type OutputOpts } from '../output';
@@ -25,6 +26,13 @@ interface CompletionHookOptions {
   workerId?: string;
   lifecycleEpoch?: string;
   agent?: string;
+}
+
+interface AgentSignalHookOptions {
+  workerId?: string;
+  lifecycleEpoch?: string;
+  agent?: string;
+  event?: string;
 }
 
 export function registerHooksCommands(program: Command): void {
@@ -144,6 +152,63 @@ export function registerHooksCommands(program: Command): void {
             }
           },
         );
+      } catch (error) {
+        outputError(error, globalOpts);
+      }
+    });
+
+  hooks
+    .command('signal')
+    .description('Ingest a normalized native agent hook event')
+    .requiredOption('--worker-id <number>', 'Stable Hydra worker number')
+    .requiredOption('--lifecycle-epoch <epoch>', 'Worker lifecycle epoch embedded in the hook')
+    .requiredOption('--agent <agent>', 'Agent that emitted the hook event')
+    .requiredOption('--event <event>', 'Native hook event name')
+    .action(async (opts: AgentSignalHookOptions) => {
+      const globalOpts = program.opts() as OutputOpts;
+      try {
+        const workerId = parsePositiveInteger(opts.workerId, '--worker-id');
+        const lifecycleEpoch = opts.lifecycleEpoch?.trim();
+        if (!lifecycleEpoch) throw new Error('--lifecycle-epoch is required');
+        const payload = await readStdinJson();
+        const sessionManager = new SessionManager(new TmuxBackendCore());
+        await sessionManager.ensurePersistedWorkerIdentities();
+
+        const eventLog = new EventLog();
+        const runtimeStore = new WorkerRuntimeStateStoreV2();
+        const compatibilityStore = new WorkerRuntimeStateStore();
+        const notificationStore = new NotificationStore(
+          undefined,
+          undefined,
+          eventLog,
+          compatibilityStore,
+          Date.now,
+          undefined,
+          runtimeStore,
+        );
+        const coordinator = new AgentHookEventCoordinator({
+          resolveWorker: candidateId => readWorkerSessionById(candidateId) ?? undefined,
+          runtimeStore,
+          compatibilityStore,
+          notificationStore,
+          completionJobStore: new CompletionJobStore(),
+          eventLog,
+          eventSource: 'hook',
+        });
+        const result = coordinator.process({
+          workerId,
+          lifecycleEpoch,
+          agent: opts.agent || '',
+          eventName: opts.event,
+          payload,
+        });
+        outputResult(result, globalOpts, () => {
+          if (result.status === 'ignored') {
+            console.log(`Ignored ${opts.agent} ${opts.event} signal: ${result.reason}`);
+          } else {
+            console.log(`${result.status === 'duplicate' ? 'Duplicate' : 'Applied'} ${result.event.kind} signal for worker #${workerId}`);
+          }
+        });
       } catch (error) {
         outputError(error, globalOpts);
       }

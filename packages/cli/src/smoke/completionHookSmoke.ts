@@ -187,8 +187,13 @@ async function main(): Promise<void> {
     assert.equal(claudeConfig.hooks?.Stop?.length, 1);
     assert.equal(claudeConfig.hooks?.Stop?.[0].hooks[0].async, true);
     assert.match(claudeConfig.hooks?.Stop?.[0].hooks[0].command || '', /completion-worker-71\.sh/);
-    assert.match(claudeConfig.hooks?.PermissionRequest?.[0].hooks[0].command || '', /hooks needs-input/);
-    assert.match(claudeConfig.hooks?.PreToolUse?.[0].hooks[0].command || '', /hooks needs-input/);
+    assert.match(claudeConfig.hooks?.PermissionRequest?.[0].hooks[0].command || '', /hooks signal/);
+    assert.match(claudeConfig.hooks?.PermissionRequest?.[0].hooks[0].command || '', /--worker-id 71/);
+    assert.match(claudeConfig.hooks?.PermissionRequest?.[0].hooks[0].command || '', /--lifecycle-epoch/);
+    assert.match(claudeConfig.hooks?.PreToolUse?.[0].hooks[0].command || '', /hooks signal/);
+    assert.match(claudeConfig.hooks?.PostToolUse?.[0].hooks[0].command || '', /hooks signal/);
+    assert.match(claudeConfig.hooks?.PostToolUseFailure?.[0].hooks[0].command || '', /hooks signal/);
+    assert.match(claudeConfig.hooks?.StopFailure?.[0].hooks[0].command || '', /hooks signal/);
 
     const codexConfig = readJson(path.join(workdir, '.codex', 'hooks.json')) as {
       hooks?: { Stop?: Array<{ hooks: Array<{ command: string }> }> };

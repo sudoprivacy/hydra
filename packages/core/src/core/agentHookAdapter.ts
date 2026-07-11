@@ -41,6 +41,8 @@ export interface AgentHookInstallRequest {
   agentType: string;
   workdir: string;
   sessionName: string;
+  workerId?: number;
+  lifecycleEpoch?: string;
   completion?: AgentCompletionHookScript;
 }
 
@@ -131,9 +133,9 @@ const AGENT_HOOK_ADAPTERS: Record<AgentType, AgentHookAdapter> = {
     capabilities: {
       complete: 'hook',
       needsInput: 'hook',
-      inputResolved: 'unsupported',
+      inputResolved: 'hook',
       aborted: 'unsupported',
-      runtimeError: 'unsupported',
+      runtimeError: 'hook',
     },
     buildProjectPlan: buildClaudeHookPlan,
   },
@@ -326,6 +328,7 @@ function buildClaudeHookPlan(request: AgentHookInstallRequest): ProjectHookPlan 
   const completionCommand = request.completion
     ? buildAgentCompletionHookCommand(request.completion.path, 'claude', request.workdir)
     : undefined;
+  const supportsStableSignals = hasStableHookIdentity(request);
   return {
     configPath: resolveConfigPath(path.join(request.workdir, '.claude', 'settings.json')),
     registrations: [
@@ -337,7 +340,7 @@ function buildClaudeHookPlan(request: AgentHookInstallRequest): ProjectHookPlan 
         eventName: 'PermissionRequest',
         entry: { hooks: [{
           type: 'command',
-          command: buildNeedsInputHookCommand(request.sessionName, 'claude', 'PermissionRequest'),
+          command: buildAgentSignalHookCommand(request, 'PermissionRequest'),
           async: true,
         }] },
       },
@@ -345,10 +348,32 @@ function buildClaudeHookPlan(request: AgentHookInstallRequest): ProjectHookPlan 
         eventName: 'PreToolUse',
         entry: { hooks: [{
           type: 'command',
-          command: buildNeedsInputHookCommand(request.sessionName, 'claude', 'PreToolUse'),
+          command: buildAgentSignalHookCommand(request, 'PreToolUse'),
           async: true,
         }] },
       },
+      ...(supportsStableSignals ? [{
+        eventName: 'PostToolUse',
+        entry: { hooks: [{
+          type: 'command',
+          command: buildAgentSignalHookCommand(request, 'PostToolUse'),
+          async: true,
+        }] },
+      }, {
+        eventName: 'PostToolUseFailure',
+        entry: { hooks: [{
+          type: 'command',
+          command: buildAgentSignalHookCommand(request, 'PostToolUseFailure'),
+          async: true,
+        }] },
+      }, {
+        eventName: 'StopFailure',
+        entry: { hooks: [{
+          type: 'command',
+          command: buildAgentSignalHookCommand(request, 'StopFailure'),
+          async: true,
+        }] },
+      }] : []),
     ],
   };
 }
@@ -721,7 +746,43 @@ function extractFirstHookCommand(entry: unknown): string | undefined {
   return undefined;
 }
 
-function buildNeedsInputHookCommand(sessionName: string, agentType: string, eventName: string): string {
+function buildAgentSignalHookCommand(request: AgentHookInstallRequest, eventName: string): string {
+  if (!hasStableHookIdentity(request)) {
+    return buildLegacyNeedsInputHookCommand(request.sessionName, request.agentType, eventName);
+  }
+  const agentType = request.agentType;
+  const stableIdentityArgs = `--worker-id ${request.workerId} --lifecycle-epoch ${shellQuote(request.lifecycleEpoch!)}`;
+  if (process.platform === 'win32') {
+    const psq = (value: string) => `'${value.replace(/'/g, "''")}'`;
+    const windowsIdentityArgs = `--worker-id ${request.workerId} --lifecycle-epoch ${psq(request.lifecycleEpoch!)}`;
+    return [
+      '$hydra = Get-Command hydra -ErrorAction SilentlyContinue',
+      '$hydraPath = if ($hydra) { $hydra.Source } else { $null }',
+      'if (-not $hydraPath) {',
+      "  foreach ($candidate in @((Join-Path $HOME '.hydra\\bin\\hydra.cmd'), (Join-Path $HOME '.hydra\\bin\\hydra.ps1'), (Join-Path $HOME '.hydra\\bin\\hydra'))) {",
+      '    if (Test-Path -LiteralPath $candidate) { $hydraPath = $candidate; break }',
+      '  }',
+      '}',
+      `if ($hydraPath) { & $hydraPath hooks signal --agent ${psq(agentType)} ${windowsIdentityArgs} --event ${psq(eventName)} --json *> $null }`,
+      'exit 0',
+    ].join('; ');
+  }
+  const agent = shellQuote(agentType);
+  const event = shellQuote(eventName);
+  return [
+    'HYDRA_CLI=$(command -v hydra 2>/dev/null || true)',
+    '[ -n "$HYDRA_CLI" ] || HYDRA_CLI="$HOME/.hydra/bin/hydra"',
+    `[ -x "$HYDRA_CLI" ] && "$HYDRA_CLI" hooks signal --agent ${agent} ${stableIdentityArgs} --event ${event} --json >/dev/null 2>&1 || true`,
+  ].join('; ');
+}
+
+function hasStableHookIdentity(request: AgentHookInstallRequest): boolean {
+  return Number.isSafeInteger(request.workerId)
+    && (request.workerId ?? 0) > 0
+    && !!request.lifecycleEpoch?.trim();
+}
+
+function buildLegacyNeedsInputHookCommand(sessionName: string, agentType: string, eventName: string): string {
   if (process.platform === 'win32') {
     const psq = (value: string) => `'${value.replace(/'/g, "''")}'`;
     return [

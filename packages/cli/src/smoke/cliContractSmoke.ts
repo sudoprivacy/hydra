@@ -125,6 +125,7 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['events', '--help'], expected: 'Usage: hydra events [options]' },
     { args: ['hooks', 'capabilities', '--help'], expected: 'Usage: hydra hooks capabilities [options] [agent]' },
     { args: ['hooks', 'complete', '--help'], expected: 'Usage: hydra hooks complete [options]' },
+    { args: ['hooks', 'signal', '--help'], expected: 'Usage: hydra hooks signal [options]' },
     { args: ['notify', 'create', '--help'], expected: 'Usage: hydra notify create [options]' },
     { args: ['notify', 'list', '--help'], expected: 'Usage: hydra notify list [options]' },
     { args: ['notify', 'read', '--help'], expected: 'Usage: hydra notify read [options] <id>' },
