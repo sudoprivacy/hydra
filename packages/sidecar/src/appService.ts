@@ -29,8 +29,8 @@
 //  Op.getDiff               DiffService.getDiff (workdir from SessionManager)
 //  Op.getFileSnapshot       DiffService.getFileSnapshot (path-constrained)
 //  Op.getGitStatus          SessionManager.sync + git status --porcelain        (sidebar U:N)
-//  Topic.events             EventLog.read (poll — EventBus push is M2)           (events.ts)
-//  Topic.notifications      NotificationStateService.onDidChange
+//  Topic.events             EventHub (one tailer + in-process fan-out)            (eventHub.ts)
+//  Topic.notifications      shared NotificationStateService.onDidChange
 //  openTerminal             reserved in-process terminal seam; loopback attach
 //                             is handled by TerminalBridge after ownership auth
 
@@ -48,6 +48,8 @@ import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
 import { NotificationStore } from '@hydra/core/notifications';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import { EventLog, type HydraEventSource } from '@hydra/core/events';
+import { EventHub } from '@hydra/core/eventHub';
+import { AsyncPushIterator } from '@hydra/core/asyncPushIterator';
 import { resolveAgentSessionFile, expandAndResolvePath } from '@hydra/core/path';
 import { getRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hydra/core/git';
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
@@ -103,8 +105,6 @@ import {
 } from '@hydra/protocol';
 
 const DEFAULT_LOG_LINES = 50;
-const EVENT_POLL_INTERVAL_MS = 250;
-
 export interface HydraAppServiceOptions {
   /** Multiplexer backend. Defaults to the real tmux backend. Tests inject a fake. */
   backend?: MultiplexerBackendCore;
@@ -112,6 +112,8 @@ export interface HydraAppServiceOptions {
   notificationStore?: NotificationStore;
   runtimeStateStore?: WorkerRuntimeStateStore;
   eventLog?: EventLog;
+  eventHub?: EventHub;
+  notificationStateService?: NotificationStateService;
   diffService?: DiffService;
   /**
    * Source stamped on sidecar-originated notification events. Must be a value
@@ -128,15 +130,26 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
   private readonly workerLifecycle: WorkerLifecycleService;
   private readonly eventLog: EventLog;
+  private readonly eventHub: EventHub;
+  private readonly notificationStateService: NotificationStateService;
   private readonly diffService: DiffService;
   private readonly notificationEventSource: HydraEventSource;
+  private readonly notificationStreams = new Set<AsyncPushIterator<NotificationSnapshot>>();
+  private notificationStateSubscription: { dispose(): void } | undefined;
+  private notificationStateInitialized = false;
 
   constructor(options: HydraAppServiceOptions = {}) {
     this.backend = options.backend ?? new TmuxBackendCore();
-    this.sessionManager = options.sessionManager ?? new SessionManager(this.backend);
-    this.notificationStore = options.notificationStore ?? new NotificationStore();
-    this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore();
     this.eventLog = options.eventLog ?? new EventLog();
+    this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore(undefined, this.eventLog);
+    this.sessionManager = options.sessionManager ?? new SessionManager(this.backend, this.eventLog, this.runtimeStateStore);
+    this.notificationStore = options.notificationStore ?? new NotificationStore(undefined, undefined, this.eventLog);
+    this.eventHub = options.eventHub ?? new EventHub(this.eventLog);
+    this.notificationStateService = options.notificationStateService ?? new NotificationStateService({
+      store: this.notificationStore,
+      eventLog: this.eventLog,
+      eventHub: this.eventHub,
+    });
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
     this.workerLifecycle = new WorkerLifecycleService({
@@ -167,6 +180,12 @@ export class HydraAppService implements HydraAppServiceApi {
       default:
         throw new Error(`HydraAppService: unknown stream topic "${topic}"`);
     }
+  }
+
+  dispose(): void {
+    this.eventHub.dispose();
+    for (const stream of [...this.notificationStreams]) stream.close();
+    this.stopNotificationState();
   }
 
   openTerminal(input: TerminalAttachInput): TerminalChannel {
@@ -555,53 +574,44 @@ export class HydraAppService implements HydraAppServiceApi {
   // ── streams ──
 
   /**
-   * EventLog.read — drain the backlog after `after`, then poll for new events.
-   * This is the M0 compatibility poller (mirrors `hydra events --follow`); the
-   * in-proc EventBus push replaces the poll in M2. Consumers stop by breaking
-   * the `for await`, which returns the generator and clears the timer.
+   * EventHub drains retained history once, emits local appends synchronously,
+   * and uses one seq-cursored tailer for CLI, extension, and hook writers.
    */
-  private async *subscribeEvents(input: EventSubscribeInput): AsyncGenerator<HydraEvent> {
-    let after = input.after ?? 0;
-    for (;;) {
-      const events = this.eventLog.read({ after, tolerateIncompleteTail: true });
-      for (const event of events) {
-        after = event.seq;
-        yield event;
-      }
-      await sleep(EVENT_POLL_INTERVAL_MS);
-    }
+  private subscribeEvents(input: EventSubscribeInput): AsyncIterableIterator<HydraEvent> {
+    return this.eventHub.subscribe(input.after ?? 0);
   }
 
   /**
-   * NotificationStateService — yield the current snapshot, then push each
-   * `onDidChange` delta. Snapshot + delta, never inferred from terminal text
-   * (FINAL.md §"Event model"). The service (and its watchers) is disposed when
-   * the consumer stops the iteration.
+   * One shared NotificationStateService yields a snapshot per subscriber and
+   * fans out each change. The watcher is disposed after the last subscriber.
    */
-  private async *subscribeNotifications(): AsyncGenerator<NotificationSnapshot> {
-    const service = new NotificationStateService();
-    service.initialize();
-    const queue: NotificationSnapshot[] = [];
-    let notify: (() => void) | undefined;
-    const subscription = service.onDidChange((snapshot) => {
-      queue.push(snapshot);
-      notify?.();
-      notify = undefined;
+  private subscribeNotifications(): AsyncIterableIterator<NotificationSnapshot> {
+    this.startNotificationState();
+    let stream: AsyncPushIterator<NotificationSnapshot>;
+    stream = new AsyncPushIterator(() => {
+      this.notificationStreams.delete(stream);
+      if (this.notificationStreams.size === 0) this.stopNotificationState();
     });
-    try {
-      yield service.getSnapshot();
-      for (;;) {
-        if (queue.length === 0) {
-          await new Promise<void>((resolve) => { notify = resolve; });
-        }
-        while (queue.length > 0) {
-          yield queue.shift() as NotificationSnapshot;
-        }
-      }
-    } finally {
-      subscription.dispose();
-      service.dispose();
-    }
+    this.notificationStreams.add(stream);
+    stream.push(this.notificationStateService.getSnapshot());
+    return stream;
+  }
+
+  private startNotificationState(): void {
+    if (this.notificationStateInitialized) return;
+    this.notificationStateInitialized = true;
+    this.notificationStateService.initialize();
+    this.notificationStateSubscription = this.notificationStateService.onDidChange(snapshot => {
+      for (const stream of this.notificationStreams) stream.push(snapshot);
+    });
+  }
+
+  private stopNotificationState(): void {
+    if (!this.notificationStateInitialized) return;
+    this.notificationStateInitialized = false;
+    this.notificationStateSubscription?.dispose();
+    this.notificationStateSubscription = undefined;
+    this.notificationStateService.dispose();
   }
 
   // ── shared helpers ──
@@ -664,8 +674,4 @@ function resolveCopilotMode(input: { mode?: CopilotMode; plan?: boolean }): Copi
     return 'plan';
   }
   return input.mode === 'plan' ? 'plan' : 'normal';
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

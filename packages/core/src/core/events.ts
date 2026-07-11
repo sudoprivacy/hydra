@@ -35,6 +35,16 @@ export interface EventReadOptions {
   tolerateIncompleteTail?: boolean;
 }
 
+export interface EventLogRetentionOptions {
+  maxActiveBytes?: number;
+  maxSegments?: number;
+  maxSegmentAgeMs?: number;
+}
+
+export interface Disposable {
+  dispose(): void;
+}
+
 interface EventStateFile {
   version: 1;
   lastSeq: number;
@@ -49,6 +59,9 @@ const MAX_TYPE_LENGTH = 120;
 const MAX_STRING_LENGTH = 500;
 const MAX_WORKDIR_LENGTH = 2000;
 const MAX_PAYLOAD_DEPTH = 4;
+const DEFAULT_MAX_ACTIVE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_SEGMENTS = 16;
+const DEFAULT_MAX_SEGMENT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SENSITIVE_KEY_PATTERN = /(body|prompt|message|diff|content|text|token|secret|credential|password|authorization|api[_-]?key|private[_-]?key)/i;
 
 export function getHydraEventsFile(): string {
@@ -60,14 +73,26 @@ export function getHydraEventsStateFile(): string {
 }
 
 export class EventLog {
+  private readonly appendListeners = new Set<(event: HydraEvent) => void>();
+  private readonly maxActiveBytes: number;
+  private readonly maxSegments: number;
+  private readonly maxSegmentAgeMs: number;
+
   constructor(
     private readonly filePath: string = getHydraEventsFile(),
     private readonly statePath: string = getHydraEventsStateFile(),
-  ) {}
+    retention: EventLogRetentionOptions = {},
+  ) {
+    this.maxActiveBytes = Math.max(1, Math.trunc(retention.maxActiveBytes ?? DEFAULT_MAX_ACTIVE_BYTES));
+    this.maxSegments = Math.max(0, Math.trunc(retention.maxSegments ?? DEFAULT_MAX_SEGMENTS));
+    this.maxSegmentAgeMs = Math.max(0, Math.trunc(retention.maxSegmentAgeMs ?? DEFAULT_MAX_SEGMENT_AGE_MS));
+  }
 
   append(input: AppendHydraEventInput): HydraEvent {
-    return this.withLock(() => {
+    const event = this.withLock(() => {
       const lastSeq = Math.max(this.readState().lastSeq, this.readLastSeqFromLog());
+      this.rotateIfNeeded();
+      this.pruneSegments();
       const event: HydraEvent = {
         version: EVENT_VERSION,
         seq: lastSeq + 1,
@@ -102,43 +127,38 @@ export class EventLog {
       this.writeState({ version: EVENT_VERSION, lastSeq: event.seq });
       return event;
     });
+    for (const listener of this.appendListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Event persistence succeeded; listeners are best-effort wake-ups.
+      }
+    }
+    return event;
   }
 
   read(options: EventReadOptions = {}): HydraEvent[] {
-    const after = options.after ?? 0;
-    if (!fs.existsSync(this.filePath)) {
-      return [];
-    }
-    const raw = fs.readFileSync(this.filePath, 'utf-8');
-    const events: HydraEvent[] = [];
-    const lines = raw.split(/\r?\n/);
-    const lastNonEmptyIndex = findLastNonEmptyLineIndex(lines);
-    for (let index = 0; index < lines.length; index++) {
-      const line = lines[index].trim();
-      if (!line) {
-        continue;
+    return this.withLock(() => {
+      const after = options.after ?? 0;
+      const events: HydraEvent[] = [];
+      for (const segment of this.listSegments()) {
+        if (segment.endSeq <= after) continue;
+        events.push(...readEventsFromFile(segment.path, after, false));
       }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        if (options.tolerateIncompleteTail && index === lastNonEmptyIndex) {
-          break;
-        }
-        throw new Error(`Event log at ${this.filePath} has invalid JSON on line ${index + 1}`);
+      if (fs.existsSync(this.filePath)) {
+        events.push(...readEventsFromFile(this.filePath, after, options.tolerateIncompleteTail === true));
       }
-      if (!isHydraEvent(parsed)) {
-        throw new Error(`Event log at ${this.filePath} has invalid event shape on line ${index + 1}`);
-      }
-      if (parsed.seq > after) {
-        events.push(parsed);
-      }
-    }
-    return events;
+      return events.sort((a, b) => a.seq - b.seq);
+    });
+  }
+
+  onDidAppend(listener: (event: HydraEvent) => void): Disposable {
+    this.appendListeners.add(listener);
+    return { dispose: () => this.appendListeners.delete(listener) };
   }
 
   readLastSeq(): number {
-    return Math.max(this.readState().lastSeq, this.readLastSeqFromLog());
+    return this.withLock(() => Math.max(this.readState().lastSeq, this.readLastSeqFromLog()));
   }
 
   private readState(): EventStateFile {
@@ -180,29 +200,57 @@ export class EventLog {
   }
 
   private readLastSeqFromLog(): number {
-    if (!fs.existsSync(this.filePath)) {
-      return 0;
+    const segmentLastSeq = this.listSegments().reduce((max, segment) => Math.max(max, segment.endSeq), 0);
+    return Math.max(segmentLastSeq, readLastSeqFromFile(this.filePath));
+  }
+
+  private rotateIfNeeded(): void {
+    if (!fs.existsSync(this.filePath) || fs.statSync(this.filePath).size < this.maxActiveBytes) return;
+    const events = readEventsFromFile(this.filePath, 0, true);
+    if (events.length === 0) return;
+    const startSeq = events[0].seq;
+    const endSeq = events[events.length - 1].seq;
+    fs.renameSync(this.filePath, `${this.filePath}.${startSeq}-${endSeq}.segment`);
+  }
+
+  private pruneSegments(): void {
+    const segments = this.listSegments();
+    const cutoff = Date.now() - this.maxSegmentAgeMs;
+    const ageEligible = segments.filter(
+      segment => this.maxSegmentAgeMs === 0 || segment.mtimeMs >= cutoff,
+    );
+    const keep = this.maxSegments === 0 ? [] : ageEligible.slice(-this.maxSegments);
+    const keepPaths = new Set(keep.map(segment => segment.path));
+    for (const segment of segments) {
+      if (!keepPaths.has(segment.path)) fs.rmSync(segment.path, { force: true });
     }
-    const raw = fs.readFileSync(this.filePath, 'utf-8').trim();
-    if (!raw) {
-      return 0;
+  }
+
+  private listSegments(): EventSegment[] {
+    const dir = path.dirname(this.filePath);
+    const prefix = `${path.basename(this.filePath)}.`;
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return [];
+      throw error;
     }
-    let lastSeq = 0;
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line.trim()) {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(line) as Partial<HydraEvent>;
-        if (typeof parsed.seq === 'number' && Number.isFinite(parsed.seq)) {
-          lastSeq = Math.max(lastSeq, Math.trunc(parsed.seq));
-        }
-      } catch {
-        // read() is strict for consumers. Seq recovery is best effort so a
-        // malformed tail does not cause the next append to reuse a sequence.
-      }
+    const segments: EventSegment[] = [];
+    for (const name of names) {
+      if (!name.startsWith(prefix)) continue;
+      const match = name.slice(prefix.length).match(/^(\d+)-(\d+)\.segment$/);
+      if (!match) continue;
+      const segmentPath = path.join(dir, name);
+      const stat = fs.statSync(segmentPath);
+      segments.push({
+        path: segmentPath,
+        startSeq: Number(match[1]),
+        endSeq: Number(match[2]),
+        mtimeMs: stat.mtimeMs,
+      });
     }
-    return lastSeq;
+    return segments.sort((a, b) => a.startSeq - b.startSeq);
   }
 
   private withLock<T>(fn: () => T): T {
@@ -232,6 +280,58 @@ export class EventLog {
       fs.rmSync(lockDir, { recursive: true, force: true });
     }
   }
+}
+
+interface EventSegment {
+  path: string;
+  startSeq: number;
+  endSeq: number;
+  mtimeMs: number;
+}
+
+function readEventsFromFile(filePath: string, after: number, tolerateIncompleteTail: boolean): HydraEvent[] {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const events: HydraEvent[] = [];
+  const lines = raw.split(/\r?\n/);
+  const lastNonEmptyIndex = findLastNonEmptyLineIndex(lines);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      if (tolerateIncompleteTail && index === lastNonEmptyIndex) break;
+      throw new Error(`Event log at ${filePath} has invalid JSON on line ${index + 1}`);
+    }
+    if (!isHydraEvent(parsed)) {
+      throw new Error(`Event log at ${filePath} has invalid event shape on line ${index + 1}`);
+    }
+    if (parsed.seq > after) events.push(parsed);
+  }
+  return events;
+}
+
+function readLastSeqFromFile(filePath: string): number {
+  if (!fs.existsSync(filePath)) return 0;
+  const raw = fs.readFileSync(filePath, 'utf-8').trim();
+  if (!raw) return 0;
+  let lastSeq = 0;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(line) as Partial<HydraEvent>;
+      if (typeof parsed.seq === 'number' && Number.isFinite(parsed.seq)) {
+        lastSeq = Math.max(lastSeq, Math.trunc(parsed.seq));
+      }
+    } catch {
+      // read() is strict for consumers. Seq recovery is best effort so a
+      // malformed tail does not cause the next append to reuse a sequence.
+    }
+  }
+  return lastSeq;
 }
 
 export function readCursorFile(cursorFile: string): number {
