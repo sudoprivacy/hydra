@@ -43,6 +43,10 @@ interface NotifyClearOptions {
   kind?: string;
 }
 
+interface NotifyResolveOptions {
+  reason: string;
+}
+
 export function registerNotifyCommands(program: Command): void {
   const notify = program
     .command('notify')
@@ -183,6 +187,59 @@ export function registerNotifyCommands(program: Command): void {
           globalOpts,
           () => {
             console.log(`Marked read: ${result.notification.id}`);
+          },
+        );
+      } catch (error) {
+        outputError(error, globalOpts);
+      }
+    });
+
+  notify
+    .command('resolve <id>')
+    .description('Resolve an active Hydra notification occurrence')
+    .requiredOption('--reason <text>', 'Lifecycle reason for resolving the notification')
+    .action((id: string, opts: NotifyResolveOptions) => {
+      const globalOpts = program.opts() as OutputOpts;
+      try {
+        const result = new NotificationStore().resolve(id, opts.reason, 'cli');
+        outputResult(
+          {
+            status: 'ok',
+            notificationStatus: result.status,
+            changed: result.changed,
+            notification: result.notification,
+          },
+          globalOpts,
+          () => {
+            console.log(result.changed
+              ? `Resolved notification: ${result.notification.id}`
+              : `Notification ${result.notification.id} is already ${result.status}`);
+          },
+        );
+      } catch (error) {
+        outputError(error, globalOpts);
+      }
+    });
+
+  notify
+    .command('dismiss <id>')
+    .description('Dismiss a Hydra notification without changing worker runtime')
+    .action((id: string) => {
+      const globalOpts = program.opts() as OutputOpts;
+      try {
+        const result = new NotificationStore().dismiss(id, 'cli');
+        outputResult(
+          {
+            status: 'ok',
+            notificationStatus: result.status,
+            changed: result.changed,
+            notification: result.notification,
+          },
+          globalOpts,
+          () => {
+            console.log(result.changed
+              ? `Dismissed notification: ${result.notification.id}`
+              : `Notification ${result.notification.id} is already ${result.status}`);
           },
         );
       } catch (error) {

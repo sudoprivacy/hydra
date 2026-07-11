@@ -182,6 +182,10 @@
         "title": "Hydra: Mark Notifications Read"
       },
       {
+        "command": "hydra.dismissSessionNotification",
+        "title": "Hydra: Dismiss Notification"
+      },
+      {
         "command": "hydra.clearSessionNotifications",
         "title": "Hydra: Clear Notifications"
       },
@@ -351,9 +355,14 @@
           "group": "5_notifications@1"
         },
         {
+          "command": "hydra.dismissSessionNotification",
+          "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem' || viewItem == 'notificationDetailItem')",
+          "group": "5_notifications@2"
+        },
+        {
           "command": "hydra.clearSessionNotifications",
           "when": "(view == hydraCopilots || view == hydraWorkers) && (viewItem == 'workerItem' || viewItem == 'inactiveWorkerItem' || viewItem == 'taskWorkerItem' || viewItem == 'inactiveTaskWorkerItem' || viewItem == 'copilotItem')",
-          "group": "5_notifications@2"
+          "group": "5_notifications@3"
         },
         {
           "command": "tmux.copyPath",
@@ -385,6 +394,10 @@
     "onCommand:tmux.pasteImage",
     "onCommand:tmux.createWorktreeFromBranch",
     "onCommand:hydra.openPR",
+    "onCommand:hydra.openSessionNotification",
+    "onCommand:hydra.markSessionNotificationsRead",
+    "onCommand:hydra.dismissSessionNotification",
+    "onCommand:hydra.clearSessionNotifications",
     "onCommand:hydra.createCopilot",
     "onCommand:hydra.startPlanCopilot",
     "onCommand:hydra.startCopilotClaude",
