@@ -1,6 +1,6 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Implementation complete through Wave 5; dependency-ordered promotion to `main` pending
+**Status:** Implementation complete through Wave 5; direct promotion to `main` approved by scope owner
 
 **Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
@@ -623,6 +623,11 @@ dependency boundary is hidden.
 The integration branch itself is not opened as one large PR to `main` unless
 this frozen decision is explicitly changed.
 
+For this completed program, the scope owner approved a one-time direct
+promotion after Wave 5 on 2026-07-11. The promotion PR uses the validated
+integration branch as its head and a merge commit so the already-reviewed
+logical squash commits remain individually traceable in `main`.
+
 ### 12.5 Review fixes during promotion
 
 If main-PR review requires a code change, make the fix on a logical branch
@@ -731,6 +736,39 @@ After each merged wave, update only these sections:
 - the completed PR checklist;
 - verified deviations approved through change control;
 - validation evidence.
+
+### Approved deviation — direct final promotion
+
+```text
+Decision being changed:
+Promote one logical integration commit per main-targeting PR.
+
+Observed evidence:
+All logical PRs were individually reviewed before integration; Wave 5 passed
+the full repository suite, 100,000-event and notification retention gates,
+Desktop-only and extension-only runtime validation, and packaged Desktop
+validation. The effective main-to-integration diff is conflict-free.
+
+Why the current contract cannot satisfy it:
+Replaying 22 already-reviewed squash commits through 22 additional serial PRs
+adds repeated review latency without changing the validated code or dependency
+order.
+
+Compatibility impact:
+None. The direct PR contains the same validated integration tree.
+
+Migration impact:
+None. Existing Wave 5 migration and rollback gates remain unchanged.
+
+PR dependency changes:
+The final promotion is one main-targeting PR instead of 22 serial promotion
+PRs. The logical commits and their original PR evidence remain in history.
+
+New acceptance scenario:
+Merge the validated integration branch with a merge commit, then verify the
+effective diff between main and the integration branch is empty and rerun the
+main-branch release gates.
+```
 
 ## 17. Completion checklist
 
