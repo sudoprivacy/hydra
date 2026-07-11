@@ -2,7 +2,7 @@
 
 **Status:** Approved and frozen for implementation<br>
 **Decision date:** 2026-07-11<br>
-**Design branch:** `feat/desktop-v2-terminal-first-design`<br>
+**Integration branch:** `feat/desktop-v2-terminal-first`<br>
 **Applies to:** `packages/desktop` renderer UX and the protocol fields required by it
 
 This document is the product and interaction source of truth for the Hydra
@@ -248,7 +248,7 @@ flowchart LR
 
 - Only the visible terminal owns an interactive channel.
 - Hidden session panes keep their xterm instance and local scrollback but release
-  WebSocket/PTy and WebGL resources.
+  WebSocket/PTy resources and any optional renderer accelerator.
 - Returning to a pane refits xterm and reattaches; tmux repaints current state.
 - One interactive client owns a tmux session. A newer interactive client
   replaces the previous owner.
