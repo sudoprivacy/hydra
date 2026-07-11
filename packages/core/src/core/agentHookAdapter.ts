@@ -143,8 +143,8 @@ const AGENT_HOOK_ADAPTERS: Record<AgentType, AgentHookAdapter> = {
     capabilities: {
       complete: 'hook',
       needsInput: 'transcript',
-      inputResolved: 'unsupported',
-      aborted: 'unsupported',
+      inputResolved: 'transcript',
+      aborted: 'transcript',
       runtimeError: 'unsupported',
     },
     buildProjectPlan: buildCodexHookPlan,

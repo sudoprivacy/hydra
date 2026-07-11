@@ -13,6 +13,7 @@ import { NotificationStore } from '@hydra/core/notifications';
 import type { WorkerInfo } from '@hydra/core/sessionManager';
 import {
   classifyCodexNeedsInputTranscriptText,
+  classifyCodexRuntimeTranscriptText,
   classifyWorkerNeedsInputEvent,
   type WorkerNeedsInputSignal,
 } from '@hydra/core/workerNeedsInputClassifier';
@@ -186,6 +187,36 @@ async function testClassifier(): Promise<void> {
     '{"type":"event_msg","payload":{"type":"request_user_input","call_id":"call-3","turn_id":"turn-3","questions":[{"question":"Pick?"}]}}',
     '{"type":"event_msg","payload":{"type":"turn_complete","turn_id":"turn-3"}}',
   ].join('\n')), undefined, 'completed Codex turn must not publish stale needs-input');
+
+  assert.equal(classifyCodexNeedsInputTranscriptText([
+    '{"type":"turn_context","payload":{"turn_id":"turn-old"}}',
+    '{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call-old","arguments":"{\\"questions\\":[{\\"question\\":\\"Old question?\\"}]}"}}',
+    '{"type":"turn_context","payload":{"turn_id":"turn-new"}}',
+  ].join('\n')), undefined, 'a new Codex turn context must not retain the previous question');
+
+  const resolvedTranscript = [
+    '{"type":"turn_context","payload":{"turn_id":"turn-resolved"}}',
+    '{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call-resolved","arguments":"{\\"questions\\":[{\\"question\\":\\"Continue?\\"}]}"}}',
+    '{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-resolved","output":"approved"}}',
+  ].join('\n');
+  assert.equal(
+    classifyCodexNeedsInputTranscriptText(resolvedTranscript),
+    undefined,
+    'matching Codex function_call_output must resolve needs-input',
+  );
+  assert.equal(classifyCodexRuntimeTranscriptText(resolvedTranscript)?.reason, 'input-resolved');
+
+  const abortedTranscript = [
+    '{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-aborted"}}',
+    '{"type":"event_msg","payload":{"type":"request_user_input","call_id":"call-aborted","turn_id":"turn-aborted","questions":[{"question":"Continue?"}]}}',
+    '{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-aborted"}}',
+  ].join('\n');
+  assert.equal(
+    classifyCodexNeedsInputTranscriptText(abortedTranscript),
+    undefined,
+    'Codex turn_aborted must resolve needs-input',
+  );
+  assert.equal(classifyCodexRuntimeTranscriptText(abortedTranscript)?.reason, 'turn-aborted');
 }
 
 async function testPublisher(): Promise<void> {

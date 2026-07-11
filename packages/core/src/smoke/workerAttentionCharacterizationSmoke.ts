@@ -65,7 +65,7 @@ interface TestContext {
 const EXPECTATIONS: Record<ScenarioId, ExpectedState> = {
   'stale-notification-runtime-rollback': 'fixed',
   'event-only-notification-clear': 'fixed',
-  'codex-turn-aborted-resolution': 'known-failure',
+  'codex-turn-aborted-resolution': 'fixed',
   'completion-pending-overwrite': 'fixed',
   'diff-symlink-escape': 'fixed',
   'foreign-tmux-stop': 'fixed',

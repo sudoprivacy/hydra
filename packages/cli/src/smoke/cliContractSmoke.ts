@@ -190,7 +190,8 @@ function assertJsonContracts(ctx: TestContext): void {
   assert.equal(capabilities.agents[0].configScope, 'project');
   assert.equal(capabilities.agents[0].capabilities.complete, 'hook');
   assert.equal(capabilities.agents[0].capabilities.needsInput, 'transcript');
-  assert.equal(capabilities.agents[0].capabilities.aborted, 'unsupported');
+  assert.equal(capabilities.agents[0].capabilities.inputResolved, 'transcript');
+  assert.equal(capabilities.agents[0].capabilities.aborted, 'transcript');
 }
 
 function assertErrorContracts(ctx: TestContext): void {

@@ -16,6 +16,7 @@
 import { HydraAppService } from './appService';
 import { createLoopbackServer, type LoopbackServer } from './loopbackServer';
 import { SIDECAR_READY_TYPE, type SidecarReadyLine } from '@hydra/transport-loopback/wire';
+import { WorkerAttentionSupervisor } from '@hydra/core/workerAttentionSupervisor';
 
 async function main(): Promise<void> {
   const token = process.env.HYDRA_SIDECAR_TOKEN;
@@ -33,22 +34,28 @@ async function main(): Promise<void> {
 
   const appService = new HydraAppService();
   const server = await createLoopbackServer(appService, { token, port });
+  const attentionSupervisor = new WorkerAttentionSupervisor({ producerKind: 'sidecar' });
+  attentionSupervisor.initialize();
 
   // The single machine-readable ready line. Newline-terminated so a parent can
   // read line-by-line off stdout.
   const ready: SidecarReadyLine = { type: SIDECAR_READY_TYPE, url: server.url, port: server.port };
   process.stdout.write(`${JSON.stringify(ready)}\n`);
 
-  installShutdownHandlers(server);
+  installShutdownHandlers(server, attentionSupervisor);
 }
 
-function installShutdownHandlers(server: LoopbackServer): void {
+function installShutdownHandlers(
+  server: LoopbackServer,
+  attentionSupervisor: WorkerAttentionSupervisor,
+): void {
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) {
       return;
     }
     shuttingDown = true;
+    attentionSupervisor.dispose();
     void server.close().then(
       () => process.exit(0),
       () => process.exit(1),
