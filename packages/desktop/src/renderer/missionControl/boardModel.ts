@@ -47,6 +47,8 @@ export interface BoardModel {
   readonly gitStatusBySession: Readonly<Record<string, number>>;
   /** Total unread across all notifications (authoritative from the snapshot). */
   readonly unreadTotal: number;
+  /** Active notification rows, including global occurrences with no parent target. */
+  readonly notifications: readonly HydraNotification[];
   /** Complete notifications keyed by target session, used for copilot child rows. */
   readonly completionNotificationsByTargetSession: Readonly<Record<string, readonly CompletionNotificationModel[]>>;
   /** ISO timestamp of the most recent event touching each session. */
@@ -100,6 +102,7 @@ export function createBoardModel(snapshot: HydraSessionList): BoardModel {
     completedBySession: {},
     gitStatusBySession: {},
     unreadTotal: 0,
+    notifications: [],
     completionNotificationsByTargetSession: {},
     lastEventBySession: {},
     lastSeq: 0,
@@ -124,6 +127,7 @@ export function applySnapshot(model: BoardModel, snapshot: HydraSessionList): Bo
     completedBySession: pruneToSessions(model.completedBySession, alive),
     gitStatusBySession: pruneToSessions(model.gitStatusBySession, alive),
     completionNotificationsByTargetSession: pruneToSessions(model.completionNotificationsByTargetSession, alive),
+    notifications: model.notifications,
     lastEventBySession: pruneToSessions(model.lastEventBySession, alive),
   };
 }
@@ -235,6 +239,11 @@ export function applyNotificationSnapshot(model: BoardModel, snapshot: Notificat
     completedBySession,
     completionNotificationsByTargetSession,
     unreadTotal: snapshot.unreadCount,
+    notifications: snapshot.notifications.map(notification => ({
+      ...notification,
+      action: notification.action ? { ...notification.action } : undefined,
+      context: notification.context ? { ...notification.context } : undefined,
+    })),
   };
 }
 
@@ -335,6 +344,19 @@ export interface BoardView {
   readonly copilotCount: number;
   readonly unreadTotal: number;
   readonly attentionTotal: number;
+  readonly inbox: readonly InboxNotificationModel[];
+}
+
+export interface InboxNotificationModel {
+  readonly id: string;
+  readonly kind: 'complete' | 'needs-input' | 'error';
+  readonly title: string;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly read: boolean;
+  readonly targetSession: string | null;
+  readonly sourceSession: string | null;
+  readonly action: HydraNotification['action'] | null;
 }
 
 const LOCAL_TASKS_LABEL = 'Local Tasks';
@@ -385,6 +407,20 @@ export function selectBoard(model: BoardModel): BoardView {
     copilotCount: copilotTiles.length,
     unreadTotal: model.unreadTotal,
     attentionTotal: groups.reduce((sum, group) => sum + group.attentionCount, 0),
+    inbox: model.notifications
+      .filter(isInboxNotification)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(notification => ({
+        id: notification.id,
+        kind: notification.kind,
+        title: notification.title,
+        body: notification.body,
+        createdAt: notification.createdAt,
+        read: notification.readAt !== null,
+        targetSession: notification.targetSession,
+        sourceSession: notification.sourceSession,
+        action: notification.action ? { ...notification.action } : null,
+      })),
   };
 }
 
@@ -507,6 +543,14 @@ function toCompletionNotificationModel(notification: HydraNotification): Complet
     sourceSession: notification.sourceSession,
     actionSession: notification.action?.session ?? notification.sourceSession,
   };
+}
+
+function isInboxNotification(
+  notification: HydraNotification,
+): notification is HydraNotification & { kind: InboxNotificationModel['kind'] } {
+  return notification.kind === 'complete'
+    || notification.kind === 'needs-input'
+    || notification.kind === 'error';
 }
 
 function buildGroup(

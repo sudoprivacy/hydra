@@ -21,6 +21,7 @@ import type {
   CreateWorkerResult,
   DeleteSessionOptions,
   DeleteSessionPayload,
+  DismissNotificationPayload,
   DiffSummary,
   EventSubscribeInput,
   FileSnapshot,
@@ -38,6 +39,7 @@ import type {
   NotificationListResult,
   NotificationReadResult,
   NotificationSnapshot,
+  NotificationStatusMutationResult,
   NotificationSubscribeInput,
   RenameSessionPayload,
   RestoreSessionPayload,
@@ -68,6 +70,7 @@ export interface HydraControlClient {
   // Attention inbox
   listNotifications(filters?: NotificationListFilters): Promise<NotificationListResult>;
   markNotificationRead(id: string): Promise<NotificationReadResult>;
+  dismissNotification(id: string): Promise<NotificationStatusMutationResult>;
   clearNotifications(filters?: NotificationClearFilters): Promise<NotificationClearResult>;
 
   // Diff review (path-constrained)
@@ -138,6 +141,10 @@ export function createHydraControlClient(
     markNotificationRead: (id) =>
       transport.request<MarkNotificationReadPayload, NotificationReadResult>(
         Op.markNotificationRead, { id }, auth),
+
+    dismissNotification: (id) =>
+      transport.request<DismissNotificationPayload, NotificationStatusMutationResult>(
+        Op.dismissNotification, { id }, auth),
 
     clearNotifications: (filters) =>
       transport.request<NotificationClearFilters, NotificationClearResult>(

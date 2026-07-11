@@ -261,9 +261,9 @@ async function testNeedsInputWithoutNotificationTargetStillUpdatesRuntime(): Pro
       assert.ok(signal);
 
       const result = publishWorkerNeedsInputNotification(worker, signal, { eventSource: 'hook' });
-      assert.equal(result.created, false);
-      assert.equal(result.skipped, 'missing-target');
-      assert.equal(new NotificationStore().list().notifications.length, 0);
+      assert.equal(result.created, true);
+      assert.equal(result.notification.targetSession, null);
+      assert.equal(new NotificationStore().list().notifications.length, 1);
       assertRuntime(new WorkerRuntimeStateStore().get(worker.sessionName), 'needs-input', 'permission-request');
     });
   } finally {
