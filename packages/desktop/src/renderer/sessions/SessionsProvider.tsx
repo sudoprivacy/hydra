@@ -17,7 +17,9 @@ import {
 import type { CreateCopilotInput, CreateWorkerInput } from '@hydra/protocol';
 
 import { useHydraClient } from '../HydraClientProvider';
-import { useMissionControlBoard, type MissionControlBoard } from '../missionControl/useMissionControlBoard';
+import { useDesktopControl, type DesktopControlState } from '../controlState/useDesktopControlState';
+import { selectLegacyBoardView } from '../controlState/selectors';
+import type { MissionControlBoard } from '../missionControl/useMissionControlBoard';
 import { CreateSessionModal, type CreateKind } from '../missionControl/CreateSessionModal';
 import { ConfirmDeleteModal, PromptModal } from '../missionControl/dialogs';
 import type { TileModel, WorkerTileModel } from '../missionControl/boardModel';
@@ -45,6 +47,7 @@ export interface SessionActions {
 
 export interface SessionsApi {
   readonly board: MissionControlBoard;
+  readonly control: DesktopControlState;
   readonly actions: SessionActions;
 }
 
@@ -60,7 +63,15 @@ const SessionsContext = createContext<SessionsApi | null>(null);
 
 export function SessionsProvider({ children }: { children: ReactNode }): JSX.Element {
   const client = useHydraClient();
-  const board = useMissionControlBoard(client);
+  const control = useDesktopControl();
+  const board = useMemo<MissionControlBoard>(() => ({
+    view: control.model ? selectLegacyBoardView(control.model) : null,
+    loading: control.loading,
+    error: control.error,
+    connected: control.connected,
+    refresh: control.refresh,
+    lastSeq: control.model?.lastEventSeq ?? 0,
+  }), [control]);
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
@@ -131,7 +142,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
     [board, client, runDirect],
   );
 
-  const value = useMemo<SessionsApi>(() => ({ board, actions }), [board, actions]);
+  const value = useMemo<SessionsApi>(() => ({ board, control, actions }), [board, control, actions]);
 
   return (
     <SessionsContext.Provider value={value}>

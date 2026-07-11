@@ -3,6 +3,7 @@
 // URL router: the sidebar opens session tabs and the tab shell keeps them alive.
 
 import { HydraClientProvider } from './HydraClientProvider';
+import { DesktopControlProvider } from './controlState/useDesktopControlState';
 import { SessionsProvider } from './sessions/SessionsProvider';
 import { TabsProvider } from './tabs/TabsProvider';
 import { AppLayout } from './AppLayout';
@@ -10,11 +11,13 @@ import { AppLayout } from './AppLayout';
 export function App(): JSX.Element {
   return (
     <HydraClientProvider>
-      <SessionsProvider>
-        <TabsProvider>
-          <AppLayout />
-        </TabsProvider>
-      </SessionsProvider>
+      <DesktopControlProvider>
+        <SessionsProvider>
+          <TabsProvider>
+            <AppLayout />
+          </TabsProvider>
+        </SessionsProvider>
+      </DesktopControlProvider>
     </HydraClientProvider>
   );
 }
