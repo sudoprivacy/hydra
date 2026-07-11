@@ -3,14 +3,21 @@ import { STATUS_LABELS, tileStatus } from '../status';
 import { useSessions } from '../sessions/SessionsProvider';
 import { useShellUi } from './shellState';
 import { useTabs, type Tab, type TabView } from '../tabs/TabsProvider';
+import { useContextUi } from '../context/ContextState';
 
 export function SessionHeader({ tab, tile }: { tab: Tab; tile: TileModel }): JSX.Element {
   const tabs = useTabs();
   const { control } = useSessions();
   const shell = useShellUi();
+  const contextUi = useContextUi();
   const status = tileStatus(tile);
   const isCodeWorker = tile.kind === 'worker' && tile.type === 'code';
   const view: TabView = isCodeWorker ? tab.view : 'terminal';
+  const activeAttentionCount = tab.sessionKind === 'worker'
+    ? control.view?.workers.find(worker => (
+      tab.workerId !== undefined ? worker.workerId === tab.workerId : worker.session === tile.session
+    ))?.activeAttentionCount ?? 0
+    : control.view?.copilots.find(copilot => copilot.session === tile.session)?.activeAttentionCount ?? 0;
 
   return (
     <header className="hydra-session-header">
@@ -29,6 +36,22 @@ export function SessionHeader({ tab, tile }: { tab: Tab; tile: TileModel }): JSX
           <HeaderToggle label="Terminal" active={view === 'terminal'} onClick={() => tabs.setView(tab.id, 'terminal')} />
           <HeaderToggle label="Diff" active={view === 'diff'} onClick={() => tabs.setView(tab.id, 'diff')} />
         </div>
+      ) : null}
+
+      {!shell.terminalMaximized ? (
+        <button
+          type="button"
+          className={`hydra-session-header__utility${
+            contextUi.isOpenFor(tab.sessionKind, tile.session) ? ' hydra-session-header__utility--active' : ''
+          }`}
+          aria-pressed={contextUi.isOpenFor(tab.sessionKind, tile.session)}
+          onClick={() => contextUi.toggleForSession(tab.sessionKind, tile.session)}
+        >
+          Context
+          {activeAttentionCount > 0 ? (
+            <span className="hydra-session-header__count">{activeAttentionCount}</span>
+          ) : null}
+        </button>
       ) : null}
 
       {shell.terminalMaximized ? (

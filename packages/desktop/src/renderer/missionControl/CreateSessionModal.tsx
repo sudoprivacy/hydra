@@ -13,6 +13,7 @@ export type CreateKind = 'worker' | 'copilot';
 
 interface CreateSessionModalProps {
   initialKind: CreateKind;
+  initialCopilot?: string;
   copilots: readonly { session: string; name: string; running: boolean }[];
   busy?: boolean;
   error?: string | null;
@@ -25,6 +26,7 @@ type WorkerType = 'code' | 'task';
 
 export function CreateSessionModal({
   initialKind,
+  initialCopilot,
   copilots,
   busy = false,
   error,
@@ -44,7 +46,11 @@ export function CreateSessionModal({
   const [agent, setAgent] = useState('');
   const [base, setBase] = useState('');
   const [task, setTask] = useState('');
-  const [copilot, setCopilot] = useState(() => copilots.length === 1 ? copilots[0].session : '');
+  const [copilot, setCopilot] = useState(() => (
+    initialCopilot && copilots.some(item => item.session === initialCopilot)
+      ? initialCopilot
+      : copilots.length === 1 ? copilots[0].session : ''
+  ));
 
   // Copilot fields.
   const [copilotWorkdir, setCopilotWorkdir] = useState('');

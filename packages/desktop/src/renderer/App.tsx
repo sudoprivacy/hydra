@@ -4,6 +4,7 @@
 
 import { HydraClientProvider } from './HydraClientProvider';
 import { DesktopControlProvider } from './controlState/useDesktopControlState';
+import { ContextUiProvider } from './context/ContextState';
 import { SessionsProvider } from './sessions/SessionsProvider';
 import { ShellUiProvider } from './shell/shellState';
 import { TabsProvider } from './tabs/TabsProvider';
@@ -16,7 +17,9 @@ export function App(): JSX.Element {
         <SessionsProvider>
           <ShellUiProvider>
             <TabsProvider>
-              <AppLayout />
+              <ContextUiProvider>
+                <AppLayout />
+              </ContextUiProvider>
             </TabsProvider>
           </ShellUiProvider>
         </SessionsProvider>

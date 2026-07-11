@@ -19,13 +19,21 @@ import {
   runtimeToken,
 } from '../missionControl/format';
 import { STATUS_LABELS, tileStatus } from '../status';
+import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
 import { RowMenu } from './RowMenu';
 
 export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
   const tabs = useTabs();
+  const { control } = useSessions();
   const status = tileStatus(tile);
   const selected = tabs.activeSession === tile.session;
+  const activeAttentionCount = tile.kind === 'worker'
+    ? control.view?.workers.find(worker => worker.workerId === tile.number)?.activeAttentionCount ?? 0
+    : control.view?.copilots.find(copilot => copilot.session === tile.session)?.activeAttentionCount ?? 0;
+  const attentionBadge = tile.kind === 'copilot'
+    ? activeAttentionCount
+    : activeAttentionCount > 1 ? activeAttentionCount : 0;
 
   const summary = tile.kind === 'copilot' ? copilotSummaryLabel(tile.workerCount, tile.repoCount) : null;
   const gitLabel = tile.kind === 'worker' ? gitChangeLabel(tile.changed) : null;
@@ -82,12 +90,12 @@ export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
           ) : null}
         </div>
       </div>
-      {tile.unread > 0 ? (
+      {attentionBadge > 0 ? (
         <span
           className="hydra-row__unread hydra-badge hydra-badge--unread"
-          title={`${tile.unread} unread`}
+          title={`${activeAttentionCount} active attention occurrences`}
         >
-          {tile.unread}
+          {attentionBadge}
         </span>
       ) : null}
       <RowMenu tile={tile} />

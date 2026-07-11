@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { Sidebar } from './sidebar/Sidebar';
 import { TabArea } from './tabs/TabArea';
 import { useShellUi } from './shell/shellState';
+import { ContextDrawer } from './context/ContextDrawer';
 
 const MIN_WIDTH = 236;
 const MAX_WIDTH = 340;
@@ -114,6 +115,7 @@ export function AppLayout(): JSX.Element {
         ) : null}
         <div className="hydra-app__tabs">
           <TabArea />
+          {!shell.terminalMaximized ? <ContextDrawer /> : null}
         </div>
       </div>
     </div>

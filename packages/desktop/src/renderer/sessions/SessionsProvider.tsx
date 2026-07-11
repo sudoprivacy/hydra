@@ -22,27 +22,41 @@ import { selectLegacyBoardView } from '../controlState/selectors';
 import type { MissionControlBoard } from '../missionControl/useMissionControlBoard';
 import { CreateSessionModal, type CreateKind } from '../missionControl/CreateSessionModal';
 import { ConfirmDeleteModal, PromptModal } from '../missionControl/dialogs';
-import type { TileModel, WorkerTileModel } from '../missionControl/boardModel';
+import type { TileModel } from '../missionControl/boardModel';
 import {
   completionNotificationClearFiltersForTile,
   completionNotificationClearFiltersForWorkerSession,
 } from './notificationClear';
 
 /** Every session mutation the UI can trigger, from any surface. */
+export interface SessionActionTarget {
+  readonly kind: 'worker' | 'copilot';
+  readonly session: string;
+  readonly name: string;
+}
+
+export interface WorkerActionTarget extends SessionActionTarget {
+  readonly kind: 'worker';
+}
+
+export interface CreateSessionOptions {
+  readonly copilotSession?: string;
+}
+
 export interface SessionActions {
-  create: (kind: CreateKind) => void;
+  create: (kind: CreateKind, options?: CreateSessionOptions) => void;
   broadcast: () => void;
   restore: () => void;
   refresh: () => void;
-  send: (tile: TileModel) => void;
-  rename: (tile: TileModel) => void;
-  delete: (tile: TileModel) => void;
+  send: (target: SessionActionTarget) => void;
+  rename: (target: SessionActionTarget) => void;
+  delete: (target: SessionActionTarget) => void;
   acknowledgeCompletion: (tile: TileModel) => void;
   acknowledgeWorkerCompletion: (session: string) => void;
   markNotificationRead: (id: string) => void;
   dismissNotification: (id: string) => void;
-  start: (tile: TileModel) => void;
-  stop: (tile: WorkerTileModel) => void;
+  start: (target: SessionActionTarget) => void;
+  stop: (target: WorkerActionTarget) => void;
 }
 
 export interface SessionsApi {
@@ -52,10 +66,10 @@ export interface SessionsApi {
 }
 
 type Dialog =
-  | { type: 'create'; kind: CreateKind }
-  | { type: 'rename'; tile: TileModel }
-  | { type: 'send'; tile: TileModel }
-  | { type: 'delete'; tile: TileModel }
+  | { type: 'create'; kind: CreateKind; copilotSession?: string }
+  | { type: 'rename'; target: SessionActionTarget }
+  | { type: 'send'; target: SessionActionTarget }
+  | { type: 'delete'; target: SessionActionTarget }
   | { type: 'restore' }
   | { type: 'broadcast' };
 
@@ -120,13 +134,17 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
 
   const actions = useMemo<SessionActions>(
     () => ({
-      create: (kind) => setDialog({ type: 'create', kind }),
+      create: (kind, options) => setDialog({
+        type: 'create',
+        kind,
+        copilotSession: options?.copilotSession,
+      }),
       broadcast: () => setDialog({ type: 'broadcast' }),
       restore: () => setDialog({ type: 'restore' }),
       refresh: () => board.refresh(),
-      send: (tile) => setDialog({ type: 'send', tile }),
-      rename: (tile) => setDialog({ type: 'rename', tile }),
-      delete: (tile) => setDialog({ type: 'delete', tile }),
+      send: (target) => setDialog({ type: 'send', target }),
+      rename: (target) => setDialog({ type: 'rename', target }),
+      delete: (target) => setDialog({ type: 'delete', target }),
       acknowledgeCompletion: (tile) => {
         if (tile.kind === 'worker' && tile.completed) {
           void runDirect(() => client.clearNotifications(completionNotificationClearFiltersForTile(tile)));
@@ -162,6 +180,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       {dialog?.type === 'create' ? (
         <CreateSessionModal
           initialKind={dialog.kind}
+          initialCopilot={dialog.copilotSession}
           copilots={(board.view?.groups ?? []).flatMap(group => group.tiles)
             .filter((tile): tile is Extract<TileModel, { kind: 'copilot' }> => tile.kind === 'copilot')
             .map(tile => ({ session: tile.session, name: tile.name, running: tile.lifecycle === 'running' }))}
@@ -175,39 +194,51 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
 
       {dialog?.type === 'rename' ? (
         <PromptModal
-          title={`Rename ${dialog.tile.name}`}
+          title={`Rename ${dialog.target.name}`}
           label="New name"
           submitLabel="Rename"
-          initialValue={dialog.tile.name}
+          initialValue={dialog.target.name}
           busy={busy}
           error={dialogError}
-          onSubmit={(name) => runDialog(() => client.renameSession(dialog.tile.session, dialog.tile.kind, name))}
+          onSubmit={(name) => runDialog(() => client.renameSession(
+            dialog.target.session,
+            dialog.target.kind,
+            name,
+          ))}
           onClose={closeDialog}
         />
       ) : null}
 
       {dialog?.type === 'send' ? (
         <PromptModal
-          title={`Send to ${dialog.tile.name}`}
+          title={`Send to ${dialog.target.name}`}
           label="Message"
           submitLabel="Send"
           placeholder="fix the failing test"
           multiline
           busy={busy}
           error={dialogError}
-          onSubmit={(message) => runDialog(() => client.sendMessage(dialog.tile.session, dialog.tile.kind, message))}
+          onSubmit={(message) => runDialog(() => client.sendMessage(
+            dialog.target.session,
+            dialog.target.kind,
+            message,
+          ))}
           onClose={closeDialog}
         />
       ) : null}
 
       {dialog?.type === 'delete' ? (
         <ConfirmDeleteModal
-          name={dialog.tile.name}
-          canDeleteFiles={dialog.tile.kind === 'worker'}
+          name={dialog.target.name}
+          canDeleteFiles={dialog.target.kind === 'worker'}
           busy={busy}
           error={dialogError}
           onConfirm={(deleteFiles) =>
-            runDialog(() => client.deleteSession(dialog.tile.session, dialog.tile.kind, { deleteFiles }))
+            runDialog(() => client.deleteSession(
+              dialog.target.session,
+              dialog.target.kind,
+              { deleteFiles },
+            ))
           }
           onClose={closeDialog}
         />
