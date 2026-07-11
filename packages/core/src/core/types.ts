@@ -35,6 +35,8 @@ export interface MultiplexerBackendCore {
   setSessionWorkdir(sessionName: string, workdir: string): Promise<void>;
   getSessionRole(sessionName: string): Promise<HydraRole | undefined>;
   setSessionRole(sessionName: string, role: HydraRole): Promise<void>;
+  getSessionWorkerId?(sessionName: string): Promise<number | undefined>;
+  setSessionWorkerId?(sessionName: string, workerId: number): Promise<void>;
   getSessionAgent(sessionName: string): Promise<string | undefined>;
   setSessionAgent(sessionName: string, agent: string): Promise<void>;
   sendKeys(sessionName: string, keys: string): Promise<void>;

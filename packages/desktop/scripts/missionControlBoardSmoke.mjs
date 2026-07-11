@@ -179,6 +179,9 @@ view = selectBoard(model);
 assert.equal(view.unreadTotal, 2, 'unread total taken from the notification snapshot');
 assert.equal(view.groups[0].tiles[0].unread, 1, 'unread counted per source session (read one ignored)');
 assert.equal(view.groups[1].tiles[0].unread, 1, 'unread counted per target session');
+assert.equal(view.inbox.length, 1, 'the inbox includes attention rows and excludes info notifications');
+assert.equal(view.inbox[0].kind, 'needs-input');
+assert.equal(view.inbox[0].targetSession, null, 'an untargeted occurrence remains visible in the global inbox');
 
 // ── 6. resync folds the fresh snapshot and clears stale overlays ──
 
@@ -273,6 +276,28 @@ assert.equal(view.groups[0].tiles[0].unread, 1, 'surviving session keeps its unr
   const v = selectBoard(m);
   assert.equal(v.groups[0].tiles[0].changed, 3, 'the code worker shows its changed-file count');
   assert.equal(v.groups[1].tiles[0].changed, null, 'a task worker never surfaces U:N, even if a count leaks in');
+}
+
+// ── 10. complete / needs-input / error all render as inbox rows ──
+
+{
+  const attention = {
+    loadedAt: '2026-01-01T00:00:00.000Z',
+    lastEventSeq: seq,
+    totalCount: 4,
+    unreadCount: 3,
+    notifications: [
+      { id: 'error', createdAt: '2026-01-01T00:03:00.000Z', readAt: null, kind: 'error', title: 'failed', body: 'boom', targetSession: null, sourceSession: 'repo-a_feat-one' },
+      { id: 'input', createdAt: '2026-01-01T00:02:00.000Z', readAt: null, kind: 'needs-input', title: 'question', body: 'pick one', targetSession: 'copilot_captain', sourceSession: 'repo-a_feat-one' },
+      { id: 'done', createdAt: '2026-01-01T00:01:00.000Z', readAt: '2026-01-01T00:04:00.000Z', kind: 'complete', title: 'done', body: '', targetSession: 'copilot_captain', sourceSession: 'repo-a_feat-one', action: { type: 'open-session', session: 'repo-a_feat-one' } },
+      { id: 'info', createdAt: '2026-01-01T00:00:00.000Z', readAt: null, kind: 'info', title: 'info', body: '', targetSession: null, sourceSession: null },
+    ],
+  };
+  const inbox = selectBoard(applyNotificationSnapshot(createBoardModel(snapshot), attention)).inbox;
+  assert.deepEqual(inbox.map(item => item.kind), ['error', 'needs-input', 'complete']);
+  assert.equal(inbox[0].read, false);
+  assert.equal(inbox[2].read, true);
+  assert.deepEqual(inbox[2].action, { type: 'open-session', session: 'repo-a_feat-one' });
 }
 
 // ── misc invariants ──

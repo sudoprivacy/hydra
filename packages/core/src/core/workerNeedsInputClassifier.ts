@@ -1,5 +1,6 @@
 import { hashText, redactText, truncateText } from './logRedaction';
 import type { WorkerRuntimeState } from './workerRuntimeState';
+import { parseCodexTranscriptLines } from './codexTranscriptParser';
 
 export type WorkerNeedsInputSignalSource = 'claude-hook' | 'codex-transcript' | 'manual';
 
@@ -17,7 +18,12 @@ export interface WorkerNeedsInputSignal {
   fingerprint: string;
 }
 
-export type CodexRuntimeSignalReason = 'task-started' | 'request-user-input' | 'turn-complete';
+export type CodexRuntimeSignalReason =
+  | 'task-started'
+  | 'request-user-input'
+  | 'input-resolved'
+  | 'turn-complete'
+  | 'turn-aborted';
 
 export interface CodexRuntimeSignal {
   state: Extract<WorkerRuntimeState, 'running' | 'idle' | 'needs-input'>;
@@ -35,10 +41,22 @@ export interface WorkerNeedsInputHookEventInput {
   payload?: unknown;
 }
 
-interface CodexCandidate {
-  callId: string;
-  question?: string;
-}
+export type NormalizedAgentHookEvent =
+  | (WorkerNeedsInputSignal & {
+    kind: 'needs-input';
+  })
+  | {
+    kind: 'input-resolved';
+    reason: 'tool-completed' | 'tool-failed';
+    fingerprint: string;
+    correlationFingerprint?: string;
+  }
+  | {
+    kind: 'runtime-error';
+    reason: 'agent-stop-failure';
+    message: string;
+    fingerprint: string;
+  };
 
 const BODY_LIMIT = 600;
 const FINGERPRINT_LIMIT = 2048;
@@ -46,6 +64,20 @@ const FINGERPRINT_LIMIT = 2048;
 export function classifyWorkerNeedsInputEvent(
   input: WorkerNeedsInputHookEventInput,
 ): WorkerNeedsInputSignal | undefined {
+  const event = classifyAgentHookEvent(input);
+  if (event?.kind !== 'needs-input') return undefined;
+  return {
+    source: event.source,
+    reason: event.reason,
+    title: event.title,
+    body: event.body,
+    fingerprint: event.fingerprint,
+  };
+}
+
+export function classifyAgentHookEvent(
+  input: WorkerNeedsInputHookEventInput,
+): NormalizedAgentHookEvent | undefined {
   const agent = input.agent.trim().toLowerCase();
   if (agent !== 'claude') {
     return undefined;
@@ -58,9 +90,18 @@ export function classifyWorkerNeedsInputEvent(
     || getString(payload, ['tool_name', 'toolName', 'tool']);
   const permissionMode = input.permissionMode
     || getString(payload, ['permission_mode', 'permissionMode']);
+  const toolUseId = getString(payload, ['tool_use_id', 'toolUseId']);
+  const correlationFingerprint = toolUseId
+    ? toolCorrelationFingerprint(toolUseId)
+    : undefined;
 
   if (eventName === 'PermissionRequest') {
-    return buildClaudeSignal('PermissionRequest', toolName, permissionMode, payload);
+    const signal = buildClaudeSignal('PermissionRequest', toolName, permissionMode, payload);
+    return signal ? {
+      kind: 'needs-input',
+      ...signal,
+      fingerprint: correlationFingerprint ?? signal.fingerprint,
+    } : undefined;
   }
 
   if (
@@ -68,82 +109,68 @@ export function classifyWorkerNeedsInputEvent(
     && permissionMode === 'bypassPermissions'
     && (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode')
   ) {
-    return buildClaudeSignal('PreToolUse', toolName, permissionMode, payload);
+    const signal = buildClaudeSignal('PreToolUse', toolName, permissionMode, payload);
+    return signal ? {
+      kind: 'needs-input',
+      ...signal,
+      fingerprint: correlationFingerprint ?? signal.fingerprint,
+    } : undefined;
+  }
+
+  if (eventName === 'PostToolUse' || eventName === 'PostToolUseFailure') {
+    const eventFingerprint = correlationFingerprint
+      ?? fingerprint('claude', eventName, toolName, permissionMode, stablePayloadIdentity(payload));
+    return {
+      kind: 'input-resolved',
+      reason: eventName === 'PostToolUse' ? 'tool-completed' : 'tool-failed',
+      fingerprint: eventFingerprint,
+      correlationFingerprint,
+    };
+  }
+
+  if (eventName === 'StopFailure') {
+    const errorType = getString(payload, ['error']) || 'unknown';
+    const errorDetails = getString(payload, ['error_details', 'errorDetails']);
+    const assistantMessage = getString(payload, ['last_assistant_message', 'lastAssistantMessage']);
+    const message = [
+      `Claude stopped because of ${errorType}.`,
+      errorDetails,
+      assistantMessage,
+    ].filter(Boolean).join('\n');
+    return {
+      kind: 'runtime-error',
+      reason: 'agent-stop-failure',
+      message: truncateBody(message),
+      fingerprint: fingerprint(
+        'claude',
+        eventName,
+        getString(payload, ['session_id', 'sessionId']),
+        errorType,
+        `${errorDetails ?? ''}\n${assistantMessage ?? ''}`,
+      ),
+    };
   }
 
   return undefined;
 }
 
 export function classifyCodexNeedsInputTranscriptText(text: string): WorkerNeedsInputSignal | undefined {
-  let candidate: CodexCandidate | undefined;
-  let currentTurnId: string | undefined;
-
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    const object = parseJsonObject(trimmed);
-    if (!object) {
-      continue;
-    }
-
-    const type = getString(object, ['type']);
-    if (type === 'turn_context') {
-      const payload = asRecord(object.payload);
-      currentTurnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
-      candidate = undefined;
-      continue;
-    }
-
-    if (type === 'response_item') {
-      const payload = asRecord(object.payload);
-      if (!payload) {
-        continue;
-      }
-      const responseCandidate = codexUserInputFunctionCallCandidate(payload);
-      if (responseCandidate) {
-        candidate = responseCandidate;
-      }
-      continue;
-    }
-
-    if (type !== 'event_msg') {
-      continue;
-    }
-
-    const payload = asRecord(object.payload);
-    if (!payload) {
-      continue;
-    }
-    const eventType = getString(payload, ['type']);
-    switch (eventType) {
-      case 'task_started':
-        currentTurnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
-        candidate = undefined;
-        break;
-      case 'request_user_input':
-        candidate = codexUserInputEventCandidate(payload);
-        break;
-      case 'task_complete':
-      case 'turn_complete': {
-        const payloadTurnId = getString(payload, ['turn_id', 'turnId']);
-        if (!payloadTurnId || !currentTurnId || payloadTurnId === currentTurnId) {
-          candidate = undefined;
-        }
-        break;
-      }
-      default:
-        break;
+  let candidate: { callId: string; question?: string } | undefined;
+  const parsed = parseCodexTranscriptLines(text.split(/\r?\n/));
+  for (const event of parsed.events) {
+    if (event.kind === 'needs-input') {
+      candidate = {
+        callId: event.callId ?? event.nativeId,
+        question: event.question,
+      };
+    } else if (event.kind === 'input-resolved'
+      || event.kind === 'turn-complete'
+      || event.kind === 'turn-aborted') {
+      if (!event.callId || !candidate || event.callId === candidate.callId) candidate = undefined;
     }
   }
-
-  if (!candidate) {
-    return undefined;
-  }
-
-  const question = candidate.question || 'Codex is waiting for input.';
+  if (!candidate || parsed.state.pendingCallId !== candidate.callId) return undefined;
+  const question = candidate.question ?? 'Codex is waiting for input.';
   return {
     source: 'codex-transcript',
     reason: 'request-user-input',
@@ -154,93 +181,54 @@ export function classifyCodexNeedsInputTranscriptText(text: string): WorkerNeeds
 }
 
 export function classifyCodexRuntimeTranscriptText(text: string): CodexRuntimeSignal | undefined {
-  let currentTurnId: string | undefined;
   let latest: CodexRuntimeSignal | undefined;
-
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    const object = parseJsonObject(trimmed);
-    if (!object) {
-      continue;
-    }
-
-    const type = getString(object, ['type']);
-    if (type === 'turn_context') {
-      const payload = asRecord(object.payload);
-      currentTurnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
-      continue;
-    }
-
-    if (type === 'response_item') {
-      const payload = asRecord(object.payload);
-      if (!payload) {
-        continue;
-      }
-      const responseCandidate = codexUserInputFunctionCallCandidate(payload);
-      if (responseCandidate) {
-        latest = {
-          state: 'needs-input',
-          reason: 'request-user-input',
-          title: 'Codex needs input',
-          body: truncateBody(responseCandidate.question || 'Codex is waiting for input.'),
-          fingerprint: `codex-runtime:${hashText(responseCandidate.callId)}`,
-        };
-      }
-      continue;
-    }
-
-    if (type !== 'event_msg') {
-      continue;
-    }
-
-    const payload = asRecord(object.payload);
-    if (!payload) {
-      continue;
-    }
-    const eventType = getString(payload, ['type']);
-    switch (eventType) {
-      case 'task_started': {
-        const turnId = getString(payload, ['turn_id', 'turnId']) || currentTurnId;
-        currentTurnId = turnId;
+  const parsed = parseCodexTranscriptLines(text.split(/\r?\n/));
+  for (const event of parsed.events) {
+    switch (event.kind) {
+      case 'task-started':
         latest = {
           state: 'running',
           reason: 'task-started',
           title: 'Codex task started',
           body: 'Codex started processing a task.',
-          fingerprint: `codex-runtime:${hashText(turnId || 'task-started')}`,
+          fingerprint: `codex-runtime:${hashText(event.nativeId)}`,
         };
         break;
-      }
-      case 'request_user_input': {
-        const candidate = codexUserInputEventCandidate(payload);
+      case 'needs-input':
         latest = {
           state: 'needs-input',
           reason: 'request-user-input',
           title: 'Codex needs input',
-          body: truncateBody(candidate?.question || 'Codex is waiting for input.'),
-          fingerprint: `codex-runtime:${hashText(candidate?.callId || getString(payload, ['call_id', 'callId']) || 'request-user-input')}`,
+          body: truncateBody(event.question ?? 'Codex is waiting for input.'),
+          fingerprint: `codex-runtime:${hashText(event.callId ?? event.nativeId)}`,
         };
         break;
-      }
-      case 'task_complete':
-      case 'turn_complete': {
-        const payloadTurnId = getString(payload, ['turn_id', 'turnId']);
-        if (!payloadTurnId || !currentTurnId || payloadTurnId === currentTurnId) {
-          latest = {
-            state: 'idle',
-            reason: 'turn-complete',
-            title: 'Codex turn completed',
-            body: 'Codex completed the current turn.',
-            fingerprint: `codex-runtime:${hashText(payloadTurnId || currentTurnId || eventType)}`,
-          };
-        }
+      case 'input-resolved':
+        latest = {
+          state: 'running',
+          reason: 'input-resolved',
+          title: 'Codex input resolved',
+          body: 'Codex received the requested input and resumed the turn.',
+          fingerprint: `codex-runtime:${hashText(event.callId ?? event.nativeId)}`,
+        };
         break;
-      }
-      default:
+      case 'turn-complete':
+        latest = {
+          state: 'idle',
+          reason: 'turn-complete',
+          title: 'Codex turn completed',
+          body: 'Codex completed the current turn.',
+          fingerprint: `codex-runtime:${hashText(event.nativeId)}`,
+        };
+        break;
+      case 'turn-aborted':
+        latest = {
+          state: 'idle',
+          reason: 'turn-aborted',
+          title: 'Codex turn aborted',
+          body: 'Codex aborted the current turn.',
+          fingerprint: `codex-runtime:${hashText(event.nativeId)}`,
+        };
         break;
     }
   }
@@ -324,29 +312,6 @@ function describeExitPlanMode(toolInput: Record<string, unknown> | undefined): s
   return `Plan approval requested:\n${plan}`;
 }
 
-function codexUserInputEventCandidate(payload: Record<string, unknown>): CodexCandidate | undefined {
-  return codexUserInputCandidate(payload);
-}
-
-function codexUserInputFunctionCallCandidate(payload: Record<string, unknown>): CodexCandidate | undefined {
-  if (getString(payload, ['type']) !== 'function_call' || getString(payload, ['name']) !== 'request_user_input') {
-    return undefined;
-  }
-  const argumentsObject = parseArgumentsObject(payload.arguments);
-  return codexUserInputCandidate(argumentsObject || payload, getString(payload, ['call_id', 'callId']));
-}
-
-function codexUserInputCandidate(
-  payload: Record<string, unknown>,
-  fallbackCallId?: string,
-): CodexCandidate | undefined {
-  const question = firstQuestionText(payload);
-  const callId = getString(payload, ['call_id', 'callId'])
-    || fallbackCallId
-    || `${getString(payload, ['turn_id', 'turnId']) || 'turn'}:${question || 'request_user_input'}`;
-  return { callId, question };
-}
-
 function firstQuestionText(payload: Record<string, unknown> | undefined): string | undefined {
   const questions = asRecordArray(payload?.questions);
   if (questions.length > 0) {
@@ -369,21 +334,6 @@ function firstQuestionOptions(payload: Record<string, unknown> | undefined): str
     .filter((option): option is string => Boolean(option))
     .slice(0, 5)
     .map(normalizeSingleLine);
-}
-
-function parseArgumentsObject(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value === 'string') {
-    return parseJsonObject(value);
-  }
-  return asRecord(value);
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | undefined {
-  try {
-    return asRecord(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -424,4 +374,13 @@ function truncateBody(value: string): string {
 
 function fingerprint(...parts: Array<string | undefined>): string {
   return hashText(parts.filter(Boolean).join('\n').slice(0, FINGERPRINT_LIMIT));
+}
+
+function toolCorrelationFingerprint(toolUseId: string): string {
+  return `tool-use:${hashText(toolUseId)}`;
+}
+
+function stablePayloadIdentity(payload: Record<string, unknown> | undefined): string {
+  if (!payload) return '';
+  return JSON.stringify(payload).slice(0, FINGERPRINT_LIMIT);
 }

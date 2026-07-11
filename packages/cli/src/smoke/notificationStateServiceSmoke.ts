@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { EXIT_OK } from '../cli/output';
-import { resolveSessionNotificationClearScope } from '@hydra/core/notificationScope';
+import { resolveSessionNotificationScope } from '@hydra/core/notificationScope';
 import { EventLog } from '@hydra/core/events';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import {
@@ -333,7 +333,7 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
         assert.equal(service.getLatestSourceAttention('repo_worker')?.id, completed.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, completed.id);
 
-        const workerScope = resolveSessionNotificationClearScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
+        const workerScope = resolveSessionNotificationScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
         assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
         assert.equal(service.getBySession('repo_worker').length, 2);
         assert.equal(service.clear({ ...workerScope.filters, kind: 'complete' }).cleared, 1);
@@ -342,8 +342,125 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
         assert.equal(service.getLatestSourceAttention('repo_worker')?.id, needsInput.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
 
-        const copilotScope = resolveSessionNotificationClearScope({ contextValue: 'copilotItem' }, 'repo_copilot');
+        const copilotScope = resolveSessionNotificationScope({ contextValue: 'copilotItem' }, 'repo_copilot');
         assert.deepEqual(copilotScope.filters, { targetSession: 'repo_copilot' });
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testWorkerAndCopilotScopesConvergeForReadResolveAndDismiss(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-scope-ops-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const workerOutbound = store.create({
+        kind: 'needs-input',
+        title: 'Worker needs input',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        context: { workerId: 7 },
+      }).notification;
+      const workerInbound = store.create({
+        kind: 'info',
+        title: 'Copilot instruction',
+        targetSession: 'repo_worker',
+        sourceSession: 'repo_copilot',
+      }).notification;
+      const otherWorker = store.create({
+        kind: 'error',
+        title: 'Other worker error',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_other',
+        context: { workerId: 8 },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        const workerScope = resolveSessionNotificationScope({ contextValue: 'workerItem' }, 'repo_worker');
+        assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
+        assert.deepEqual(
+          service.getBySession('repo_worker').map(notification => notification.id).sort(),
+          [workerOutbound.id, workerInbound.id].sort(),
+        );
+        assert.equal(service.markMatchingRead(workerScope.filters).markedRead, 2);
+        assert.notEqual(service.getById(workerOutbound.id)?.readAt, null);
+        assert.notEqual(service.getById(workerInbound.id)?.readAt, null);
+        assert.equal(service.getById(otherWorker.id)?.readAt, null, 'worker scope must not read a sibling worker');
+
+        const dismissed = service.dismiss(workerOutbound.id);
+        assert.equal(dismissed.changed, true);
+        assert.equal(dismissed.status, 'dismissed');
+        assert.equal(service.getById(workerOutbound.id), undefined);
+
+        const copilotScope = resolveSessionNotificationScope({ contextValue: 'copilotItem' }, 'repo_copilot');
+        assert.deepEqual(copilotScope.filters, { targetSession: 'repo_copilot' });
+        assert.equal(service.markMatchingRead(copilotScope.filters).markedRead, 1);
+        assert.notEqual(service.getById(otherWorker.id)?.readAt, null);
+
+        const resolved = service.resolve(otherWorker.id, 'worker recovered');
+        assert.equal(resolved.changed, true);
+        assert.equal(resolved.status, 'resolved');
+        assert.equal(service.getById(otherWorker.id), undefined);
+        assert.equal(service.getById(workerInbound.id)?.id, workerInbound.id);
+
+        const events = readEventLines(ctx);
+        assert.ok(events.some(event => event.type === 'notify.dismissed' && event.source === 'extension'));
+        assert.ok(events.some(event => event.type === 'notify.resolved' && event.source === 'extension'));
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testMonotonicCreationOrderingAcrossBurstAndClockRollback(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-monotonic-time-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const baseMs = Date.parse('2026-07-10T00:00:00.000Z');
+      let wallClockMs = baseMs;
+      const store = new NotificationStore(undefined, undefined, undefined, undefined, () => wallClockMs);
+      const needsInput = store.create({
+        kind: 'needs-input',
+        title: 'Needs input first',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+      const completeBurst = store.create({
+        kind: 'complete',
+        title: 'Complete in same wall-clock millisecond',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+      wallClockMs = baseMs - 60_000;
+      const completeAfterRollback = store.create({
+        kind: 'complete',
+        title: 'Complete after clock rollback',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+      }).notification;
+
+      assert.equal(Date.parse(needsInput.createdAt), baseMs);
+      assert.equal(Date.parse(completeBurst.createdAt), baseMs + 1);
+      assert.equal(Date.parse(completeAfterRollback.createdAt), baseMs + 2);
+      assert.deepEqual(
+        store.list({ sourceSession: 'repo_worker' }).notifications.map(notification => notification.id),
+        [completeAfterRollback.id, completeBurst.id, needsInput.id],
+      );
+
+      const service = createService();
+      try {
+        service.initialize();
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, completeAfterRollback.id);
+        assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, completeAfterRollback.id);
       } finally {
         service.dispose();
       }
@@ -438,7 +555,7 @@ async function testBatchReadAndClearEventSources(): Promise<void> {
   }
 }
 
-async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
+async function testEventOnlyCompletionDoesNotReconstructAttention(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-event-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -460,13 +577,11 @@ async function testEventOnlyCompletionProjectionEmitsChange(): Promise<void> {
           },
         });
 
-        await waitFor(
-          () => service.getLatestSourceCompletion('repo_worker')?.id === 'event-only-complete',
-          'event-only completion projection',
-        );
+        await sleep(200);
         assert.equal(service.getSnapshot().totalCount, 0);
-        assert.equal(service.getLatestSourceCompletion('repo_worker')?.action?.session, 'repo_worker');
-        assert.ok(changes > 0, 'event-only completion projection should emit a change');
+        assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(changes, 0, 'event history must not reconstruct current notification state');
       } finally {
         listener.dispose();
         service.dispose();
@@ -523,15 +638,13 @@ async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
             actionSession: 'repo_worker',
           },
         });
-        await waitFor(
-          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-newer-error',
-          'event source attention overrides older stored notifications',
-        );
-        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'error');
+        await sleep(200);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.id, complete.id);
+        assert.equal(service.getLatestSourceAttention('repo_worker')?.kind, 'complete');
         assert.equal(
           service.getLatestSourceCompletion('repo_worker')?.id,
           complete.id,
-          'completion compatibility projection should remain available while latest attention is error',
+          'event history must not override the durable occurrence projection',
         );
 
         service.clear({ targetSession: 'repo_copilot' });
@@ -566,7 +679,7 @@ async function testSourceAttentionProjectionUsesLatestStatus(): Promise<void> {
   }
 }
 
-async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
+async function testEventOnlyErrorDoesNotReconstructAttention(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-event-error-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -593,18 +706,10 @@ async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
           },
         });
 
-        await waitFor(
-          () => service.getLatestSourceAttention('repo_worker')?.id === 'event-only-error',
-          'event-only error projection',
-        );
+        await sleep(200);
         assert.equal(service.getSnapshot().totalCount, 0);
-        const projected = service.getLatestSourceAttention('repo_worker');
-        assert.equal(projected?.kind, 'error');
-        assert.equal(projected?.title, 'Worker failed during startup');
-        assert.equal(projected?.action?.session, 'repo_worker');
-        assert.equal(projected?.context?.workerId, 4);
-        assert.equal(projected?.context?.workdir, ctx.tmp);
-        assert.ok(changes > 0, 'event-only error projection should emit a change');
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
+        assert.equal(changes, 0, 'event history must remain audit-only');
       } finally {
         listener.dispose();
         service.dispose();
@@ -615,7 +720,7 @@ async function testEventOnlyErrorProjectionEmitsChange(): Promise<void> {
   }
 }
 
-async function testKindScopedClearPreservesEventOnlyAttention(): Promise<void> {
+async function testKindScopedClearDoesNotReplayEventHistory(): Promise<void> {
   const ctx = setupContext('hydra-notification-state-kind-clear-projection-');
   try {
     await withProcessEnv(ctx, async () => {
@@ -651,11 +756,7 @@ async function testKindScopedClearPreservesEventOnlyAttention(): Promise<void> {
         const cleared = service.clear({ session: 'repo_worker', kind: 'complete' });
         assert.equal(cleared.cleared, 1);
         assert.equal(service.getById(storedComplete.id), undefined);
-        assert.equal(
-          service.getLatestSourceAttention('repo_worker')?.id,
-          'event-only-needs-input',
-          'complete-only clear must preserve event-only needs-input attention',
-        );
+        assert.equal(service.getLatestSourceAttention('repo_worker'), undefined);
         assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
       } finally {
         service.dispose();
@@ -886,13 +987,15 @@ async function main(): Promise<void> {
   await testInitialLoadAndIndexes();
   await testServiceOperationsReloadSynchronously();
   await testTargetSessionOperationsIgnoreSourceOnlyNotifications();
+  await testWorkerAndCopilotScopesConvergeForReadResolveAndDismiss();
+  await testMonotonicCreationOrderingAcrossBurstAndClockRollback();
   await testWorkerClearScopeClearsSourceNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();
   await testBatchReadAndClearEventSources();
-  await testEventOnlyCompletionProjectionEmitsChange();
+  await testEventOnlyCompletionDoesNotReconstructAttention();
   await testSourceAttentionProjectionUsesLatestStatus();
-  await testEventOnlyErrorProjectionEmitsChange();
-  await testKindScopedClearPreservesEventOnlyAttention();
+  await testEventOnlyErrorDoesNotReconstructAttention();
+  await testKindScopedClearDoesNotReplayEventHistory();
   await testStoredNotificationWinsOverDuplicateEventProjection();
   await testInitializeSignatureWindow();
   await testDuplicateAndMalformedEventTolerance();

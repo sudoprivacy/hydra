@@ -32,7 +32,7 @@ import { importCodexNativeSession } from '../../share/codexAdapter';
 import { ensureLocalBranchFromRemote, validateRepoMatch } from '../../share/repo';
 import type { HydraShareBundle, ShareHydraWorkerInfo } from '../../share/types';
 import { outputError, outputResult, type OutputOpts } from '../output';
-import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 interface CreateShareOpts {
   bucket?: string;
@@ -318,7 +318,7 @@ async function acceptCopilot(
 }
 
 async function acceptWorker(
-  sm: SessionManager,
+  lifecycle: WorkerLifecycleService,
   backend: TmuxBackendCore,
   bundle: HydraShareBundle,
   repoRoot: string,
@@ -340,17 +340,18 @@ async function acceptWorker(
     sessionName,
   );
 
-  const { workerInfo, postCreatePromise } = await sm.createWorker({
+  const { workerInfo, postCreatePromise } = await lifecycle.createWorker({
     repoRoot,
     branchName: worker.branch,
     agentType: 'codex',
     agentCommand: opts.agentCommand,
     resumeSessionId: bundle.hydraSession.agentSessionId,
     preservedWorkerInfo,
+    preserveWorkerId: false,
     notifyCopilot: false,
     fetchMode: 'best-effort',
   });
-  await awaitWorkerPostCreateOrPublishError(workerInfo, postCreatePromise, { eventSource: 'cli' });
+  await postCreatePromise;
   return workerInfo;
 }
 
@@ -557,9 +558,10 @@ export function registerShareCommands(program: Command): void {
 
         const backend = new TmuxBackendCore();
         const sm = new SessionManager(backend);
+        const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
         const result = bundle.hydraSession.type === 'copilot'
           ? await acceptCopilot(sm, backend, bundle, repoRoot, opts)
-          : await acceptWorker(sm, backend, bundle, repoRoot, opts);
+          : await acceptWorker(lifecycle, backend, bundle, repoRoot, opts);
 
         outputResult(
           {

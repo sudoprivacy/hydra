@@ -22,6 +22,7 @@ import type {
   NotificationListResult,
   NotificationReadResult,
   NotificationClearResult,
+  NotificationStatusMutationResult,
 } from '@hydra/core/notifications';
 import type { NotificationSnapshot } from '@hydra/core/notificationState';
 import type { DiffChange } from '@hydra/core/diff';
@@ -40,6 +41,7 @@ export type {
   NotificationListResult,
   NotificationReadResult,
   NotificationClearResult,
+  NotificationStatusMutationResult,
   NotificationSnapshot,
   DiffChange,
 };
@@ -306,6 +308,10 @@ export interface BroadcastPayload {
 }
 
 export interface MarkNotificationReadPayload {
+  id: string;
+}
+
+export interface DismissNotificationPayload {
   id: string;
 }
 

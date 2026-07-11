@@ -17,6 +17,7 @@ export class FakeBackend implements MultiplexerBackendCore {
   readonly sessions = new Set<string>();
   readonly workdirs = new Map<string, string>();
   readonly roles = new Map<string, HydraRole>();
+  readonly workerIds = new Map<string, number>();
   readonly agents = new Map<string, string>();
   readonly messages: Array<{ sessionName: string; message: string }> = [];
   readonly killed: string[] = [];
@@ -51,6 +52,8 @@ export class FakeBackend implements MultiplexerBackendCore {
     if (workdir) this.workdirs.set(newName, workdir);
     const role = this.roles.get(oldName);
     if (role) this.roles.set(newName, role);
+    const workerId = this.workerIds.get(oldName);
+    if (workerId) this.workerIds.set(newName, workerId);
     const agent = this.agents.get(oldName);
     if (agent) this.agents.set(newName, agent);
   }
@@ -73,6 +76,14 @@ export class FakeBackend implements MultiplexerBackendCore {
 
   async setSessionRole(sessionName: string, role: HydraRole): Promise<void> {
     this.roles.set(sessionName, role);
+  }
+
+  async getSessionWorkerId(sessionName: string): Promise<number | undefined> {
+    return this.workerIds.get(sessionName);
+  }
+
+  async setSessionWorkerId(sessionName: string, workerId: number): Promise<void> {
+    this.workerIds.set(sessionName, workerId);
   }
 
   async getSessionAgent(sessionName: string): Promise<string | undefined> {

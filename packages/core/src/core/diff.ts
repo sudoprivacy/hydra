@@ -25,6 +25,7 @@ const execFile = promisify(execFileCallback);
 
 // Match the extension's ceiling so large worktrees behave identically.
 const MAX_GIT_OUTPUT = 50 * 1024 * 1024;
+export const MAX_FILE_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 
 // The base-ref candidate chain, in priority order, after the branch-configured
 // `branch.<name>.vscode-merge-base`. Identical to `reviewChanges.ts` so the
@@ -65,6 +66,15 @@ export interface FileSnapshotResult {
   exists: boolean;
 }
 
+export interface BoundedSnapshotReader {
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: null,
+  ): Promise<{ bytesRead: number }>;
+}
+
 interface ExecFileFailure extends Error {
   code?: string | number;
 }
@@ -99,7 +109,7 @@ export class DiffService {
     const normalizedRelPath = path.relative(path.resolve(workdir), safeAbsolutePath);
 
     if (side === 'current') {
-      const content = await tryReadFile(safeAbsolutePath);
+      const content = await readCurrentSnapshot(path.resolve(workdir), safeAbsolutePath, relPath);
       return {
         path: normalizedRelPath,
         side,
@@ -112,13 +122,44 @@ export class DiffService {
     const baseCommit = await this.getMergeBase(workdir, baseRef);
     // `git show <commit>:<path>` needs a repo-relative, forward-slash path.
     const gitPath = normalizedRelPath.split(path.sep).join('/');
-    const shown = await this.tryGit(['show', `${baseCommit}:${gitPath}`], workdir);
+    const treeEntry = await this.tryGit(['ls-tree', '-z', baseCommit, '--', gitPath], workdir);
+    if (!treeEntry.ok || !treeEntry.output) {
+      return {
+        path: normalizedRelPath,
+        side,
+        ref: baseCommit,
+        content: '',
+        exists: false,
+      };
+    }
+    const mode = treeEntry.output.slice(0, treeEntry.output.indexOf(' '));
+    if (mode !== '100644' && mode !== '100755') {
+      throw new Error(`File snapshot is not a regular file: ${relPath}`);
+    }
+    const object = `${baseCommit}:${gitPath}`;
+    const type = await this.tryGit(['cat-file', '-t', object], workdir);
+    if (!type.ok) {
+      return {
+        path: normalizedRelPath,
+        side,
+        ref: baseCommit,
+        content: '',
+        exists: false,
+      };
+    }
+    if (type.output.trim() !== 'blob') {
+      throw new Error(`File snapshot is not a regular file: ${relPath}`);
+    }
+    const size = Number.parseInt((await this.git(['cat-file', '-s', object], workdir)).trim(), 10);
+    assertSnapshotSize(size, relPath);
+    const shown = await this.gitBuffer(['show', object], workdir, MAX_FILE_SNAPSHOT_BYTES + 1);
+    assertTextSnapshot(shown, relPath);
     return {
       path: normalizedRelPath,
       side,
       ref: baseCommit,
-      content: shown.output,
-      exists: shown.ok,
+      content: shown.toString('utf8'),
+      exists: true,
     };
   }
 
@@ -210,6 +251,22 @@ export class DiffService {
     }
   }
 
+  private async gitBuffer(args: string[], cwd: string, maxBuffer: number): Promise<Buffer> {
+    const binary = await this.getGitBinary();
+    try {
+      const { stdout } = await execFile(binary, args, { cwd, maxBuffer, encoding: 'buffer' });
+      return stdout;
+    } catch (error) {
+      const failure = error as ExecFileFailure;
+      if (failure.code !== 'ENOENT') {
+        throw error;
+      }
+      this.gitBinary = undefined;
+      const { stdout } = await execFile(await this.getGitBinary(), args, { cwd, maxBuffer, encoding: 'buffer' });
+      return stdout;
+    }
+  }
+
   /** Run git, swallowing failures into an empty string (best-effort probes). */
   private async tryGitOutput(args: string[], cwd: string): Promise<string> {
     return (await this.tryGit(args, cwd)).output;
@@ -282,10 +339,95 @@ function parseNameStatus(output: string): DiffChange[] {
   return changes;
 }
 
-async function tryReadFile(filePath: string): Promise<string | undefined> {
+async function readCurrentSnapshot(
+  resolvedWorkdir: string,
+  filePath: string,
+  relPath: string,
+): Promise<string | undefined> {
   try {
-    return await fs.readFile(filePath, 'utf8');
-  } catch {
-    return undefined;
+    const realWorkdir = await fs.realpath(resolvedWorkdir);
+    const realFile = await fs.realpath(filePath);
+    assertPathInside(realWorkdir, realFile, relPath);
+    const targetStats = await fs.stat(realFile);
+    if (!targetStats.isFile()) {
+      throw new Error(`File snapshot is not a regular file: ${relPath}`);
+    }
+    assertSnapshotSize(targetStats.size, relPath);
+
+    const handle = await fs.open(filePath, 'r');
+    try {
+      const openedStats = await handle.stat();
+      if (!openedStats.isFile()) {
+        throw new Error(`File snapshot is not a regular file: ${relPath}`);
+      }
+      if (openedStats.dev !== targetStats.dev || openedStats.ino !== targetStats.ino) {
+        throw new Error(`File snapshot target changed during validation: ${relPath}`);
+      }
+      assertSnapshotSize(openedStats.size, relPath);
+      const content = await readBoundedSnapshotBytes(handle, relPath);
+      assertTextSnapshot(content, relPath);
+      return content.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
   }
+}
+
+export async function readBoundedSnapshotBytes(
+  reader: BoundedSnapshotReader,
+  relPath: string,
+): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(MAX_FILE_SNAPSHOT_BYTES + 1);
+  let offset = 0;
+
+  while (offset < buffer.length) {
+    const { bytesRead } = await reader.read(buffer, offset, buffer.length - offset, null);
+    if (!Number.isSafeInteger(bytesRead) || bytesRead < 0 || bytesRead > buffer.length - offset) {
+      throw new Error(`Invalid file snapshot read result: ${relPath}`);
+    }
+    if (bytesRead === 0) {
+      break;
+    }
+    offset += bytesRead;
+  }
+
+  assertSnapshotSize(offset, relPath);
+  return buffer.subarray(0, offset);
+}
+
+function assertPathInside(realWorkdir: string, realFile: string, relPath: string): void {
+  const relative = path.relative(realWorkdir, realFile);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`File snapshot path escapes the session workdir: ${relPath}`);
+  }
+}
+
+function assertSnapshotSize(size: number, relPath: string): void {
+  if (!Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_SNAPSHOT_BYTES) {
+    throw new Error(`File snapshot exceeds ${MAX_FILE_SNAPSHOT_BYTES} bytes: ${relPath}`);
+  }
+}
+
+function assertTextSnapshot(content: Buffer, relPath: string): void {
+  if (content.includes(0)) {
+    throw new Error(`Binary file snapshots are not supported: ${relPath}`);
+  }
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(content);
+  } catch {
+    throw new Error(`Binary file snapshots are not supported: ${relPath}`);
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+  return Boolean(error && typeof error === 'object' && 'code' in error
+    && (code === 'ENOENT' || code === 'ENOTDIR'));
 }

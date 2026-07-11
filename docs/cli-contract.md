@@ -184,6 +184,8 @@ Current event types:
 | --- | --- | --- | --- |
 | `notify.created` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `notificationId`, `kind`, `title`, redacted `body`, `targetSession`, `sourceSession`, optional `actionType`, `actionSession`, `workerId`, `branch`, `workdir`, `agent`. Emitted only when a new notification is stored; dedupe hits do not emit a duplicate event. |
 | `notify.read` | `cli`, `extension`, `session-manager`, or `hook` | undefined | Same notification reference fields as `notify.created`. Emitted only when the notification transitions from unread to read. |
+| `notify.resolved` | `cli`, `extension`, `session-manager`, or `hook` | undefined | Notification reference fields plus `notificationStatus`, `resolvedAt`, and `reason`. Emitted only when an active occurrence transitions to resolved. |
+| `notify.dismissed` | `cli`, `extension`, `session-manager`, or `hook` | undefined | Notification reference fields plus `notificationStatus`, `dismissedAt`, and `reason`. Emitted only when an active occurrence transitions to dismissed. |
 | `notify.cleared` | `cli`, `extension`, `session-manager`, or `hook` | undefined | `cleared`, optional `session`, `targetSession`, `sourceSession`, `kind`. Emitted only when at least one notification is removed. |
 | `worker.created` | `session-manager` | `worker` | `workerId`, `source`, optional `branch`, `repo`, `managedWorkdir`. Emitted for fresh code/task worker creation. |
 | `worker.started` | `session-manager` | `worker` | Worker identity fields plus `resumed`; existing-branch paths also include `alreadyRunning`. Emitted when an existing worker session is started or reused. |
@@ -214,9 +216,11 @@ one event record, not a wrapper object. `--after` and `--cursor-file` have the
 same meaning as non-follow mode; the cursor file is updated after each printed
 event.
 
-The first event-log version does not rotate `events.jsonl`. Consumers should
-track by `seq`, not byte offset, so a future rotation implementation can remain
-compatible.
+The event log rotates the active `events.jsonl` into bounded sequence-named
+segments. `EventLog.read()` reads retained segments transparently and preserves
+monotonic `seq` values through `events.state.json`; consumers must track by
+`seq`, not filename or byte offset. The default retention keeps up to 16
+segments of 4 MiB each for at most 30 days.
 
 ### `hydra notify create --json`
 
@@ -275,6 +279,35 @@ Returns:
 | `status` | string | `"ok"`. |
 | `notification` | object | The notification after the read operation. |
 | `markedRead` | number | `1` if the command changed unread to read, otherwise `0`. |
+
+Reading changes only `readAt`; it does not resolve or dismiss the occurrence
+and does not change worker runtime.
+
+### `hydra notify resolve <id> --reason <text> --json`
+
+Resolves one active notification occurrence. This is primarily an automation
+and lifecycle command; normal agent transitions resolve attention themselves.
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `notificationStatus` | string | The durable occurrence status after the operation. |
+| `changed` | boolean | Whether the occurrence changed from active to resolved. |
+| `notification` | object | The compatibility notification projection. |
+
+Resolving records the supplied reason and removes the occurrence from active
+inbox projections. The command does not mutate worker runtime directly.
+
+### `hydra notify dismiss <id> --json`
+
+Dismisses one notification occurrence without changing worker runtime.
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `status` | string | `"ok"`. |
+| `notificationStatus` | string | The durable occurrence status after the operation. |
+| `changed` | boolean | Whether the occurrence changed from active to dismissed. |
+| `notification` | object | The compatibility notification projection. |
 
 ### `hydra notify clear --json`
 
@@ -366,6 +399,8 @@ Notify commands:
 | `notify create` | Create a structured local notification. Supports `--session`, `--from`, `--kind`, `--title`, `--body`, `--dedupe-key`, `--action`, and context flags. |
 | `notify list` | List structured notifications. Supports `--session`, `--target`, `--from`, `--kind`, `--unread`, and `--limit`. |
 | `notify read <id>` | Mark one notification read. |
+| `notify resolve <id>` | Resolve one occurrence with a required lifecycle reason; does not directly mutate runtime. |
+| `notify dismiss <id>` | Dismiss one occurrence without changing runtime. |
 | `notify clear` | Clear all notifications, or a narrowed session/source/target/kind subset. |
 | `notify open <id>` | Mark one notification read and return its suggested action. |
 
@@ -406,6 +441,8 @@ the expected text without tmux, git, VS Code, or a populated `~/.hydra`.
 - `hydra notify create --help` -> `Usage: hydra notify create [options]`
 - `hydra notify list --help` -> `Usage: hydra notify list [options]`
 - `hydra notify read --help` -> `Usage: hydra notify read [options] <id>`
+- `hydra notify resolve --help` -> `Usage: hydra notify resolve [options] <id>`
+- `hydra notify dismiss --help` -> `Usage: hydra notify dismiss [options] <id>`
 - `hydra notify clear --help` -> `Usage: hydra notify clear [options]`
 - `hydra notify open --help` -> `Usage: hydra notify open [options] <id>`
 <!-- cli-contract-help-probes:end -->

@@ -214,6 +214,7 @@ async function main(): Promise<void> {
   const agentConfig = await import('../core/agentConfig');
   const coreGit = await import('../core/git') as unknown as Record<string, unknown>;
   const { SessionManager } = await import('../core/sessionManager');
+  const { WorkerLifecycleService } = await import('../core/workerLifecycleService');
 
   const launchCommand = agentConfig.buildAgentLaunchCommand('codex', 'codex');
   assert.equal(launchCommand, `codex ${BYPASS_FLAGS}`);
@@ -433,6 +434,7 @@ async function main(): Promise<void> {
       sessionName: 'worker-start',
       displayName: 'worker-start',
       workerId: 1,
+      lifecycleEpoch: 'epoch-before-start',
       repo: 'repo',
       repoRoot: workerWorkdir,
       branch: 'fix/codex-start',
@@ -459,10 +461,14 @@ async function main(): Promise<void> {
     await result.postCreatePromise;
 
     const command = lastSendKeysFor(backend, 'worker-start');
-    assert.equal(
-      command,
-      `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${workerWorkdir}' '33333333-3333-4333-8333-333333333333'`,
-    );
+    assert.ok(command.startsWith(`${smokeCodexCommand} -c `), 'restarted worker should refresh structured hooks');
+    assert.ok(command.includes('features.hooks=true'));
+    assert.ok(command.includes('completion-worker-1.sh'));
+    assert.ok(command.includes(BYPASS_FLAGS));
+    assert.ok(command.endsWith(
+      `resume -C '${workerWorkdir}' '33333333-3333-4333-8333-333333333333'`,
+    ));
+    assert.notEqual(result.workerInfo.lifecycleEpoch, 'epoch-before-start');
     assert.ok(
       backend.capturePaneCalls.some(call => call.sessionName === 'worker-start'),
       'startWorker should wait for the resumed agent to become ready',
@@ -522,10 +528,13 @@ async function main(): Promise<void> {
       await result.postCreatePromise;
 
       const command = lastSendKeysFor(backend, 'worker-restored');
-      assert.equal(
-        command,
-        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
-      );
+      assert.ok(command.startsWith(`${smokeCodexCommand} -c `), 'restored worker should enable structured hooks');
+      assert.ok(command.includes('features.hooks=true'));
+      assert.ok(command.includes('completion-worker-2.sh'));
+      assert.ok(command.includes(BYPASS_FLAGS));
+      assert.ok(command.endsWith(
+        `resume -C '${restoredWorktree}' '44444444-4444-4444-8444-444444444444'`,
+      ));
       assert.equal(result.workerInfo.sessionName, 'worker-restored');
       assert.equal(result.workerInfo.sessionId, '44444444-4444-4444-8444-444444444444');
       assert.ok(
@@ -566,6 +575,7 @@ async function main(): Promise<void> {
           sessionName: 'repo-ns_foo-bar-2',
           displayName: 'foo-bar-2',
           workerId: 11,
+          lifecycleEpoch: 'epoch-before-recreation',
           repo: 'repo',
           repoRoot,
           branch: 'foo/bar',
@@ -605,8 +615,9 @@ async function main(): Promise<void> {
       backend.paneOutputs.set('repo-ns_foo-bar-2', '⏵');
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'foo/bar',
         agentType: 'codex',
@@ -617,10 +628,15 @@ async function main(): Promise<void> {
       assert.equal(result.workerInfo.sessionName, 'repo-ns_foo-bar-2');
       assert.equal(result.workerInfo.slug, 'foo-bar-2');
       assert.equal(result.workerInfo.workdir, fooSlashBarWorktree);
-      assert.equal(
-        lastSendKeysFor(backend, 'repo-ns_foo-bar-2'),
-        `${smokeCodexCommand} ${BYPASS_FLAGS} resume -C '${fooSlashBarWorktree}' 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'`,
-      );
+      const resumeCommand = lastSendKeysFor(backend, 'repo-ns_foo-bar-2');
+      assert.ok(resumeCommand.startsWith(`${smokeCodexCommand} -c `));
+      assert.ok(resumeCommand.includes('features.hooks=true'));
+      assert.ok(resumeCommand.includes('completion-worker-11.sh'));
+      assert.ok(resumeCommand.includes(BYPASS_FLAGS));
+      assert.ok(resumeCommand.endsWith(
+        `resume -C '${fooSlashBarWorktree}' 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'`,
+      ));
+      assert.notEqual(result.workerInfo.lifecycleEpoch, 'epoch-before-recreation');
       assert.ok(
         backend.sendMessageCalls.some(call =>
           call.sessionName === 'repo-ns_foo-bar-2' && call.message === 'resume foo slash bar'
@@ -683,11 +699,13 @@ async function main(): Promise<void> {
     try {
       const backend = new FakeBackend();
       await backend.createSession('repo-ns_live-branch', liveWorktree);
+      await backend.setSessionRole('repo-ns_live-branch', 'worker');
       await backend.setSessionAgent('repo-ns_live-branch', 'codex');
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'live/branch',
         agentType: 'codex',
@@ -775,8 +793,9 @@ async function main(): Promise<void> {
       );
       const sm = new SessionManager(backend);
       forceFastSleeps(sm);
+      const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
 
-      const result = await sm.createWorker({
+      const result = await lifecycle.createWorker({
         repoRoot,
         branchName: 'foo/bar',
         agentType: 'codex',
@@ -787,11 +806,11 @@ async function main(): Promise<void> {
       assert.equal(result.workerInfo.sessionName, 'repo-ns_foo-bar');
       assert.equal(result.workerInfo.slug, 'foo-bar');
       assert.equal(result.workerInfo.workdir, currentWorktree);
-      assert.ok(
-        backend.sendKeysCalls.some(call =>
-          call.sessionName === 'repo-ns_foo-bar' && call.keys === `${smokeCodexCommand} ${BYPASS_FLAGS}`
-        ),
-      );
+      const launchCommand = lastSendKeysFor(backend, 'repo-ns_foo-bar');
+      assert.ok(launchCommand.startsWith(`${smokeCodexCommand} -c `));
+      assert.ok(launchCommand.includes('features.hooks=true'));
+      assert.ok(launchCommand.includes(`completion-worker-${result.workerInfo.workerId}.sh`));
+      assert.ok(launchCommand.includes(BYPASS_FLAGS));
       assert.equal(
         backend.sendKeysCalls.some(call => call.sessionName === 'repo-ns_foo-bar-2'),
         false,

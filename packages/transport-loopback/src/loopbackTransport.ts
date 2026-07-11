@@ -89,22 +89,15 @@ export class LoopbackHttpWsTransport implements HydraTransport {
 
   // ── stream implementation ──
 
-  private async *openStream<TReq, TEvt>(
+  private openStream<TReq, TEvt>(
     topic: string,
     payload: TReq,
     token: string,
-  ): AsyncGenerator<TEvt> {
+  ): AsyncIterableIterator<TEvt> {
     const socket = new WebSocket(this.buildStreamUrl(topic, payload, token));
-
-    const queue: TEvt[] = [];
-    let streamError: Error | undefined;
-    let done = false;
-    let wake: (() => void) | undefined;
-    const signal = () => {
-      const resolve = wake;
-      wake = undefined;
-      resolve?.();
-    };
+    const iterator = new SocketStreamIterator<TEvt>(() => {
+      if (socket.readyState < WS_CLOSING) socket.close();
+    });
 
     // Attach the data listeners BEFORE awaiting open, so no early frame is lost.
     socket.addEventListener('message', (event) => {
@@ -113,59 +106,24 @@ export class LoopbackHttpWsTransport implements HydraTransport {
       try {
         frame = JSON.parse(raw) as StreamFrame<TEvt>;
       } catch {
-        streamError = new Error(`stream "${topic}": malformed frame`);
-        done = true;
-        signal();
+        iterator.fail(new Error(`stream "${topic}": malformed frame`));
         return;
       }
       if (frame.error) {
-        streamError = new Error(frame.error.message);
-        done = true;
+        iterator.fail(new Error(frame.error.message));
       } else if (frame.done) {
-        done = true;
+        iterator.close();
       } else if ('event' in frame) {
-        queue.push(frame.event as TEvt);
+        iterator.push(frame.event as TEvt);
       }
-      signal();
     });
     socket.addEventListener('close', () => {
-      done = true;
-      signal();
+      iterator.close();
     });
     socket.addEventListener('error', () => {
-      if (!done && !streamError) {
-        streamError = new Error(`stream "${topic}": websocket error`);
-      }
-      done = true;
-      signal();
+      iterator.fail(new Error(`stream "${topic}": websocket error`));
     });
-
-    await this.waitForOpen(socket, topic);
-
-    try {
-      for (;;) {
-        while (queue.length > 0) {
-          yield queue.shift() as TEvt;
-        }
-        if (streamError) {
-          throw streamError;
-        }
-        if (done) {
-          return;
-        }
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-      }
-    } finally {
-      // Consumer stopped (break / return / throw): close the socket, which the
-      // server observes and uses to tear down its underlying iterable (clearing
-      // the event poll timer / disposing the notification service). readyState
-      // < CLOSING covers CONNECTING (0) and OPEN (1).
-      if (socket.readyState < WS_CLOSING) {
-        socket.close();
-      }
-    }
+    return iterator;
   }
 
   private buildStreamUrl<TReq>(topic: string, payload: TReq, token: string): string {
@@ -192,23 +150,56 @@ export class LoopbackHttpWsTransport implements HydraTransport {
     return url.toString();
   }
 
-  private waitForOpen(socket: WebSocket, topic: string): Promise<void> {
-    if (socket.readyState === WS_OPEN) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve, reject) => {
-      socket.addEventListener('open', () => resolve(), { once: true });
-      socket.addEventListener(
-        'close',
-        () => reject(new Error(`stream "${topic}": connection closed before open`)),
-        { once: true },
-      );
-      socket.addEventListener(
-        'error',
-        () => reject(new Error(`stream "${topic}": connection failed`)),
-        { once: true },
-      );
-    });
+}
+
+class SocketStreamIterator<T> implements AsyncIterableIterator<T> {
+  private readonly values: T[] = [];
+  private readonly waiters: Array<{
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  private error: Error | undefined;
+  private closed = false;
+
+  constructor(private readonly onReturn: () => void) {}
+
+  [Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    return this;
+  }
+
+  next(): Promise<IteratorResult<T>> {
+    const value = this.values.shift();
+    if (value !== undefined) return Promise.resolve({ value, done: false });
+    if (this.error) return Promise.reject(this.error);
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
+  }
+
+  return(): Promise<IteratorResult<T>> {
+    this.onReturn();
+    this.close(true);
+    return Promise.resolve({ value: undefined, done: true });
+  }
+
+  push(value: T): void {
+    if (this.closed) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter.resolve({ value, done: false });
+    else this.values.push(value);
+  }
+
+  fail(error: Error): void {
+    if (this.closed) return;
+    this.error = error;
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error);
+  }
+
+  close(discardQueued = false): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (discardQueued) this.values.length = 0;
+    for (const waiter of this.waiters.splice(0)) waiter.resolve({ value: undefined, done: true });
   }
 }
 

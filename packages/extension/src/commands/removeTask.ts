@@ -11,6 +11,7 @@ import {
 } from "../providers/tmuxSessionProvider";
 import { isDirectoryWorker, SessionManager } from "@hydra/core/sessionManager";
 import { TmuxBackendCore } from "@hydra/core/tmux";
+import { WorkerLifecycleService } from "@hydra/core/workerLifecycleService";
 import { resolveSessionKind, resolveSessionName } from "./treeItemResolver";
 
 function isMainWorktreeItem(item: TmuxItem): boolean {
@@ -40,7 +41,13 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
     return;
   }
 
-  const sm = new SessionManager(new TmuxBackendCore());
+  const coreBackend = new TmuxBackendCore();
+  const sm = new SessionManager(coreBackend);
+  const lifecycle = new WorkerLifecycleService({
+    backend: coreBackend,
+    sessionManager: sm,
+    eventSource: 'extension',
+  });
   const kind = resolveSessionKind(item);
 
   // ── Copilot: archive + kill via SessionManager ──
@@ -75,7 +82,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
     );
     if (confirm !== "Kill Session") return;
 
-    await sm.stopWorker(sessionName);
+    await lifecycle.stopWorker(sessionName);
     vscode.window.showInformationMessage(`Killed session: ${sessionName}`);
     vscode.commands.executeCommand("tmux.refresh");
     return;
@@ -90,7 +97,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
     );
     if (confirm !== "Kill Session") return;
 
-    await sm.deleteWorker(sessionName);
+    await lifecycle.deleteWorker(sessionName);
     vscode.commands.executeCommand("tmux.refresh");
     return;
   }
@@ -106,7 +113,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
       );
       if (!confirm) return;
 
-      await sm.deleteWorker(sessionName, { deleteFiles: confirm === "Delete Worker & Files" });
+      await lifecycle.deleteWorker(sessionName, { deleteFiles: confirm === "Delete Worker & Files" });
       vscode.window.showInformationMessage(`Removed task worker: ${sessionName}`);
       vscode.commands.executeCommand("tmux.refresh");
       return;
@@ -119,7 +126,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
     );
     if (confirm !== "Delete Worker") return;
 
-    await sm.deleteWorker(sessionName);
+    await lifecycle.deleteWorker(sessionName);
     vscode.window.showInformationMessage(`Removed task worker: ${sessionName}`);
     vscode.commands.executeCommand("tmux.refresh");
     return;
@@ -133,7 +140,7 @@ export async function removeTask(item?: TmuxItem): Promise<void> {
   );
   if (confirm !== "Delete Session & Worktree") return;
 
-  await sm.deleteWorker(sessionName);
+  await lifecycle.deleteWorker(sessionName);
   vscode.window.showInformationMessage(`Removed: ${sessionName}`);
   vscode.commands.executeCommand("tmux.refresh");
 }

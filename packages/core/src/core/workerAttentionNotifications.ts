@@ -9,6 +9,7 @@ import {
 } from './notifications';
 import type { WorkerNeedsInputSignal } from './workerNeedsInputClassifier';
 import type { WorkerInfo } from './sessionManager';
+import { getWorkerLifecycleEpoch } from './workerIdentity';
 import {
   setWorkerRuntimeState,
   WorkerRuntimeStateStore,
@@ -16,7 +17,16 @@ import {
   type WorkerRuntimeState,
 } from './workerRuntimeState';
 
-export type WorkerRuntimeErrorReason = 'post-create' | 'initial-prompt' | 'startup-timeout';
+export type WorkerRuntimeErrorReason =
+  | 'post-create'
+  | 'initial-prompt'
+  | 'startup-timeout'
+  | 'start'
+  | 'message-delivery'
+  | 'stop'
+  | 'delete'
+  | 'rename'
+  | 'restore';
 
 export interface PublishWorkerAttentionNotificationInput {
   kind: NotificationKind;
@@ -46,7 +56,7 @@ export interface PublishWorkerNeedsInputOptions {
 
 export type PublishWorkerAttentionNotificationResult =
   | (CreateNotificationResult & { skipped?: undefined })
-  | { created: false; notification?: undefined; skipped: 'missing-target' | 'store-failed' };
+  | { created: false; notification?: undefined; skipped: 'store-failed' };
 
 const ERROR_BODY_LIMIT = 600;
 const NEEDS_INPUT_BODY_LIMIT = 600;
@@ -55,16 +65,13 @@ export function publishWorkerAttentionNotification(
   input: PublishWorkerAttentionNotificationInput,
 ): PublishWorkerAttentionNotificationResult {
   const targetCopilotSession = input.targetCopilotSession?.trim();
-  if (!targetCopilotSession) {
-    return { created: false, skipped: 'missing-target' };
-  }
 
   try {
     return (input.store ?? new NotificationStore()).create({
       kind: input.kind,
       title: input.title,
       body: input.body,
-      targetSession: targetCopilotSession,
+      targetSession: targetCopilotSession || null,
       sourceSession: input.sourceWorkerSession,
       dedupeKey: input.dedupeKey,
       action: {
@@ -112,7 +119,7 @@ export function publishWorkerRuntimeErrorNotification(
     eventSource: options.eventSource || 'session-manager',
     store: options.store,
   });
-  if (result.skipped) {
+  if (result.created || result.skipped) {
     updateWorkerRuntimeStateFromAttention(
       worker,
       'error',
@@ -120,6 +127,7 @@ export function publishWorkerRuntimeErrorNotification(
       'session-manager',
       options.eventSource || 'session-manager',
       options.runtimeStateStore,
+      'occurrence' in result ? result.occurrence : undefined,
     );
   }
   return result;
@@ -150,7 +158,7 @@ export function publishWorkerNeedsInputNotification(
     eventSource: options.eventSource || 'hook',
     store: options.store,
   });
-  if (result.skipped) {
+  if (result.created || result.skipped) {
     updateWorkerRuntimeStateFromAttention(
       worker,
       'needs-input',
@@ -158,6 +166,7 @@ export function publishWorkerNeedsInputNotification(
       signal.source === 'codex-transcript' ? 'codex-transcript' : 'hook',
       options.eventSource || 'hook',
       options.runtimeStateStore,
+      'occurrence' in result ? result.occurrence : undefined,
     );
   }
   return result;
@@ -194,6 +203,7 @@ function updateWorkerRuntimeStateFromAttention(
   origin: WorkerRuntimeSignalOrigin,
   eventSource: HydraEventSource,
   runtimeStateStore?: WorkerRuntimeStateStore,
+  occurrence?: CreateNotificationResult['occurrence'],
 ): void {
   try {
     setWorkerRuntimeState({
@@ -202,6 +212,9 @@ function updateWorkerRuntimeStateFromAttention(
       origin,
       reason,
       workerId: worker.workerId,
+      occurrenceId: occurrence?.occurrenceId,
+      lifecycleEpoch: occurrence?.lifecycleEpoch ?? getWorkerLifecycleEpoch(worker),
+      runId: occurrence?.runId,
       agent: worker.agent,
       workdir: worker.workdir,
     }, eventSource, runtimeStateStore ?? new WorkerRuntimeStateStore());
@@ -222,6 +235,18 @@ function getWorkerRuntimeErrorTitle(workerLabel: string, reason: WorkerRuntimeEr
     case 'startup-timeout':
     case 'post-create':
       return `${workerLabel} failed during startup`;
+    case 'start':
+      return `${workerLabel} failed to start`;
+    case 'message-delivery':
+      return `${workerLabel} failed to receive a message`;
+    case 'stop':
+      return `${workerLabel} failed to stop`;
+    case 'delete':
+      return `${workerLabel} failed to delete`;
+    case 'rename':
+      return `${workerLabel} failed to rename`;
+    case 'restore':
+      return `${workerLabel} failed to restore`;
   }
 }
 

@@ -33,6 +33,14 @@ interface RunResult {
   status: number;
 }
 
+interface CompletionJobEntry {
+  jobId: string;
+  workerId: number;
+  lifecycleEpoch: string;
+  runId: string;
+  status: 'pending' | 'fired' | 'cancelled';
+}
+
 type ProcessEnv = Record<string, string | undefined>;
 
 const SESSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -274,13 +282,28 @@ async function main(): Promise<void> {
       'worker agent should not inherit HYDRA_COPILOT_SESSION',
     );
 
-    const notifyScript = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.sh`);
-    const pendingPath = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.pending`);
-    assert.ok(fs.existsSync(notifyScript), 'notify hook script should be generated');
-    await pollUntil(() => fs.existsSync(pendingPath), 60_000, 'notify pending marker to be armed');
-    assert.match(fs.readFileSync(notifyScript, 'utf-8'), new RegExp(`COPILOT='${COPILOT_B}'`));
+    assert.ok(workerInfo.workerId, 'workerId should be recorded');
+    const notifyScript = path.join(hydraHome, 'hooks', `completion-worker-${workerInfo.workerId}.sh`);
+    const legacyPendingPath = path.join(hydraHome, 'hooks', `notify-${workerSessionName}.pending`);
+    const jobsPath = path.join(hydraHome, 'completion-jobs.json');
+    assert.ok(fs.existsSync(notifyScript), 'structured completion hook script should be generated');
+    const pendingJob = await pollUntil(() => {
+      if (!fs.existsSync(jobsPath)) return null;
+      const jobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+      return jobs.find(job => job.workerId === workerInfo.workerId && job.status === 'pending') || null;
+    }, 60_000, 'durable completion job to be armed');
+    const scriptContent = fs.readFileSync(notifyScript, 'utf-8');
+    assert.match(scriptContent, /hooks complete/);
+    assert.match(scriptContent, new RegExp(`LIFECYCLE_EPOCH='${escapeRegExp(pendingJob.lifecycleEpoch)}'`));
+    assert.equal(scriptContent.includes(COPILOT_B), false, 'hook script must not copy parent routing');
+    assert.equal(scriptContent.includes(workerSessionName), false, 'hook script must not copy session routing');
+    assert.equal(fs.existsSync(legacyPendingPath), false, 'new lifecycle must not write legacy pending markers');
 
     assertRun('run notify script', run('sh', [notifyScript], childEnv, repoRoot));
+    await pollUntil(() => {
+      const jobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+      return jobs.find(job => job.jobId === pendingJob.jobId)?.status === 'fired' || null;
+    }, 10_000, 'completion job to be marked fired');
     await pollUntil(() => {
       const currentLog = fs.readFileSync(fakeAgentLog, 'utf-8');
       return currentLog.includes(`INPUT cwd=${repoRoot} hydra_copilot_session=${COPILOT_B} line=Worker #`);
@@ -292,7 +315,13 @@ async function main(): Promise<void> {
       false,
       'completion notification should not be delivered to copilot A',
     );
-    assert.equal(fs.existsSync(pendingPath), false, 'notify pending marker should be consumed');
+    const firedJobs = (JSON.parse(fs.readFileSync(jobsPath, 'utf-8')) as { jobs?: CompletionJobEntry[] }).jobs || [];
+    assert.equal(
+      firedJobs.find(job => job.jobId === pendingJob.jobId)?.status,
+      'fired',
+      'completion coordinator should mark the durable job fired',
+    );
+    assert.equal(fs.existsSync(legacyPendingPath), false, 'legacy pending marker should remain absent');
 
     assertRun('worker delete', runHydra(['worker', 'delete', workerSessionName]));
     assertRun('copilot B delete', runHydra(['copilot', 'delete', COPILOT_B]));
@@ -301,13 +330,73 @@ async function main(): Promise<void> {
     console.log('copilotEnvE2eSmoke: ok');
   } finally {
     runTmux(['kill-server']);
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    cleanupTempRoot();
   }
+}
+
+function cleanupTempRoot(): void {
+  if (!waitForTempRootProcesses(1_000)) {
+    terminateTempRootProcesses('SIGTERM');
+    if (!waitForTempRootProcesses(2_000)) {
+      terminateTempRootProcesses('SIGKILL');
+      waitForTempRootProcesses(1_000);
+    }
+  }
+  fs.rmSync(tempRoot, {
+    recursive: true,
+    force: true,
+    maxRetries: 50,
+    retryDelay: 100,
+  });
+}
+
+function waitForTempRootProcesses(timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (listTempRootProcesses().length === 0) return true;
+    sleepSync(100);
+  } while (Date.now() < deadline);
+  return listTempRootProcesses().length === 0;
+}
+
+function terminateTempRootProcesses(signal: 'SIGTERM' | 'SIGKILL'): void {
+  for (const entry of listTempRootProcesses()) {
+    try {
+      process.kill(entry.pid, signal);
+    } catch (error) {
+      if (getErrorCode(error) !== 'ESRCH') throw error;
+    }
+  }
+}
+
+function listTempRootProcesses(): Array<{ pid: number; command: string }> {
+  const result = spawnSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf-8' });
+  if (result.status !== 0) return [];
+  const processes: Array<{ pid: number; command: string }> = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match || !match[2].includes(tempRoot)) continue;
+    const pid = Number(match[1]);
+    if (Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid) {
+      processes.push({ pid, command: match[2] });
+    }
+  }
+  return processes;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
 }
 
 void main().catch((error: unknown) => {
   try { runTmux(['kill-server']); } catch { /* best-effort */ }
-  fs.rmSync(tempRoot, { recursive: true, force: true });
+  cleanupTempRoot();
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 });

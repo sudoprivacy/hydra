@@ -1,6 +1,11 @@
 import * as fs from 'fs';
 import { getHydraSessionsFile } from './path';
 import type { WorkerInfo } from './sessionManager';
+import {
+  getWorkerLifecycleEpoch,
+  normalizeWorkerSessionAliases,
+  workerMatchesSessionRoute,
+} from './workerIdentity';
 
 interface SessionStateLike {
   workers?: Record<string, Partial<WorkerInfo>>;
@@ -16,11 +21,13 @@ function withSessionName(sessionName: string, worker: Partial<WorkerInfo>): Work
   if (!resolvedSessionName || typeof worker.workdir !== 'string' || typeof worker.agent !== 'string') {
     return null;
   }
-  return {
+  const resolved: WorkerInfo = {
     source: worker.source,
     sessionName: resolvedSessionName,
     displayName: worker.displayName || resolvedSessionName,
     workerId: typeof worker.workerId === 'number' ? worker.workerId : 0,
+    lifecycleEpoch: worker.lifecycleEpoch,
+    sessionAliases: worker.sessionAliases,
     repo: worker.repo ?? null,
     repoRoot: worker.repoRoot ?? null,
     branch: worker.branch ?? null,
@@ -37,6 +44,9 @@ function withSessionName(sessionName: string, worker: Partial<WorkerInfo>): Work
     agentSessionFile: worker.agentSessionFile ?? null,
     copilotSessionName: worker.copilotSessionName ?? null,
   };
+  if (resolved.workerId > 0) resolved.lifecycleEpoch = getWorkerLifecycleEpoch(resolved);
+  resolved.sessionAliases = normalizeWorkerSessionAliases(resolved);
+  return resolved;
 }
 
 export function readWorkerSessions(sessionsFile = getHydraSessionsFile()): WorkerInfo[] {
@@ -59,6 +69,15 @@ export function readWorkerSessionByName(sessionName: string, sessionsFile = getH
     return null;
   }
   return readWorkerSessions(sessionsFile)
-    .find(worker => worker.sessionName === target)
+    .find(worker => workerMatchesSessionRoute(worker, target))
+    ?? null;
+}
+
+export function readWorkerSessionById(workerId: number, sessionsFile = getHydraSessionsFile()): WorkerInfo | null {
+  if (!Number.isSafeInteger(workerId) || workerId <= 0) {
+    return null;
+  }
+  return readWorkerSessions(sessionsFile)
+    .find(worker => worker.workerId === workerId)
     ?? null;
 }

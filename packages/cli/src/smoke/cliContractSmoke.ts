@@ -123,9 +123,14 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['copilot', 'send', '--help'], expected: 'Usage: hydra copilot send [options] <session> <message>' },
     { args: ['config', 'get', '--help'], expected: 'Usage: hydra config get [options] <key>' },
     { args: ['events', '--help'], expected: 'Usage: hydra events [options]' },
+    { args: ['hooks', 'capabilities', '--help'], expected: 'Usage: hydra hooks capabilities [options] [agent]' },
+    { args: ['hooks', 'complete', '--help'], expected: 'Usage: hydra hooks complete [options]' },
+    { args: ['hooks', 'signal', '--help'], expected: 'Usage: hydra hooks signal [options]' },
     { args: ['notify', 'create', '--help'], expected: 'Usage: hydra notify create [options]' },
     { args: ['notify', 'list', '--help'], expected: 'Usage: hydra notify list [options]' },
     { args: ['notify', 'read', '--help'], expected: 'Usage: hydra notify read [options] <id>' },
+    { args: ['notify', 'resolve', '--help'], expected: 'Usage: hydra notify resolve [options] <id>' },
+    { args: ['notify', 'dismiss', '--help'], expected: 'Usage: hydra notify dismiss [options] <id>' },
     { args: ['notify', 'clear', '--help'], expected: 'Usage: hydra notify clear [options]' },
     { args: ['notify', 'open', '--help'], expected: 'Usage: hydra notify open [options] <id>' },
   ];
@@ -169,6 +174,27 @@ function assertJsonContracts(ctx: TestContext): void {
   assert.ok(Array.isArray(list.copilots), 'list.copilots must be an array');
   assert.ok(Array.isArray(list.workers), 'list.workers must be an array');
   assert.equal(list.count, list.copilots.length + list.workers.length, 'list.count');
+
+  const capabilities = parseStdoutJson<{
+    status: string;
+    agents: Array<{
+      agentType: string;
+      adapter: string;
+      configScope: string;
+      capabilities: Record<string, string>;
+    }>;
+  }>(
+    runCli(['hooks', 'capabilities', 'codex', '--json'], ctx.env),
+    'hydra hooks capabilities codex --json',
+  );
+  assert.equal(capabilities.status, 'ok');
+  assert.equal(capabilities.agents.length, 1);
+  assert.equal(capabilities.agents[0].agentType, 'codex');
+  assert.equal(capabilities.agents[0].configScope, 'project');
+  assert.equal(capabilities.agents[0].capabilities.complete, 'hook');
+  assert.equal(capabilities.agents[0].capabilities.needsInput, 'transcript');
+  assert.equal(capabilities.agents[0].capabilities.inputResolved, 'transcript');
+  assert.equal(capabilities.agents[0].capabilities.aborted, 'transcript');
 }
 
 function assertErrorContracts(ctx: TestContext): void {

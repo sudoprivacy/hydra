@@ -37,6 +37,8 @@ export interface SessionActions {
   delete: (tile: TileModel) => void;
   acknowledgeCompletion: (tile: TileModel) => void;
   acknowledgeWorkerCompletion: (session: string) => void;
+  markNotificationRead: (id: string) => void;
+  dismissNotification: (id: string) => void;
   start: (tile: TileModel) => void;
   stop: (tile: WorkerTileModel) => void;
 }
@@ -121,6 +123,8 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       },
       acknowledgeWorkerCompletion: (session) =>
         runDirect(() => client.clearNotifications(completionNotificationClearFiltersForWorkerSession(session))),
+      markNotificationRead: (id) => runDirect(() => client.markNotificationRead(id)),
+      dismissNotification: (id) => runDirect(() => client.dismissNotification(id)),
       start: (tile) => runDirect(() => client.startSession(tile.session, tile.kind)),
       stop: (tile) => runDirect(() => client.stopWorker(tile.session)),
     }),
@@ -147,6 +151,9 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       {dialog?.type === 'create' ? (
         <CreateSessionModal
           initialKind={dialog.kind}
+          copilots={(board.view?.groups ?? []).flatMap(group => group.tiles)
+            .filter((tile): tile is Extract<TileModel, { kind: 'copilot' }> => tile.kind === 'copilot')
+            .map(tile => ({ session: tile.session, name: tile.name, running: tile.lifecycle === 'running' }))}
           busy={busy}
           error={dialogError}
           onCreateWorker={(input: CreateWorkerInput) => runDialog(() => client.createWorker(input))}

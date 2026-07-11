@@ -23,7 +23,11 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { WebSocketServer, type WebSocket as WsWebSocket } from 'ws';
 
-import type { AuthContext, HydraAppService as HydraAppServiceApi } from '@hydra/protocol';
+import type {
+  AuthContext,
+  HydraAppService as HydraAppServiceApi,
+  TerminalAttachInput,
+} from '@hydra/protocol';
 import {
   BEARER_PREFIX,
   LOOPBACK_ROUTES,
@@ -67,6 +71,11 @@ export interface LoopbackServer {
   close(): Promise<void>;
 }
 
+interface TerminalAuthorizingAppService extends HydraAppServiceApi {
+  authorizeTerminal(input: TerminalAttachInput): Promise<void>;
+  dispose?(): void;
+}
+
 /** Denial verdict from the auth/origin gate, or `null` when the request passes. */
 interface Denial {
   status: number;
@@ -78,7 +87,7 @@ interface Denial {
  * with the chosen `{ url, port, close() }`.
  */
 export function createLoopbackServer(
-  appService: HydraAppServiceApi,
+  appService: TerminalAuthorizingAppService,
   options: LoopbackServerOptions,
 ): Promise<LoopbackServer> {
   const token = options.token;
@@ -97,7 +106,9 @@ export function createLoopbackServer(
   const wss = new WebSocketServer({ noServer: true });
   // One bridge per server owns the interactive-owner registry (one owner per
   // worker); each `/v1/terminal` socket is handed to `bridge.handle`.
-  const terminalBridge = new TerminalBridge();
+  const terminalBridge = new TerminalBridge(async (session) => {
+    await appService.authorizeTerminal({ session });
+  });
 
   server.on('upgrade', (req, socket, head) => {
     const url = parseUrl(req);
@@ -115,7 +126,7 @@ export function createLoopbackServer(
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       if (url.pathname === LOOPBACK_ROUTES.terminal) {
-        terminalBridge.handle(ws, url);
+        void terminalBridge.handle(ws, url);
       } else {
         void handleStream(ws, url);
       }
@@ -258,8 +269,9 @@ export function createLoopbackServer(
       resolve({
         url: `http://${formatHost(host)}:${port}`,
         port,
-        close: () =>
-          new Promise<void>((resolveClose) => {
+        close: () => {
+          appService.dispose?.();
+          return new Promise<void>((resolveClose) => {
             for (const client of wss.clients) {
               client.terminate();
             }
@@ -268,7 +280,8 @@ export function createLoopbackServer(
             // Drop lingering keep-alive HTTP connections so shutdown doesn't hang
             // on idle clients (and the server handle releases promptly).
             server.closeAllConnections?.();
-          }),
+          });
+        },
       });
     });
   });

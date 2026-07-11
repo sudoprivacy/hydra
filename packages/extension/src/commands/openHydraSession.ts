@@ -11,7 +11,7 @@ import { getActiveBackend } from '../utils/multiplexer';
 import { ensureBackendInstalled } from './ensureBackendInstalled';
 import { sendCopilotOnboarding } from './createCopilot';
 import { openChangesReview } from './reviewChanges';
-import { awaitWorkerPostCreateOrPublishError } from '@hydra/core/workerAttentionNotifications';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 export async function openHydraSessionByItem(item: TmuxItem): Promise<void> {
   const backend = getActiveBackend();
@@ -100,25 +100,32 @@ async function resumeCopilot(sessionName: string): Promise<void> {
 
 async function resumeWorker(sessionName: string, fallbackWorktreePath?: string): Promise<void> {
   const backend = getActiveBackend();
-  let workdir = fallbackWorktreePath;
-  try {
-    const sm = new SessionManager(new TmuxBackendCore());
-    const result = await sm.startWorker(sessionName);
-    void awaitWorkerPostCreateOrPublishError(
-      result.workerInfo,
-      result.postCreatePromise,
-      { eventSource: 'extension' },
-    ).catch((error) => {
+  const coreBackend = new TmuxBackendCore();
+  const sm = new SessionManager(coreBackend);
+  const worker = await sm.getWorker(sessionName);
+  let workdir: string;
+
+  if (worker) {
+    const lifecycle = new WorkerLifecycleService({
+      backend: coreBackend,
+      sessionManager: sm,
+      eventSource: 'extension',
+    });
+    const result = await lifecycle.startWorker(sessionName);
+    void result.postCreatePromise.catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       vscode.window.showWarningMessage(
         `Worker "${result.workerInfo.sessionName}" resumed, but agent initialization did not complete cleanly: ${message}`,
       );
     });
-    workdir = result.workerInfo.workdir || workdir;
-  } catch {
-    if (!workdir) {
+    workdir = result.workerInfo.workdir;
+  } else {
+    if (!fallbackWorktreePath) {
       throw new Error(`Worker "${sessionName}" not found in sessions.json`);
     }
+    // Legacy worktree-only entries predate sessions.json. Keep them attachable,
+    // but do not treat this unmanaged tmux fallback as a persisted worker.
+    workdir = fallbackWorktreePath;
     await backend.createSession(sessionName, workdir);
     await backend.setSessionWorkdir(sessionName, workdir);
     await backend.setSessionRole(sessionName, 'worker');

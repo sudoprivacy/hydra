@@ -166,6 +166,39 @@ async function main(): Promise<void> {
     assert.equal(event.session, session, 'streamed event carries the created session');
     assert.ok(Number.isInteger(event.seq) && event.seq > 0, 'streamed event carries a seq cursor');
 
+    const idleEvents = client.subscribeEvents({ after: Number.MAX_SAFE_INTEGER })[Symbol.asyncIterator]();
+    const pendingEvent = idleEvents.next();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const eventCancelStarted = Date.now();
+    await idleEvents.return?.();
+    assert.ok(Date.now() - eventCancelStarted < 100, 'idle event stream cancels without waiting for a poll');
+    assert.equal((await pendingEvent).done, true, 'event cancellation releases pending next()');
+
+    const { NotificationStore } = await import('@hydra/core/notifications');
+    const seededNotification = new NotificationStore().create({
+      kind: 'needs-input',
+      title: 'Loopback needs input',
+      sourceSession: session,
+      targetSession: null,
+      context: { workerId: afterCreate.workers[0].number },
+    }).notification;
+    const notifications = client.subscribeNotifications()[Symbol.asyncIterator]();
+    const initialNotifications = await notifications.next();
+    assert.equal(initialNotifications.done, false, 'notification stream yields its initial snapshot');
+    assert.equal(initialNotifications.value?.totalCount, 1, 'initial snapshot includes stored attention');
+    const pendingNotification = notifications.next();
+    await client.dismissNotification(seededNotification.id);
+    const changedNotifications = await Promise.race([
+      pendingNotification,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('notification push timeout')), 600)),
+    ]);
+    assert.equal(changedNotifications.value?.totalCount, 0, 'shared watcher pushes local notification changes');
+    const idleNotification = notifications.next();
+    const notificationCancelStarted = Date.now();
+    await notifications.return?.();
+    assert.ok(Date.now() - notificationCancelStarted < 100, 'idle notification stream cancels immediately');
+    assert.equal((await idleNotification).done, true, 'notification cancellation releases pending next()');
+
     // ── openTerminal now returns a live channel (node-pty ⇄ tmux is M3) ──
     // The full node-pty bridge is exercised against a real tmux session in
     // smoke:terminal; here we just assert the transport hands back a well-formed

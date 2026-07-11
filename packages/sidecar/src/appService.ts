@@ -11,26 +11,28 @@
 //
 // ── verb → engine mapping (every op grounded in real code) ────────────────────
 //  Op.listSessions          SessionManager.sync + WorkerRuntimeStateStore.get   (list.ts)
-//  Op.createWorker          SessionManager.createWorker / createDirectoryWorker  (worker.ts)
+//  Op.createWorker          WorkerLifecycleService.create*                       (worker.ts)
 //  Op.createCopilot         SessionManager.createCopilotAndFinalize             (copilot.ts)
-//  Op.startSession          SessionManager.startWorker / startCopilot
-//  Op.stopWorker            SessionManager.stopWorker
-//  Op.deleteSession         SessionManager.deleteWorker / deleteCopilot
-//  Op.renameSession         SessionManager.renameWorker / renameCopilot
-//  Op.restoreSession        SessionManager.getArchived + restoreWorker /
+//  Op.startSession          WorkerLifecycleService.startWorker / startCopilot
+//  Op.stopWorker            WorkerLifecycleService.stopWorker
+//  Op.deleteSession         WorkerLifecycleService.deleteWorker / deleteCopilot
+//  Op.renameSession         WorkerLifecycleService.renameWorker / renameCopilot
+//  Op.restoreSession        SessionManager.getArchived + WorkerLifecycleService.restoreWorker /
 //                             restoreCopilotAndFinalize                          (archive.ts)
 //  Op.getLogs               TmuxBackendCore.capturePane (+ getWorker/getCopilot) (worker.ts)
-//  Op.sendMessage           TmuxBackendCore.sendMessage (+ runtime mark)         (worker.ts)
-//  Op.broadcastToWorkers    SessionManager.sync + TmuxBackendCore.sendMessage    (worker send --all)
+//  Op.sendMessage           WorkerLifecycleService / TmuxBackendCore             (worker.ts)
+//  Op.broadcastToWorkers    WorkerLifecycleService.broadcastToWorkers            (worker send --all)
 //  Op.listNotifications     NotificationStore.list
 //  Op.markNotificationRead  NotificationStore.markRead
+//  Op.dismissNotification   NotificationStore.dismiss
 //  Op.clearNotifications    NotificationStore.clear
 //  Op.getDiff               DiffService.getDiff (workdir from SessionManager)
 //  Op.getFileSnapshot       DiffService.getFileSnapshot (path-constrained)
 //  Op.getGitStatus          SessionManager.sync + git status --porcelain        (sidebar U:N)
-//  Topic.events             EventLog.read (poll — EventBus push is M2)           (events.ts)
-//  Topic.notifications      NotificationStateService.onDidChange
-//  openTerminal             node-pty ⇄ tmux attach (M3 — not yet implemented)
+//  Topic.events             EventHub (one tailer + in-process fan-out)            (eventHub.ts)
+//  Topic.notifications      shared NotificationStateService.onDidChange
+//  openTerminal             reserved in-process terminal seam; loopback attach
+//                             is handled by TerminalBridge after ownership auth
 
 import * as os from 'node:os';
 
@@ -42,16 +44,19 @@ import {
   type WorkerInfo,
 } from '@hydra/core/sessionManager';
 import type { CopilotMode, MultiplexerBackendCore } from '@hydra/core/types';
-import { WorkerRuntimeStateStore, setWorkerRuntimeState } from '@hydra/core/workerRuntimeState';
+import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
 import { NotificationStore } from '@hydra/core/notifications';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import { EventLog, type HydraEventSource } from '@hydra/core/events';
+import { EventHub } from '@hydra/core/eventHub';
+import { AsyncPushIterator } from '@hydra/core/asyncPushIterator';
 import { resolveAgentSessionFile, expandAndResolvePath } from '@hydra/core/path';
 import { getRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hydra/core/git';
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
+import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
 
@@ -66,6 +71,7 @@ import {
   type CreateWorkerInput,
   type CreateWorkerResult,
   type DeleteSessionPayload,
+  type DismissNotificationPayload,
   type DiffSummary,
   type EventSubscribeInput,
   type FileSnapshot,
@@ -83,6 +89,7 @@ import {
   type NotificationListResult,
   type NotificationReadResult,
   type NotificationSnapshot,
+  type NotificationStatusMutationResult,
   type RenameSessionPayload,
   type RestoreSessionPayload,
   type SendMessagePayload,
@@ -98,8 +105,6 @@ import {
 } from '@hydra/protocol';
 
 const DEFAULT_LOG_LINES = 50;
-const EVENT_POLL_INTERVAL_MS = 250;
-
 export interface HydraAppServiceOptions {
   /** Multiplexer backend. Defaults to the real tmux backend. Tests inject a fake. */
   backend?: MultiplexerBackendCore;
@@ -107,6 +112,8 @@ export interface HydraAppServiceOptions {
   notificationStore?: NotificationStore;
   runtimeStateStore?: WorkerRuntimeStateStore;
   eventLog?: EventLog;
+  eventHub?: EventHub;
+  notificationStateService?: NotificationStateService;
   diffService?: DiffService;
   /**
    * Source stamped on sidecar-originated notification events. Must be a value
@@ -121,21 +128,41 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly sessionManager: SessionManager;
   private readonly notificationStore: NotificationStore;
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
+  private readonly workerLifecycle: WorkerLifecycleService;
   private readonly eventLog: EventLog;
+  private readonly eventHub: EventHub;
+  private readonly notificationStateService: NotificationStateService;
   private readonly diffService: DiffService;
   private readonly notificationEventSource: HydraEventSource;
+  private readonly notificationStreams = new Set<AsyncPushIterator<NotificationSnapshot>>();
+  private notificationStateSubscription: { dispose(): void } | undefined;
+  private notificationStateInitialized = false;
 
   constructor(options: HydraAppServiceOptions = {}) {
     this.backend = options.backend ?? new TmuxBackendCore();
-    this.sessionManager = options.sessionManager ?? new SessionManager(this.backend);
-    this.notificationStore = options.notificationStore ?? new NotificationStore();
-    this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore();
     this.eventLog = options.eventLog ?? new EventLog();
+    this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore(undefined, this.eventLog);
+    this.sessionManager = options.sessionManager ?? new SessionManager(this.backend, this.eventLog, this.runtimeStateStore);
+    this.notificationStore = options.notificationStore ?? new NotificationStore(undefined, undefined, this.eventLog);
+    this.eventHub = options.eventHub ?? new EventHub(this.eventLog);
+    this.notificationStateService = options.notificationStateService ?? new NotificationStateService({
+      store: this.notificationStore,
+      eventLog: this.eventLog,
+      eventHub: this.eventHub,
+    });
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
+    this.workerLifecycle = new WorkerLifecycleService({
+      backend: this.backend,
+      sessionManager: this.sessionManager,
+      notificationStore: this.notificationStore,
+      runtimeStateStore: this.runtimeStateStore,
+      eventLog: this.eventLog,
+      eventSource: this.notificationEventSource,
+    });
   }
 
-  // ── transport surface (the 3-method waist, server side) ──
+  // ── transport waist (3 methods) + sidecar-internal terminal authorization ──
 
   // `auth` is part of the HydraAppService contract but ignored in-process; it is
   // omitted here (optional params may be dropped by an implementer) and wired in
@@ -155,12 +182,22 @@ export class HydraAppService implements HydraAppServiceApi {
     }
   }
 
+  dispose(): void {
+    this.eventHub.dispose();
+    for (const stream of [...this.notificationStreams]) stream.close();
+    this.stopNotificationState();
+  }
+
   openTerminal(input: TerminalAttachInput): TerminalChannel {
-    // M3 delivers the node-pty ⇄ tmux attach bridge. The shape is fixed in
-    // @hydra/protocol so UI + transports are written against it today.
+    // Loopback terminal attach is implemented by TerminalBridge. The in-process
+    // transport keeps the frozen terminal method but has no PTY bridge.
     throw new Error(
       `attachTerminal (node-pty ⇄ tmux bridge) is implemented in milestone M3; requested session "${input.session}"`,
     );
+  }
+
+  async authorizeTerminal(input: TerminalAttachInput): Promise<void> {
+    await this.sessionManager.assertHydraSessionOwnership(input.session);
   }
 
   // ── request dispatch ──
@@ -193,6 +230,8 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.listNotifications(payload as NotificationListFilters);
       case Op.markNotificationRead:
         return this.markNotificationRead(payload as MarkNotificationReadPayload);
+      case Op.dismissNotification:
+        return this.dismissNotification(payload as DismissNotificationPayload);
       case Op.clearNotifications:
         return this.clearNotifications(payload as NotificationClearFilters);
       case Op.getDiff:
@@ -249,7 +288,7 @@ export class HydraAppService implements HydraAppServiceApi {
     return { copilots, workers, count: copilots.length + workers.length };
   }
 
-  /** SessionManager.createWorker / createDirectoryWorker — mirrors `hydra worker create`. */
+  /** WorkerLifecycleService.create* — mirrors `hydra worker create`. */
   private async createWorker(input: CreateWorkerInput): Promise<CreateWorkerResult> {
     const taskModeRequested = Boolean(input.dir) || input.temp === true;
     if (input.repo && taskModeRequested) {
@@ -270,7 +309,7 @@ export class HydraAppService implements HydraAppServiceApi {
       const branch = input.branch.trim();
       const branchExisted = await localBranchExists(repoRoot, branch);
 
-      const result = await this.sessionManager.createWorker({
+      const result = await this.workerLifecycle.createWorker({
         repoRoot,
         branchName: branch,
         agentType,
@@ -291,7 +330,7 @@ export class HydraAppService implements HydraAppServiceApi {
         if (!name) {
           throw new Error('--name is required when using --temp.');
         }
-        const result = await this.sessionManager.createDirectoryWorker({
+        const result = await this.workerLifecycle.createDirectoryWorker({
           managedWorkdir: true, name, agentType,
           task: input.task, taskFile: input.taskFile,
           copilotSessionName: input.copilot, notifyCopilot: input.notifyCopilot ?? true,
@@ -301,7 +340,7 @@ export class HydraAppService implements HydraAppServiceApi {
       }
 
       const workdir = expandAndResolvePath(input.dir!);
-      const result = await this.sessionManager.createDirectoryWorker({
+      const result = await this.workerLifecycle.createDirectoryWorker({
         workdir, name: input.name?.trim(), managedWorkdir: false, agentType,
         task: input.task, taskFile: input.taskFile,
         copilotSessionName: input.copilot, notifyCopilot: input.notifyCopilot ?? true,
@@ -358,10 +397,10 @@ export class HydraAppService implements HydraAppServiceApi {
     }
   }
 
-  /** SessionManager.startWorker / startCopilot. */
+  /** WorkerLifecycleService.startWorker / SessionManager.startCopilot. */
   private async startSession(payload: StartSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
-      const { workerInfo, postCreatePromise } = await this.sessionManager.startWorker(
+      const { workerInfo, postCreatePromise } = await this.workerLifecycle.startWorker(
         payload.session, payload.options?.agent, payload.options?.agentCommand,
       );
       await postCreatePromise;
@@ -378,27 +417,27 @@ export class HydraAppService implements HydraAppServiceApi {
     };
   }
 
-  /** SessionManager.stopWorker. */
+  /** WorkerLifecycleService.stopWorker. */
   private async stopWorker(payload: StopWorkerPayload): Promise<SessionResult> {
-    await this.sessionManager.stopWorker(payload.session);
+    await this.workerLifecycle.stopWorker(payload.session);
     return { status: 'stopped', kind: 'worker', session: payload.session };
   }
 
-  /** SessionManager.deleteWorker / deleteCopilot. */
+  /** WorkerLifecycleService.deleteWorker / SessionManager.deleteCopilot. */
   private async deleteSession(payload: DeleteSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
       const deleteFiles = payload.options?.deleteFiles === true;
-      await this.sessionManager.deleteWorker(payload.session, { deleteFiles });
+      await this.workerLifecycle.deleteWorker(payload.session, { deleteFiles });
       return { status: 'deleted', kind: 'worker', session: payload.session, deleteFiles };
     }
     await this.sessionManager.deleteCopilot(payload.session);
     return { status: 'deleted', kind: 'copilot', session: payload.session };
   }
 
-  /** SessionManager.renameWorker / renameCopilot. */
+  /** WorkerLifecycleService.renameWorker / SessionManager.renameCopilot. */
   private async renameSession(payload: RenameSessionPayload): Promise<SessionResult> {
     if (payload.kind === 'worker') {
-      const worker = await this.sessionManager.renameWorker(payload.session, payload.name);
+      const worker = await this.workerLifecycle.renameWorker(payload.session, payload.name);
       return {
         status: 'renamed', kind: 'worker', oldSession: payload.session,
         session: worker.sessionName, branch: worker.branch, workdir: worker.workdir,
@@ -411,7 +450,7 @@ export class HydraAppService implements HydraAppServiceApi {
     };
   }
 
-  /** SessionManager.getArchived + restoreWorker / restoreCopilotAndFinalize — mirrors `archive restore`. */
+  /** SessionManager.getArchived + WorkerLifecycleService.restoreWorker / restoreCopilotAndFinalize. */
   private async restoreSession(payload: RestoreSessionPayload): Promise<SessionResult> {
     const entry = this.sessionManager.getArchived(payload.session);
     if (!entry) {
@@ -419,7 +458,7 @@ export class HydraAppService implements HydraAppServiceApi {
     }
 
     if (entry.type === 'worker') {
-      const { workerInfo, postCreatePromise } = await this.sessionManager.restoreWorker(payload.session);
+      const { workerInfo, postCreatePromise } = await this.workerLifecycle.restoreWorker(payload.session);
       await postCreatePromise;
       return {
         status: 'restored', kind: 'worker', type: 'worker',
@@ -456,31 +495,20 @@ export class HydraAppService implements HydraAppServiceApi {
     return { session: payload.session, lines, output, sessionId: entity?.sessionId ?? null, sessionFile };
   }
 
-  /** TmuxBackendCore.sendMessage (+ runtime mark) — mirrors `worker/copilot send`. */
+  /** WorkerLifecycleService / TmuxBackendCore.sendMessage — mirrors `worker/copilot send`. */
   private async sendMessage(payload: SendMessagePayload): Promise<SendResult> {
-    await this.backend.sendMessage(payload.session, payload.message);
     if (payload.kind === 'worker') {
-      const worker = await this.sessionManager.getWorker(payload.session);
-      if (worker) {
-        this.markWorkerRunning(worker, 'worker-send');
-      }
+      await this.workerLifecycle.sendWorkerMessage(payload.session, payload.message);
+    } else {
+      await this.backend.sendMessage(payload.session, payload.message);
     }
     return { status: 'sent', session: payload.session, message: payload.message };
   }
 
-  /** SessionManager.sync + TmuxBackendCore.sendMessage per running worker — mirrors `worker send --all`. */
+  /** WorkerLifecycleService.broadcastToWorkers — mirrors `worker send --all`. */
   private async broadcastToWorkers(payload: BroadcastPayload): Promise<BroadcastResult> {
-    const state = await this.sessionManager.sync();
-    const running = Object.values(state.workers).filter(w => w.status === 'running');
-    if (running.length === 0) {
-      throw new Error('No running workers found');
-    }
-    const sent: string[] = [];
-    for (const worker of running) {
-      await this.backend.sendMessage(worker.sessionName, payload.message);
-      this.markWorkerRunning(worker, 'worker-broadcast');
-      sent.push(worker.sessionName);
-    }
+    const result = await this.workerLifecycle.broadcastToWorkers(payload.message);
+    const sent = result.workers.map(worker => worker.sessionName);
     return { status: 'sent', sessions: sent, message: payload.message };
   }
 
@@ -492,6 +520,11 @@ export class HydraAppService implements HydraAppServiceApi {
   /** NotificationStore.markRead. */
   private async markNotificationRead(payload: MarkNotificationReadPayload): Promise<NotificationReadResult> {
     return this.notificationStore.markRead(payload.id, this.notificationEventSource);
+  }
+
+  /** NotificationStore.dismiss. Runtime remains unchanged. */
+  private async dismissNotification(payload: DismissNotificationPayload): Promise<NotificationStatusMutationResult> {
+    return this.notificationStore.dismiss(payload.id, this.notificationEventSource);
   }
 
   /** NotificationStore.clear. */
@@ -541,53 +574,44 @@ export class HydraAppService implements HydraAppServiceApi {
   // ── streams ──
 
   /**
-   * EventLog.read — drain the backlog after `after`, then poll for new events.
-   * This is the M0 compatibility poller (mirrors `hydra events --follow`); the
-   * in-proc EventBus push replaces the poll in M2. Consumers stop by breaking
-   * the `for await`, which returns the generator and clears the timer.
+   * EventHub drains retained history once, emits local appends synchronously,
+   * and uses one seq-cursored tailer for CLI, extension, and hook writers.
    */
-  private async *subscribeEvents(input: EventSubscribeInput): AsyncGenerator<HydraEvent> {
-    let after = input.after ?? 0;
-    for (;;) {
-      const events = this.eventLog.read({ after, tolerateIncompleteTail: true });
-      for (const event of events) {
-        after = event.seq;
-        yield event;
-      }
-      await sleep(EVENT_POLL_INTERVAL_MS);
-    }
+  private subscribeEvents(input: EventSubscribeInput): AsyncIterableIterator<HydraEvent> {
+    return this.eventHub.subscribe(input.after ?? 0);
   }
 
   /**
-   * NotificationStateService — yield the current snapshot, then push each
-   * `onDidChange` delta. Snapshot + delta, never inferred from terminal text
-   * (FINAL.md §"Event model"). The service (and its watchers) is disposed when
-   * the consumer stops the iteration.
+   * One shared NotificationStateService yields a snapshot per subscriber and
+   * fans out each change. The watcher is disposed after the last subscriber.
    */
-  private async *subscribeNotifications(): AsyncGenerator<NotificationSnapshot> {
-    const service = new NotificationStateService();
-    service.initialize();
-    const queue: NotificationSnapshot[] = [];
-    let notify: (() => void) | undefined;
-    const subscription = service.onDidChange((snapshot) => {
-      queue.push(snapshot);
-      notify?.();
-      notify = undefined;
+  private subscribeNotifications(): AsyncIterableIterator<NotificationSnapshot> {
+    this.startNotificationState();
+    let stream: AsyncPushIterator<NotificationSnapshot>;
+    stream = new AsyncPushIterator(() => {
+      this.notificationStreams.delete(stream);
+      if (this.notificationStreams.size === 0) this.stopNotificationState();
     });
-    try {
-      yield service.getSnapshot();
-      for (;;) {
-        if (queue.length === 0) {
-          await new Promise<void>((resolve) => { notify = resolve; });
-        }
-        while (queue.length > 0) {
-          yield queue.shift() as NotificationSnapshot;
-        }
-      }
-    } finally {
-      subscription.dispose();
-      service.dispose();
-    }
+    this.notificationStreams.add(stream);
+    stream.push(this.notificationStateService.getSnapshot());
+    return stream;
+  }
+
+  private startNotificationState(): void {
+    if (this.notificationStateInitialized) return;
+    this.notificationStateInitialized = true;
+    this.notificationStateService.initialize();
+    this.notificationStateSubscription = this.notificationStateService.onDidChange(snapshot => {
+      for (const stream of this.notificationStreams) stream.push(snapshot);
+    });
+  }
+
+  private stopNotificationState(): void {
+    if (!this.notificationStateInitialized) return;
+    this.notificationStateInitialized = false;
+    this.notificationStateSubscription?.dispose();
+    this.notificationStateSubscription = undefined;
+    this.notificationStateService.dispose();
   }
 
   // ── shared helpers ──
@@ -622,21 +646,6 @@ export class HydraAppService implements HydraAppServiceApi {
     throw new Error(`Session "${session}" not found`);
   }
 
-  private markWorkerRunning(worker: WorkerInfo, reason: string): void {
-    try {
-      setWorkerRuntimeState({
-        sessionName: worker.sessionName,
-        state: 'running',
-        origin: 'manual',
-        reason,
-        workerId: worker.workerId,
-        agent: worker.agent,
-        workdir: worker.workdir,
-      }, this.notificationEventSource);
-    } catch {
-      // Best-effort: delivering the message is the user-visible operation.
-    }
-  }
 }
 
 // ── module-local helpers (mirror list.ts / copilot.ts) ──
@@ -665,8 +674,4 @@ function resolveCopilotMode(input: { mode?: CopilotMode; plan?: boolean }): Copi
     return 'plan';
   }
   return input.mode === 'plan' ? 'plan' : 'normal';
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -145,14 +145,16 @@ async function main(): Promise<void> {
   delete process.env.HYDRA_CONFIG_PATH;
 
   const { SessionManager } = await import('../core/sessionManager');
+  const { WorkerLifecycleService } = await import('../core/workerLifecycleService');
   const { getHydraArchiveFile, getHydraSessionsFile, getHydraTasksRoot } = await import('../core/path');
 
   const backend = new TaskWorkerBackend();
   const sm = new SessionManager(backend);
+  const lifecycle = new WorkerLifecycleService({ backend, sessionManager: sm, eventSource: 'cli' });
   const userDir = path.join(tempHome, 'research notes');
   fs.mkdirSync(userDir, { recursive: true });
 
-  const unmanaged = await sm.createDirectoryWorker({
+  const unmanaged = await lifecycle.createDirectoryWorker({
     workdir: userDir,
     agentType: 'claude',
     task: 'summarize the notes',
@@ -172,13 +174,13 @@ async function main(): Promise<void> {
   assert.equal(unmanagedCreatedEvent?.payload?.source, 'directory');
 
   await assert.rejects(
-    () => sm.deleteWorker(unmanaged.workerInfo.sessionName, { deleteFiles: true }),
+    () => lifecycle.deleteWorker(unmanaged.workerInfo.sessionName, { deleteFiles: true }),
     /user-provided directory/,
   );
   assert.ok(fs.existsSync(userDir), 'unmanaged directory should survive rejected delete');
   assert.equal(backend.killed.includes(unmanaged.workerInfo.sessionName), false);
 
-  await sm.deleteWorker(unmanaged.workerInfo.sessionName);
+  await lifecycle.deleteWorker(unmanaged.workerInfo.sessionName);
   assert.ok(fs.existsSync(userDir), 'unmanaged directory should survive normal delete');
   const unmanagedDeletedEvent = readEvents(process.env.HYDRA_HOME!)
     .find(event => event.type === 'worker.deleted' && event.session === unmanaged.workerInfo.sessionName);
@@ -190,7 +192,7 @@ async function main(): Promise<void> {
   const archived = archive.entries.find(entry => entry.sessionName === unmanaged.workerInfo.sessionName);
   assert.equal(archived?.data.source, 'directory');
 
-  const managed = await sm.createDirectoryWorker({
+  const managed = await lifecycle.createDirectoryWorker({
     managedWorkdir: true,
     name: 'temp-report',
     agentType: 'claude',
@@ -201,17 +203,17 @@ async function main(): Promise<void> {
   assert.equal(managed.workerInfo.workdir, path.join(getHydraTasksRoot(), 'temp-report'));
   assert.ok(fs.existsSync(managed.workerInfo.workdir), 'managed task directory should be created');
 
-  await sm.deleteWorker(managed.workerInfo.sessionName);
+  await lifecycle.deleteWorker(managed.workerInfo.sessionName);
   assert.ok(fs.existsSync(managed.workerInfo.workdir), 'managed task directory should survive default delete');
 
-  const managedDeleteFiles = await sm.createDirectoryWorker({
+  const managedDeleteFiles = await lifecycle.createDirectoryWorker({
     managedWorkdir: true,
     name: 'temp-delete-files',
     agentType: 'claude',
   });
   await managedDeleteFiles.postCreatePromise;
   const managedDeletePath = managedDeleteFiles.workerInfo.workdir;
-  await sm.deleteWorker(managedDeleteFiles.workerInfo.sessionName, { deleteFiles: true });
+  await lifecycle.deleteWorker(managedDeleteFiles.workerInfo.sessionName, { deleteFiles: true });
   assert.equal(fs.existsSync(managedDeletePath), false, 'managed task directory should be deleted with deleteFiles');
   const managedDeletedEvent = readEvents(process.env.HYDRA_HOME!)
     .find(event => event.type === 'worker.deleted' && event.session === managedDeleteFiles.workerInfo.sessionName);
