@@ -14,11 +14,12 @@ export type CreateKind = 'worker' | 'copilot';
 interface CreateSessionModalProps {
   initialKind: CreateKind;
   initialCopilot?: string;
+  initialWorkerType?: WorkerType;
   copilots: readonly { session: string; name: string; running: boolean }[];
   busy?: boolean;
   error?: string | null;
   onCreateWorker: (input: CreateWorkerInput) => void;
-  onCreateCopilot: (input: CreateCopilotInput) => void;
+  onCreateCopilot: (input: CreateCopilotInput, initialTask?: string) => void;
   onClose: () => void;
 }
 
@@ -27,6 +28,7 @@ type WorkerType = 'code' | 'task';
 export function CreateSessionModal({
   initialKind,
   initialCopilot,
+  initialWorkerType = 'code',
   copilots,
   busy = false,
   error,
@@ -35,7 +37,7 @@ export function CreateSessionModal({
   onClose,
 }: CreateSessionModalProps): JSX.Element {
   const [kind, setKind] = useState<CreateKind>(initialKind);
-  const [workerType, setWorkerType] = useState<WorkerType>('code');
+  const [workerType, setWorkerType] = useState<WorkerType>(initialWorkerType);
 
   // Shared / worker fields.
   const [repo, setRepo] = useState('');
@@ -54,7 +56,7 @@ export function CreateSessionModal({
 
   // Copilot fields.
   const [copilotWorkdir, setCopilotWorkdir] = useState('');
-  const [copilotRepo, setCopilotRepo] = useState('');
+  const [copilotTask, setCopilotTask] = useState('');
   const [plan, setPlan] = useState(false);
 
   const validity = validate(kind, workerType, { repo, branch, dir, name, temp });
@@ -67,11 +69,10 @@ export function CreateSessionModal({
     if (kind === 'copilot') {
       onCreateCopilot(trimObject<CreateCopilotInput>({
         workdir: copilotWorkdir,
-        repo: copilotRepo,
         agent,
         name,
         plan: plan || undefined,
-      }));
+      }), copilotTask.trim() || undefined);
       return;
     }
     if (workerType === 'code') {
@@ -96,7 +97,7 @@ export function CreateSessionModal({
   };
 
   return (
-    <Modal title="Create session" onClose={onClose}>
+    <Modal title={kind === 'copilot' ? 'Create Copilot' : workerType === 'code' ? 'Create Code Worker' : 'Create Local Task'} onClose={onClose}>
       <form className="hydra-form" onSubmit={submit}>
         <div className="hydra-segmented" role="tablist" aria-label="Session kind">
           <SegButton active={kind === 'worker'} onClick={() => setKind('worker')}>
@@ -158,13 +159,19 @@ export function CreateSessionModal({
         ) : (
           <>
             <Field label="Workdir" value={copilotWorkdir} onChange={setCopilotWorkdir} placeholder="default: $HOME" />
-            <Field label="Repo" value={copilotRepo} onChange={setCopilotRepo} placeholder="optional starting repo" />
             <Field label="Agent" value={agent} onChange={setAgent} placeholder="default agent" />
             <Field label="Name" value={name} onChange={setName} placeholder="optional display name" />
             <label className="hydra-checkbox">
               <input type="checkbox" checked={plan} onChange={(event) => setPlan(event.target.checked)} />
               <span>Plan mode</span>
             </label>
+            <Field
+              label="Initial task"
+              value={copilotTask}
+              onChange={setCopilotTask}
+              placeholder="optional first instruction"
+              multiline
+            />
           </>
         )}
 
@@ -175,7 +182,9 @@ export function CreateSessionModal({
             Cancel
           </button>
           <button type="submit" className="hydra-btn hydra-btn--primary" disabled={busy || Boolean(validity.error)}>
-            {busy ? 'Creating…' : 'Create'}
+            {busy
+              ? 'Creating…'
+              : kind === 'copilot' ? 'Create Copilot' : workerType === 'code' ? 'Create Worker' : 'Create Local Task'}
           </button>
         </div>
       </form>

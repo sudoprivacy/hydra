@@ -1,0 +1,61 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --hy-bg: #fcfdfd;
+  --hy-canvas: #fcfdfd;
+  --hy-sidebar: rgba(226, 233, 233, 0.82);
+  --hy-sidebar-solid: #e4eae9;
+  --hy-panel: #f4f4f2;
+  --hy-panel-strong: #ededeb;
+  --hy-tile: #ffffff;
+  --hy-hover: rgba(0, 0, 0, 0.045);
+  --hy-selected: rgba(0, 0, 0, 0.055);
+  --hy-border: rgba(0, 0, 0, 0.085);
+  --hy-border-strong: rgba(0, 0, 0, 0.16);
+  --hy-text: #181817;
+  --hy-muted: rgba(24, 24, 23, 0.66);
+  --hy-faint: rgba(24, 24, 23, 0.46);
+  --hy-accent: #ff5a1f;
+  --hy-accent-strong: #d94b14;
+  --hy-accent-contrast: #ffffff;
+  --hy-danger: #c83f2f;
+  --hy-warn: #b46b1a;
+  --hy-ok: #2fa36a;
+  --hy-shadow: 0 10px 32px rgba(0, 0, 0, 0.11), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --hy-soft-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --hy-run-running: #2fa36a;
+  --hy-run-idle: #6f7471;
+  --hy-run-needs-input: #cc7a1f;
+  --hy-run-error: #c83f2f;
+  --hy-run-unknown: #a7aaa7;
+  --hy-terminal: #151a1e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hy-bg: #1c1c1a;
+    --hy-canvas: #20201e;
+    --hy-sidebar: rgba(44, 46, 44, 0.84);
+    --hy-sidebar-solid: #2b2d2b;
+    --hy-panel: #292a28;
+    --hy-panel-strong: #333431;
+    --hy-tile: #242522;
+    --hy-hover: rgba(255, 255, 255, 0.055);
+    --hy-selected: rgba(255, 255, 255, 0.09);
+    --hy-border: rgba(255, 255, 255, 0.09);
+    --hy-border-strong: rgba(255, 255, 255, 0.16);
+    --hy-text: #f2f1ed;
+    --hy-muted: rgba(242, 241, 237, 0.66);
+    --hy-faint: rgba(242, 241, 237, 0.44);
+    --hy-accent: #ff7a45;
+    --hy-accent-strong: #ff9a73;
+    --hy-danger: #ec6a5c;
+    --hy-warn: #e0a044;
+    --hy-ok: #55c985;
+    --hy-run-running: #55c985;
+    --hy-run-idle: #a2a39f;
+    --hy-run-needs-input: #e0a044;
+    --hy-run-error: #ec6a5c;
+    --hy-run-unknown: #777973;
+    --hy-terminal: #141412;
+  }
+}

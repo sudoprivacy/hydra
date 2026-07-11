@@ -1,0 +1,16 @@
+/* Desktop v2 supporting and responsive states. */
+@media (max-width: 1100px) {
+  .hydra-session-header__session {
+    max-width: 34vw;
+  }
+
+  .hydra-session-header__utility > span:not(.hydra-session-header__count) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hydra-context {
+    animation: none;
+  }
+}

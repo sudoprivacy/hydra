@@ -1,104 +1,74 @@
-// One session row in the sidebar tree — a dense, two-line node that mirrors the
-// old VS Code extension tree (packages/extension tmuxSessionProvider.ts).
-//
-//   Copilot:  ● name agent [N workers · M repos] ✓ 已完成   [unread] ⋮
-//             35m ago
-//   Worker:   ● branch #N agent running ✓ 已完成             [unread] ⋮
-//             35m ago  U:2
-//
-// Clicking the row opens/focuses its tab when the session has an attachable
-// terminal; the ⋮ menu carries the per-row actions. The row is highlighted when
-// its tab is active.
-
-import type { TileModel } from '../missionControl/boardModel';
+import type { SessionControlRow } from '../controlState/selectors';
 import {
-  COMPLETED_CHIP_LABEL,
   copilotSummaryLabel,
   gitChangeLabel,
-  relativeTime,
-  runtimeToken,
 } from '../missionControl/format';
-import { STATUS_LABELS, tileStatus } from '../status';
-import { useSessions } from '../sessions/SessionsProvider';
+import { controlRowStatus, STATUS_LABELS } from '../status';
 import { useTabs } from '../tabs/TabsProvider';
+import { GitBranch } from '../ui/icons';
 import { RowMenu } from './RowMenu';
 
-export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
+export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
   const tabs = useTabs();
-  const { control } = useSessions();
-  const status = tileStatus(tile);
-  const selected = tabs.activeSession === tile.session;
-  const activeAttentionCount = tile.kind === 'worker'
-    ? control.view?.workers.find(worker => worker.workerId === tile.number)?.activeAttentionCount ?? 0
-    : control.view?.copilots.find(copilot => copilot.session === tile.session)?.activeAttentionCount ?? 0;
-  const attentionBadge = tile.kind === 'copilot'
-    ? activeAttentionCount
-    : activeAttentionCount > 1 ? activeAttentionCount : 0;
-
-  const summary = tile.kind === 'copilot' ? copilotSummaryLabel(tile.workerCount, tile.repoCount) : null;
-  const gitLabel = tile.kind === 'worker' ? gitChangeLabel(tile.changed) : null;
+  const status = controlRowStatus(row);
+  const selected = tabs.activeSession === row.session;
+  const summary = row.kind === 'copilot'
+    ? copilotSummaryLabel(row.workerCount, row.repoCount)
+    : null;
+  const gitLabel = row.kind === 'worker' ? gitChangeLabel(row.changed) : null;
+  const attentionBadge = row.kind === 'copilot'
+    ? row.activeAttentionCount
+    : row.activeAttentionCount > 1 ? row.activeAttentionCount : 0;
+  const showLifecycleDot = row.kind === 'worker' || status !== 'running';
   const openTerminal = () => {
-    tabs.openTab(tile.session, tile.kind, {
-      workerId: tile.kind === 'worker' ? tile.number : undefined,
-      agentSessionId: tile.raw.agentSessionId,
+    tabs.openTab(row.session, row.kind, {
+      workerId: row.kind === 'worker' ? row.workerId : undefined,
+      agentSessionId: row.raw.agentSessionId,
     });
   };
 
   return (
     <div
-      className={`hydra-row${selected ? ' hydra-row--selected' : ''}`}
+      className={`hydra-row hydra-row--${row.kind}${selected ? ' hydra-row--selected' : ''}`}
       role="treeitem"
       aria-selected={selected}
       tabIndex={0}
-      title={tile.session}
-      onClick={() => {
-        openTerminal();
-      }}
-      onKeyDown={(event) => {
-        if (event.currentTarget !== event.target) {
-          return;
-        }
+      title={row.session}
+      onClick={openTerminal}
+      onKeyDown={event => {
+        if (event.currentTarget !== event.target) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           openTerminal();
         }
       }}
     >
-      <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
+      <span className="hydra-row__icon" aria-hidden="true">
+        <GitBranch size={row.kind === 'copilot' ? 17 : 15} strokeWidth={1.55} />
+      </span>
       <div className="hydra-row__main">
         <div className="hydra-row__line">
-          <span className="hydra-row__name">{tile.name}</span>
-          {tile.kind === 'worker' ? <span className="hydra-row__num">#{tile.number}</span> : null}
-          <span className="hydra-row__agent">{tile.agent}</span>
-          {tile.kind === 'worker' ? (
-            <span className="hydra-row__token">{runtimeToken(tile.lifecycle, tile.runtime)}</span>
-          ) : summary ? (
+          <span className="hydra-row__name">{row.name}</span>
+          {gitLabel ? <span className="hydra-row__changes" title={`${gitLabel} changed files`}>{gitLabel}</span> : null}
+        </div>
+        {summary ? (
+          <div className="hydra-row__sub">
             <span className="hydra-row__summary">{summary}</span>
-          ) : null}
-          {tile.completed ? (
-            <span className="hydra-chip hydra-chip--done" title="Task completed">
-              {COMPLETED_CHIP_LABEL}
-            </span>
-          ) : null}
-        </div>
-        <div className="hydra-row__sub">
-          <span className="hydra-row__time">{relativeTime(tile.lastEventAt)}</span>
-          {gitLabel ? (
-            <span className="hydra-row__u" title="changed files (git status)">
-              {gitLabel}
-            </span>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
       {attentionBadge > 0 ? (
         <span
           className="hydra-row__unread hydra-badge hydra-badge--unread"
-          title={`${activeAttentionCount} active attention occurrences`}
+          title={`${row.activeAttentionCount} active attention occurrences`}
         >
           {attentionBadge}
         </span>
       ) : null}
-      <RowMenu tile={tile} />
+      {showLifecycleDot ? (
+        <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
+      ) : null}
+      <RowMenu row={row} />
     </div>
   );
 }

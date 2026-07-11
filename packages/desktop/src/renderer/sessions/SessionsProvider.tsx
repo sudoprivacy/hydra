@@ -1,9 +1,5 @@
-// SessionsProvider — the single owner of the live board + every session
-// mutation, shared by the sidebar tree, the status bar, the row menus and the
-// Overview tab. It is the tab-shell's port of the old MissionControl container:
-// it holds the HydraControlClient, the live board hook, the dialog state and the
-// action handlers that call the client verbs, and it renders the dialogs +
-// error banner as global overlays. Consumers read it via `useSessions()`.
+// Renderer mutation owner. Domain state stays in DesktopControlProvider; this
+// provider owns dialogs and calls HydraControlClient lifecycle verbs.
 
 import {
   createContext,
@@ -18,15 +14,9 @@ import type { CreateCopilotInput, CreateWorkerInput } from '@hydra/protocol';
 
 import { useHydraClient } from '../HydraClientProvider';
 import { useDesktopControl, type DesktopControlState } from '../controlState/useDesktopControlState';
-import { selectLegacyBoardView } from '../controlState/selectors';
-import type { MissionControlBoard } from '../missionControl/useMissionControlBoard';
 import { CreateSessionModal, type CreateKind } from '../missionControl/CreateSessionModal';
 import { ConfirmDeleteModal, PromptModal } from '../missionControl/dialogs';
-import type { TileModel } from '../missionControl/boardModel';
-import {
-  completionNotificationClearFiltersForTile,
-  completionNotificationClearFiltersForWorkerSession,
-} from './notificationClear';
+import { X } from '../ui/icons';
 
 /** Every session mutation the UI can trigger, from any surface. */
 export interface SessionActionTarget {
@@ -41,6 +31,7 @@ export interface WorkerActionTarget extends SessionActionTarget {
 
 export interface CreateSessionOptions {
   readonly copilotSession?: string;
+  readonly workerType?: 'code' | 'task';
 }
 
 export interface SessionActions {
@@ -51,8 +42,6 @@ export interface SessionActions {
   send: (target: SessionActionTarget) => void;
   rename: (target: SessionActionTarget) => void;
   delete: (target: SessionActionTarget) => void;
-  acknowledgeCompletion: (tile: TileModel) => void;
-  acknowledgeWorkerCompletion: (session: string) => void;
   markNotificationRead: (id: string) => void;
   dismissNotification: (id: string) => void;
   start: (target: SessionActionTarget) => void;
@@ -60,13 +49,17 @@ export interface SessionActions {
 }
 
 export interface SessionsApi {
-  readonly board: MissionControlBoard;
   readonly control: DesktopControlState;
   readonly actions: SessionActions;
 }
 
 type Dialog =
-  | { type: 'create'; kind: CreateKind; copilotSession?: string }
+  | {
+    type: 'create';
+    kind: CreateKind;
+    copilotSession?: string;
+    workerType?: 'code' | 'task';
+  }
   | { type: 'rename'; target: SessionActionTarget }
   | { type: 'send'; target: SessionActionTarget }
   | { type: 'delete'; target: SessionActionTarget }
@@ -78,14 +71,6 @@ const SessionsContext = createContext<SessionsApi | null>(null);
 export function SessionsProvider({ children }: { children: ReactNode }): JSX.Element {
   const client = useHydraClient();
   const control = useDesktopControl();
-  const board = useMemo<MissionControlBoard>(() => ({
-    view: control.model ? selectLegacyBoardView(control.model) : null,
-    loading: control.loading,
-    error: control.error,
-    connected: control.connected,
-    refresh: control.refresh,
-    lastSeq: control.model?.lastEventSeq ?? 0,
-  }), [control]);
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
@@ -108,13 +93,13 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         await fn();
         setDialog(null);
         setBusy(false);
-        board.refresh();
+        control.refresh();
       } catch (cause) {
         setBusy(false);
         setDialogError(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [board],
+    [control],
   );
 
   // A mutation straight from a tile / row (start / stop): errors go to the
@@ -124,12 +109,12 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       setBanner(null);
       try {
         await fn();
-        board.refresh();
+        control.refresh();
       } catch (cause) {
         setBanner(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [board],
+    [control],
   );
 
   const actions = useMemo<SessionActions>(
@@ -138,29 +123,23 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         type: 'create',
         kind,
         copilotSession: options?.copilotSession,
+        workerType: options?.workerType,
       }),
       broadcast: () => setDialog({ type: 'broadcast' }),
       restore: () => setDialog({ type: 'restore' }),
-      refresh: () => board.refresh(),
+      refresh: () => control.refresh(),
       send: (target) => setDialog({ type: 'send', target }),
       rename: (target) => setDialog({ type: 'rename', target }),
       delete: (target) => setDialog({ type: 'delete', target }),
-      acknowledgeCompletion: (tile) => {
-        if (tile.kind === 'worker' && tile.completed) {
-          void runDirect(() => client.clearNotifications(completionNotificationClearFiltersForTile(tile)));
-        }
-      },
-      acknowledgeWorkerCompletion: (session) =>
-        runDirect(() => client.clearNotifications(completionNotificationClearFiltersForWorkerSession(session))),
       markNotificationRead: (id) => runDirect(() => client.markNotificationRead(id)),
       dismissNotification: (id) => runDirect(() => client.dismissNotification(id)),
       start: (tile) => runDirect(() => client.startSession(tile.session, tile.kind)),
       stop: (tile) => runDirect(() => client.stopWorker(tile.session)),
     }),
-    [board, client, runDirect],
+    [control, client, runDirect],
   );
 
-  const value = useMemo<SessionsApi>(() => ({ board, control, actions }), [board, control, actions]);
+  const value = useMemo<SessionsApi>(() => ({ control, actions }), [control, actions]);
 
   return (
     <SessionsContext.Provider value={value}>
@@ -169,7 +148,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
           <div className="hydra-banner hydra-banner--error" role="alert">
             <span>{banner}</span>
             <button type="button" className="hydra-banner__close" aria-label="Dismiss" onClick={() => setBanner(null)}>
-              ✕
+              <X size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -181,13 +160,28 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         <CreateSessionModal
           initialKind={dialog.kind}
           initialCopilot={dialog.copilotSession}
-          copilots={(board.view?.groups ?? []).flatMap(group => group.tiles)
-            .filter((tile): tile is Extract<TileModel, { kind: 'copilot' }> => tile.kind === 'copilot')
-            .map(tile => ({ session: tile.session, name: tile.name, running: tile.lifecycle === 'running' }))}
+          initialWorkerType={dialog.workerType}
+          copilots={(control.view?.copilots ?? []).map(copilot => ({
+            session: copilot.session,
+            name: copilot.name,
+            running: copilot.lifecycle === 'running',
+          }))}
           busy={busy}
           error={dialogError}
           onCreateWorker={(input: CreateWorkerInput) => runDialog(() => client.createWorker(input))}
-          onCreateCopilot={(input: CreateCopilotInput) => runDialog(() => client.createCopilot(input))}
+          onCreateCopilot={(input: CreateCopilotInput, initialTask?: string) => runDialog(async () => {
+            const result = await client.createCopilot(input);
+            if (initialTask) {
+              try {
+                await client.sendMessage(result.session, 'copilot', initialTask);
+              } catch (cause) {
+                setBanner(`Copilot created, but its initial task could not be sent: ${
+                  cause instanceof Error ? cause.message : String(cause)
+                }`);
+              }
+            }
+            return result;
+          })}
           onClose={closeDialog}
         />
       ) : null}

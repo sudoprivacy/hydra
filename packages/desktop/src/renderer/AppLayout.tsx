@@ -1,5 +1,5 @@
 // AppLayout — the IDE-style two-pane shell: a resizable Sidebar, a drag handle,
-// the TabArea, and the StatusBar pinned to the bottom. The sidebar width is
+// the terminal-first session workspace. The sidebar width is
 // clamped (~236–340px) and persisted in localStorage so it survives relaunch.
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -11,7 +11,7 @@ import { ContextDrawer } from './context/ContextDrawer';
 
 const MIN_WIDTH = 236;
 const MAX_WIDTH = 340;
-const DEFAULT_WIDTH = 272;
+const DEFAULT_WIDTH = 310;
 const STORAGE_KEY = 'hydra.sidebarWidth.v2';
 interface DragState {
   readonly x: number;
@@ -96,13 +96,17 @@ export function AppLayout(): JSX.Element {
   // Detach any stray listeners if we unmount mid-drag.
   useEffect(() => stopDrag, [stopDrag]);
 
+  const toggleCompactSidebar = useCallback(() => {
+    setWidth(current => current <= MIN_WIDTH + 4 ? DEFAULT_WIDTH : MIN_WIDTH);
+  }, []);
+
   return (
     <div className={`hydra-app${shell.terminalMaximized ? ' hydra-app--terminal-maximized' : ''}`}>
       <div className="hydra-app__main">
         {!shell.terminalMaximized ? (
           <>
             <div className="hydra-app__sidebar" style={{ width }}>
-              <Sidebar />
+              <Sidebar onToggleCompact={toggleCompactSidebar} />
             </div>
             <div
               className="hydra-resizer"

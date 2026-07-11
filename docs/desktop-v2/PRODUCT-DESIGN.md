@@ -39,6 +39,27 @@ copying Codex branding or product hierarchy:
 - no dashboard card grid, large KPI blocks, gradients, glossy effects, or
   decorative status colors.
 
+### Pixel-fidelity contract
+
+The approved image is the visual truth, not a loose mood board. At the reference
+capture size, live business values may differ, but shell geometry, spacing,
+typography, icon placement, surface colors, radii, borders, and shadows must
+match. The canonical renderer state is a selected Copilot with Context open:
+
+| Surface | Reference geometry at 1487 × 1058 |
+|---|---:|
+| Sidebar / main boundary | x = 310 px |
+| Session header | x = 310 px, y = 0 px, w = 1177 px, h = 54 px |
+| Terminal | x = 319 px, y = 64 px, w = 1156 px, h = 978 px |
+| Terminal utility line | 45 px high |
+| Context | x = 1107 px, y = 84 px, w = 352 px, h = 805 px |
+| Sidebar footer | 96 px high |
+
+Native macOS traffic lights remain OS-rendered through Electron
+`hiddenInset`; renderer-only screenshots normalize that native chrome out of
+the comparison. A passing implementation must retain the reference content
+geometry and separately verify the native packaged window.
+
 ## 2. Product thesis
 
 Hydra Desktop is a command center for long-lived Copilots and the Workers they
@@ -93,11 +114,11 @@ The window uses two persistent layout regions plus one optional overlay:
 
 | Region | Default | Bounds | Behavior |
 |---|---:|---:|---|
-| Sidebar | 272 px | 236–340 px | Resizable and persisted; collapsible at narrow widths |
+| Sidebar | 310 px | 236–340 px | Resizable and persisted; collapsible at narrow widths |
 | Main workspace | Remaining width | Minimum 640 px | Session header plus Terminal or Worker Diff |
-| Context drawer | 352 px | 320–380 px | Floating overlay, 16 px viewport inset, no layout reflow |
-| Session header | 52 px | Fixed | Identity, live state, context toggle, utility menu |
-| Workspace inset | 12 px | Fixed | Keeps terminal edge separate from application chrome |
+| Context drawer | 352 × 805 px | 320 px wide and height-clamped at minimum viewport | Floating overlay, no layout reflow |
+| Session header | 54 px | Fixed | Identity, live state, context toggle, utility menu |
+| Workspace inset | 9 / 10 / 12 / 16 px | Fixed at reference size | Left / top / right / bottom terminal separation |
 
 The current Electron minimum size of 980 × 640 remains supported. The approved
 image is a 1440-class composition, not a new minimum-size requirement.
@@ -282,8 +303,9 @@ flowchart LR
 ## 8. Floating Context drawer
 
 Context is a non-modal floating surface inspired by Codex's environment panel.
-It is anchored 16 px from the top-right and bottom-right workspace edges, uses
-an 18 px radius, a fine border, and one restrained shadow.
+At the reference viewport it is positioned at x = 1107 px, y = 84 px with a
+352 × 805 px frame, 12 px radius, fine border, and one restrained shadow. At
+shorter viewports its height clamps so the bottom inset remains 16 px.
 
 ### 8.1 Open and close behavior
 
@@ -449,7 +471,7 @@ do not replace the entire window with an error page.
 
 | Window width | Sidebar | Context | Main workspace |
 |---|---|---|---|
-| ≥ 1200 px | User width, default 272 px | 352 px floating drawer | Full terminal beneath drawer |
+| ≥ 1200 px | User width, default 310 px | 352 px floating drawer | Full terminal beneath drawer |
 | 980–1199 px | Clamp toward 236 px | 320 px floating drawer | Full terminal beneath drawer |
 | < 980 px if later supported | Collapsible rail | Near-full-height sheet | Terminal remains primary |
 
@@ -592,7 +614,9 @@ The Desktop v2 frontend is conformant when:
 - no Conversation UI, transcript parser, or unsupported field is introduced as
   part of frontend implementation;
 - visual comparison against the approved anchor confirms hierarchy, density,
-  spacing, drawer geometry, and terminal prominence.
+  spacing, drawer geometry, and terminal prominence;
+- project-root `design-qa.md` records same-viewport combined comparisons and
+  ends with exactly `final result: passed`.
 
 ## 19. Change control
 

@@ -601,6 +601,13 @@ packaged macOS app and real interactive checks for:
 8. stopped/deleted/renamed/restored session behavior;
 9. light and dark appearance at 980 × 640 and 1440-class sizes.
 
+Pixel-fidelity validation is a blocking Phase 5 gate. Capture the renderer at
+1487 × 1058 with a selected Copilot and Context open, place it beside
+`docs/desktop-v2/assets/terminal-first-main.png` in one comparison image, and
+repeat after every P0/P1/P2 fix. Store the final full-view and focused-region
+evidence under `docs/desktop-v2/qa/`; `design-qa.md` must end with exactly
+`final result: passed` before packaging or handoff is considered complete.
+
 ## 13. Commit and review sequence
 
 Use one integration branch and serial commits:
@@ -656,5 +663,8 @@ Implementation is complete only when:
 - all focused and clean full-suite gates pass;
 - the fresh packaged app matches the approved visual anchor and interaction
   model;
+- `design-qa.md` contains combined full-view and focused comparisons, viewport
+  and interaction evidence, a zero-error console check, and
+  `final result: passed`;
 - the integration branch is clean, documented, and ready for one deliberate
   promotion decision.

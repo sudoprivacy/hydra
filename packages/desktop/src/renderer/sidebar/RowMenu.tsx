@@ -1,54 +1,70 @@
-// The per-row ⋮ action menu. Opens the same session verbs the Overview tiles use
-// (via the shared session actions) plus tab navigation (Open Terminal / Diff).
-// Diff and Stop are worker-only; stopped copilots hide Terminal because there is
-// no live tmux session to attach to. Start appears when a session is stopped.
-
+import type { SessionControlRow } from '../controlState/selectors';
 import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
-import type { TileModel } from '../missionControl/boardModel';
+import {
+  Ellipsis,
+  GitCompareArrows,
+  Pencil,
+  Play,
+  Send,
+  Square,
+  Terminal,
+  Trash2,
+} from '../ui/icons';
 import { Menu, type MenuItem } from './Menu';
 
-export function RowMenu({ tile }: { tile: TileModel }): JSX.Element {
+export function RowMenu({ row }: { row: SessionControlRow }): JSX.Element {
   const tabs = useTabs();
   const { actions } = useSessions();
-
-  const items: MenuItem[] = [];
-  const openTile = (view: 'terminal' | 'diff') => {
-    tabs.openTab(tile.session, tile.kind, {
-      workerId: tile.kind === 'worker' ? tile.number : undefined,
-      agentSessionId: tile.raw.agentSessionId,
+  const openRow = (view: 'terminal' | 'diff') => {
+    tabs.openTab(row.session, row.kind, {
+      workerId: row.kind === 'worker' ? row.workerId : undefined,
+      agentSessionId: row.raw.agentSessionId,
       view,
     });
   };
-
-  items.push({
+  const items: MenuItem[] = [{
     key: 'terminal',
     label: 'Open Terminal',
-    onSelect: () => openTile('terminal'),
-  });
+    icon: <Terminal size={14} />,
+    onSelect: () => openRow('terminal'),
+  }];
 
-  if (tile.kind === 'worker' && tile.type === 'code') {
+  if (row.kind === 'worker' && row.type === 'code') {
     items.push({
       key: 'diff',
       label: 'Open Diff',
-      onSelect: () => openTile('diff'),
+      icon: <GitCompareArrows size={14} />,
+      onSelect: () => openRow('diff'),
     });
   }
 
   items.push(
-    { key: 'send', label: 'Send message…', onSelect: () => actions.send(tile) },
-    { key: 'rename', label: 'Rename…', onSelect: () => actions.rename(tile) },
+    { key: 'send', label: 'Send message…', icon: <Send size={14} />, onSelect: () => actions.send(row) },
+    { key: 'rename', label: 'Rename…', icon: <Pencil size={14} />, onSelect: () => actions.rename(row) },
   );
 
-  if (tile.lifecycle === 'running') {
-    if (tile.kind === 'worker') {
-      items.push({ key: 'stop', label: 'Stop', onSelect: () => actions.stop(tile) });
-    }
-  } else {
-    items.push({ key: 'start', label: 'Start', onSelect: () => actions.start(tile) });
+  if (row.lifecycle === 'running' && row.kind === 'worker') {
+    items.push({ key: 'stop', label: 'Stop', icon: <Square size={14} />, onSelect: () => actions.stop(row) });
+  } else if (row.lifecycle === 'stopped') {
+    items.push({ key: 'start', label: 'Start', icon: <Play size={14} />, onSelect: () => actions.start(row) });
   }
 
-  items.push({ key: 'delete', label: 'Delete…', danger: true, onSelect: () => actions.delete(tile) });
+  items.push({
+    key: 'delete',
+    label: 'Delete…',
+    icon: <Trash2 size={14} />,
+    danger: true,
+    onSelect: () => actions.delete(row),
+  });
 
-  return <Menu label={`Actions for ${tile.name}`} glyph="⋮" align="right" items={items} className="hydra-row__menu" />;
+  return (
+    <Menu
+      label={`Actions for ${row.name}`}
+      glyph={<Ellipsis size={15} strokeWidth={1.8} />}
+      align="right"
+      items={items}
+      className="hydra-row__menu"
+    />
+  );
 }

@@ -1,23 +1,19 @@
-import type { TileModel } from '../missionControl/boardModel';
 import { useSessions } from '../sessions/SessionsProvider';
-import { isAttention, STATUS_LABELS, tileStatus, type SessionStatus } from '../status';
+import { controlRowStatus, isAttention, STATUS_LABELS } from '../status';
+import { X } from '../ui/icons';
 import { useTabs } from './TabsProvider';
+import { selectTabSession } from './tabSelectors';
 
 export function TabBar(): JSX.Element {
   const tabs = useTabs();
-  const { board } = useSessions();
-  const tileBySession = new Map<string, TileModel>();
-  for (const group of board.view?.groups ?? []) {
-    for (const tile of group.tiles) tileBySession.set(tile.session, tile);
-  }
-
+  const { control } = useSessions();
   return (
     <div className="hydra-tabbar" role="tablist" aria-label="Open sessions">
       {tabs.tabs.map(tab => {
         const active = tab.id === tabs.activeId;
-        const tile = tileBySession.get(tab.session);
-        const status: SessionStatus = tile ? tileStatus(tile) : 'unknown';
-        const label = tile?.name ?? tab.session;
+        const row = selectTabSession(control.view, tab);
+        const status = row ? controlRowStatus(row) : 'unknown';
+        const label = row?.name ?? tab.session;
         return (
           <div
             key={tab.id}
@@ -48,7 +44,7 @@ export function TabBar(): JSX.Element {
                 tabs.closeTab(tab.id);
               }}
             >
-              ×
+              <X size={13} strokeWidth={1.8} aria-hidden="true" />
             </button>
           </div>
         );

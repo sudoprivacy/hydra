@@ -19,6 +19,8 @@ import { resolveAttentionRoute } from './attentionRouting';
 import { CopilotContext } from './CopilotContext';
 import { useContextUi } from './ContextState';
 import { WorkerContext } from './WorkerContext';
+import { Ellipsis, RefreshCw, X } from '../ui/icons';
+import { Menu } from '../sidebar/Menu';
 
 const HISTORY_STATUSES: readonly NotificationStatus[] = ['resolved', 'superseded', 'dismissed'];
 
@@ -139,9 +141,22 @@ export function ContextDrawer(): JSX.Element | null {
     >
       <header className="hydra-context__header">
         <h2>{title}</h2>
-        <button type="button" className="hydra-context__close" onClick={contextUi.close}>
-          Close
-        </button>
+        <div className="hydra-context__header-actions">
+          <Menu
+            label="Context actions"
+            glyph={<Ellipsis size={15} strokeWidth={1.75} />}
+            align="right"
+            className="hydra-context__menu"
+            items={[
+              { key: 'refresh', label: 'Refresh sessions', icon: <RefreshCw size={14} />, onSelect: actions.refresh },
+              { key: 'close', label: 'Close context', icon: <X size={14} />, onSelect: contextUi.close },
+            ]}
+          />
+          <button type="button" className="hydra-context__close" onClick={contextUi.close}>
+            <X size={15} strokeWidth={1.8} aria-hidden="true" />
+            <span className="hydra-visually-hidden">Close</span>
+          </button>
+        </div>
       </header>
       <div className="hydra-context__body">{content}</div>
     </aside>

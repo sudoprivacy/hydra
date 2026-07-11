@@ -7,16 +7,9 @@ import type {
   WorkerRuntimeState,
 } from '@hydra/protocol';
 
-import type {
-  BoardGroup,
-  BoardView,
-  CompletionNotificationModel,
-  CopilotTileModel,
-  InboxNotificationModel,
-  TileLifecycle,
-  WorkerTileModel,
-} from '../missionControl/boardModel';
 import type { DesktopControlModel } from './model';
+
+export type SessionLifecycle = 'running' | 'stopped';
 
 export interface WorkerControlRow {
   readonly kind: 'worker';
@@ -28,7 +21,7 @@ export interface WorkerControlRow {
   readonly repoLabel: string;
   readonly branch: string | null;
   readonly agent: string;
-  readonly lifecycle: TileLifecycle;
+  readonly lifecycle: SessionLifecycle;
   readonly runtime: WorkerRuntimeSnapshotV2 | null;
   readonly runtimeState: WorkerRuntimeState;
   readonly runtimeReason: string | null;
@@ -49,7 +42,7 @@ export interface CopilotControlRow {
   readonly name: string;
   readonly agent: string;
   readonly mode: CopilotMode;
-  readonly lifecycle: TileLifecycle;
+  readonly lifecycle: SessionLifecycle;
   readonly unreadCount: number;
   readonly activeAttentionCount: number;
   readonly workerCount: number;
@@ -61,6 +54,8 @@ export interface CopilotControlRow {
   readonly workdir: string | null;
   readonly raw: SessionListCopilot;
 }
+
+export type SessionControlRow = WorkerControlRow | CopilotControlRow;
 
 export interface WorkerControlGroup {
   readonly key: string;
@@ -82,7 +77,7 @@ export interface SessionHeaderModel {
   readonly kind: 'worker' | 'copilot';
   readonly session: string;
   readonly name: string;
-  readonly lifecycle: TileLifecycle;
+  readonly lifecycle: SessionLifecycle;
   readonly runtimeState: WorkerRuntimeState | null;
   readonly unreadCount: number;
   readonly activeAttentionCount: number;
@@ -230,64 +225,6 @@ export function selectSessionHeader(
   } : null;
 }
 
-/** Temporary Phase 2 adapter. Removed once every v1 BoardView consumer moves. */
-export function selectLegacyBoardView(model: DesktopControlModel): BoardView {
-  const view = selectDesktopControlView(model);
-  const workerTiles = new Map<number, WorkerTileModel>();
-  for (const worker of view.workers) workerTiles.set(worker.workerId, toLegacyWorkerTile(worker));
-  const copilotTiles = view.copilots.map(copilot => toLegacyCopilotTile(copilot));
-
-  const groups: BoardGroup[] = view.workerGroups.map(group => {
-    const tiles = group.workers.map(worker => workerTiles.get(worker.workerId)!);
-    return {
-      key: group.kind === 'local-tasks' ? 'tasks' : group.key,
-      label: group.label,
-      kind: group.kind === 'local-tasks' ? 'tasks' : 'repo',
-      tiles,
-      attentionCount: tiles.filter(tile => tile.runtime === 'needs-input' || tile.runtime === 'error').length,
-      unreadCount: tiles.reduce((sum, tile) => sum + tile.unread, 0),
-    };
-  });
-  if (copilotTiles.length > 0) {
-    groups.push({
-      key: 'copilots',
-      label: 'Copilots',
-      kind: 'copilots',
-      tiles: copilotTiles,
-      attentionCount: 0,
-      unreadCount: copilotTiles.reduce((sum, tile) => sum + tile.unread, 0),
-    });
-  }
-
-  const inbox = [...model.occurrencesById.values()]
-    .filter((occurrence): occurrence is HydraNotificationV2 & { kind: InboxNotificationModel['kind'] } =>
-      occurrence.kind === 'complete'
-      || occurrence.kind === 'needs-input'
-      || occurrence.kind === 'error',
-    )
-    .sort(compareNewestFirst)
-    .map((occurrence): InboxNotificationModel => ({
-      id: occurrence.id,
-      kind: occurrence.kind,
-      title: occurrence.title,
-      body: occurrence.body,
-      createdAt: occurrence.createdAt,
-      read: occurrence.readAt !== null,
-      targetSession: occurrence.targetSession,
-      sourceSession: occurrence.sourceSession,
-      action: occurrence.action ? { ...occurrence.action } : null,
-    }));
-
-  return {
-    groups,
-    workerCount: view.workers.length,
-    copilotCount: view.copilots.length,
-    unreadTotal: view.unreadTotal,
-    attentionTotal: groups.reduce((sum, group) => sum + group.attentionCount, 0),
-    inbox,
-  };
-}
-
 export function attentionPriority(occurrence: HydraNotificationV2): number {
   switch (occurrence.kind) {
     case 'error': return 0;
@@ -422,72 +359,6 @@ function buildWorkerGroup(
   };
 }
 
-function toLegacyWorkerTile(worker: WorkerControlRow): WorkerTileModel {
-  return {
-    kind: 'worker',
-    session: worker.session,
-    number: worker.workerId,
-    name: worker.name,
-    type: worker.type,
-    repo: worker.repo,
-    branch: worker.branch,
-    agent: worker.agent,
-    lifecycle: worker.lifecycle,
-    runtime: worker.runtimeState,
-    runtimeReason: worker.runtimeReason,
-    unread: worker.unreadCount,
-    completed: worker.completed,
-    changed: worker.changed,
-    lastEventAt: worker.runtime?.observedAt ?? null,
-    attached: worker.attached,
-    workdir: worker.workdir,
-    copilotSessionName: worker.parentCopilotSession,
-    raw: worker.raw,
-  };
-}
-
-function toLegacyCopilotTile(copilot: CopilotControlRow): CopilotTileModel {
-  const completionNotifications = copilot.occurrences
-    .filter(occurrence =>
-      occurrence.kind === 'complete'
-      && occurrence.targetSession === copilot.session,
-    )
-    .map(toCompletionNotificationModel);
-  return {
-    kind: 'copilot',
-    session: copilot.session,
-    name: copilot.name,
-    agent: copilot.agent,
-    mode: copilot.mode,
-    lifecycle: copilot.lifecycle,
-    unread: copilot.unreadCount,
-    completed: completionNotifications.some(notification => {
-      const occurrence = copilot.occurrences.find(item => item.id === notification.id);
-      return occurrence?.readAt === null;
-    }),
-    completionNotifications,
-    workerCount: copilot.workerCount,
-    repoCount: copilot.repoCount,
-    lastEventAt: null,
-    attached: copilot.attached,
-    workdir: copilot.workdir,
-    raw: copilot.raw,
-  };
-}
-
-function toCompletionNotificationModel(
-  occurrence: HydraNotificationV2,
-): CompletionNotificationModel {
-  return {
-    id: occurrence.id,
-    title: occurrence.title,
-    createdAt: occurrence.createdAt,
-    targetSession: occurrence.targetSession ?? '',
-    sourceSession: occurrence.sourceSession,
-    actionSession: occurrence.action?.session ?? occurrence.sourceSession,
-  };
-}
-
 function workerAttentionPriority(worker: WorkerControlRow): number {
   return worker.occurrences.reduce(
     (priority, occurrence) => isAttentionOccurrence(occurrence)
@@ -505,7 +376,7 @@ function countUnread(occurrences: Iterable<HydraNotificationV2>): number {
   return count;
 }
 
-function deriveLifecycle(status: string): TileLifecycle {
+function deriveLifecycle(status: string): SessionLifecycle {
   return status === 'stopped' ? 'stopped' : 'running';
 }
 

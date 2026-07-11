@@ -1,6 +1,5 @@
 // Headless proof for the Desktop v2 renderer control state. The smoke bundles
-// the exact pure reducer/selectors used by React and compares the temporary
-// legacy adapter with the previous Mission Control selector during migration.
+// the exact pure reducer/selectors used by React.
 //
 // Run: node packages/desktop/scripts/desktopControlStateSmoke.mjs
 
@@ -15,11 +14,6 @@ const bundled = await build({
   stdin: {
     contents: `
       export * from './controlState/index.ts';
-      export {
-        createBoardModel as createLegacyBoardModel,
-        applyNotificationSnapshot as applyLegacyNotificationSnapshot,
-        selectBoard as selectLegacyBoard,
-      } from './missionControl/boardModel.ts';
     `,
     resolveDir: renderer,
     sourcefile: 'desktop-control-state-smoke-entry.ts',
@@ -46,12 +40,8 @@ const {
   applySessionsSnapshot,
   selectCopilotContext,
   selectDesktopControlView,
-  selectLegacyBoardView,
   selectSessionHeader,
   selectWorkerContext,
-  createLegacyBoardModel,
-  applyLegacyNotificationSnapshot,
-  selectLegacyBoard,
 } = control;
 
 function runtime(workerId, overrides = {}) {
@@ -385,57 +375,5 @@ const renamedWorker = selectDesktopControlView(model).workers[0];
 assert.equal(renamedWorker.workerId, 1);
 assert.equal(renamedWorker.session, 'repo-a_feat-renamed');
 assert.equal(renamedWorker.runtimeState, 'idle', 'runtime survives route rename through workerId join');
-
-// ── 6. Temporary adapter matches the old board for equivalent v1/v2 state. ──
-
-const comparisonModel = createDesktopControlModel(sessions, runtimeList);
-const oldBase = selectLegacyBoard(createLegacyBoardModel(sessions));
-const newBase = selectLegacyBoardView(comparisonModel);
-assert.deepEqual(
-  newBase.groups.map(group => ({ kind: group.kind, label: group.label })),
-  oldBase.groups.map(group => ({ kind: group.kind, label: group.label })),
-);
-assert.equal(newBase.workerCount, oldBase.workerCount);
-assert.equal(newBase.copilotCount, oldBase.copilotCount);
-assert.equal(newBase.groups[0].tiles[0].runtime, oldBase.groups[0].tiles[0].runtime);
-assert.equal(
-  newBase.groups.find(group => group.kind === 'copilots').tiles[0].workerCount,
-  oldBase.groups.find(group => group.kind === 'copilots').tiles[0].workerCount,
-);
-
-const legacyNotification = {
-  loadedAt: '2026-07-11T02:02:00.000Z',
-  lastEventSeq: 11,
-  totalCount: 1,
-  unreadCount: 1,
-  notifications: [{
-    id: needsInput.id,
-    createdAt: needsInput.createdAt,
-    readAt: null,
-    kind: needsInput.kind,
-    title: needsInput.title,
-    body: needsInput.body,
-    targetSession: needsInput.targetSession,
-    sourceSession: needsInput.sourceSession,
-    action: needsInput.action,
-  }],
-};
-const oldWithAttention = selectLegacyBoard(
-  applyLegacyNotificationSnapshot(createLegacyBoardModel(sessions), legacyNotification),
-);
-const newWithAttention = selectLegacyBoardView(
-  applyNotificationOccurrenceSnapshot(comparisonModel, {
-    version: 2,
-    loadedAt: legacyNotification.loadedAt,
-    lastEventSeq: legacyNotification.lastEventSeq,
-    occurrences: [needsInput],
-    count: 1,
-    totalCount: 1,
-    activeCount: 1,
-    unreadCount: 1,
-  }),
-);
-assert.equal(newWithAttention.unreadTotal, oldWithAttention.unreadTotal);
-assert.deepEqual(newWithAttention.inbox.map(item => item.kind), oldWithAttention.inbox.map(item => item.kind));
 
 console.log('desktopControlStateSmoke: ok');

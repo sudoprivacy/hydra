@@ -10,6 +10,7 @@ import type { Disposable, TerminalChannel } from '@hydra/protocol';
 
 import { useHydraClient } from '../HydraClientProvider';
 import { useShellUi } from '../shell/shellState';
+import { Maximize2, Minimize2, RotateCw, Trash2 } from '../ui/icons';
 
 type ConnectionStatus =
   | 'inactive'
@@ -64,11 +65,12 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       fontFamily:
         'Menlo, Monaco, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Courier New", monospace',
       fontSize: 13,
+      lineHeight: 1.2,
       scrollback: 5000,
       macOptionIsMeta: true,
       allowProposedApi: true,
       linkHandler: { activate: (_event, uri) => openTerminalLink(uri) },
-      theme: { background: '#171716' },
+      theme: { background: '#151a1e' },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -264,14 +266,24 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
         <code className="hydra-terminal__session" title={session}>{session}</code>
         {detail ? <span className="hydra-terminal__detail" title={detail}>{detail}</span> : null}
         <div className="hydra-terminal__actions">
-          <button type="button" onClick={() => controllerRef.current.reconnect()} disabled={!active}>
-            Reconnect
+          <button
+            type="button"
+            title="Reconnect this terminal channel"
+            onClick={() => controllerRef.current.reconnect()}
+            disabled={!active}
+          >
+            <RotateCw size={13} strokeWidth={1.7} aria-hidden="true" />
+            <span>Reconnect</span>
           </button>
-          <button type="button" onClick={() => controllerRef.current.clearLocal()}>
-            Clear
+          <button type="button" title="Clear local terminal scrollback" onClick={() => controllerRef.current.clearLocal()}>
+            <Trash2 size={13} strokeWidth={1.7} aria-hidden="true" />
+            <span>Clear</span>
           </button>
-          <button type="button" onClick={shell.toggleTerminalMaximized}>
-            {shell.terminalMaximized ? 'Restore' : 'Maximize'}
+          <button type="button" title="Toggle maximized terminal" onClick={shell.toggleTerminalMaximized}>
+            {shell.terminalMaximized
+              ? <Minimize2 size={13} strokeWidth={1.7} aria-hidden="true" />
+              : <Maximize2 size={13} strokeWidth={1.7} aria-hidden="true" />}
+            <span>{shell.terminalMaximized ? 'Restore' : 'Maximize'}</span>
           </button>
         </div>
       </header>

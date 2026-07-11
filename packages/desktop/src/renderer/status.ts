@@ -2,9 +2,9 @@
 // looks the same wherever it appears. A session's status folds its lifecycle
 // (running / stopped) and — for workers — its live runtime projection into a
 // single glanceable token:
-//   running 🟢 · idle ⚪ · stopped ⚫ · needs-input 🟡 · error 🔴 · unknown grey.
+//   running, idle, stopped, needs-input, error, or unknown.
 
-import type { TileModel } from './missionControl/boardModel';
+import type { SessionControlRow } from './controlState/selectors';
 
 export type SessionStatus =
   | 'running'
@@ -23,16 +23,15 @@ export const STATUS_LABELS: Record<SessionStatus, string> = {
   unknown: 'Unknown',
 };
 
-/** Collapse a tile's lifecycle + runtime into the shared status vocabulary. */
-export function tileStatus(tile: TileModel): SessionStatus {
-  if (tile.lifecycle === 'stopped') {
+/** Collapse a v2 control row into the shared presentation vocabulary. */
+export function controlRowStatus(row: SessionControlRow): SessionStatus {
+  if (row.lifecycle === 'stopped') {
     return 'stopped';
   }
-  // Copilots have no runtime projection — a live copilot is simply "running".
-  if (tile.kind === 'copilot') {
+  if (row.kind === 'copilot') {
     return 'running';
   }
-  switch (tile.runtime) {
+  switch (row.runtimeState) {
     case 'running':
       return 'running';
     case 'idle':

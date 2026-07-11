@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { Copy } from '../ui/icons';
 
 export function ContextSection({
   title,
@@ -34,7 +35,7 @@ export function ContextFacts({
   );
 }
 
-export function CopyValue({ value }: { value: string }): JSX.Element {
+export function CopyValue({ value, displayValue = value }: { value: string; displayValue?: string }): JSX.Element {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -47,9 +48,16 @@ export function CopyValue({ value }: { value: string }): JSX.Element {
   };
   return (
     <span className="hydra-context__copy-value">
-      <code>{value}</code>
-      <button type="button" className="hydra-context__text-action" onClick={() => void copy()}>
-        {copied ? 'Copied' : 'Copy'}
+      <code>{displayValue}</code>
+      <button
+        type="button"
+        className="hydra-context__text-action"
+        aria-label={copied ? 'Copied' : 'Copy value'}
+        title={copied ? 'Copied' : 'Copy value'}
+        onClick={() => void copy()}
+      >
+        <Copy size={12} strokeWidth={1.7} aria-hidden="true" />
+        <span className="hydra-visually-hidden">{copied ? 'Copied' : 'Copy value'}</span>
       </button>
     </span>
   );
@@ -57,6 +65,34 @@ export function CopyValue({ value }: { value: string }): JSX.Element {
 
 export function ContextActions({ children }: { children: ReactNode }): JSX.Element {
   return <div className="hydra-context__actions">{children}</div>;
+}
+
+export function ContextActionButton({
+  icon,
+  title,
+  description,
+  onClick,
+  danger = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+  danger?: boolean;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={danger ? 'hydra-context__danger' : undefined}
+      onClick={onClick}
+    >
+      <span className="hydra-context__action-icon" aria-hidden="true">{icon}</span>
+      <span className="hydra-context__action-copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </span>
+    </button>
+  );
 }
 
 export function StateDot({ state }: { state: string }): JSX.Element {

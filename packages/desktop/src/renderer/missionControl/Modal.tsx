@@ -1,8 +1,9 @@
 // A minimal modal shell: a centered panel over a dimming backdrop, closable by
-// backdrop click, the ✕ button, or Escape. Electron disables window.prompt, so
+// backdrop click, the close button, or Escape. Electron disables window.prompt, so
 // every text-entry action in Mission Control routes through a real modal.
 
 import { useEffect, type ReactNode } from 'react';
+import { X } from '../ui/icons';
 
 export interface ModalProps {
   title: string;
@@ -33,7 +34,7 @@ export function Modal({ title, onClose, children }: ModalProps): JSX.Element {
         <header className="hydra-modal__head">
           <h2 className="hydra-modal__title">{title}</h2>
           <button type="button" className="hydra-modal__close" aria-label="Close" onClick={onClose}>
-            ✕
+            <X size={15} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </header>
         <div className="hydra-modal__body">{children}</div>

@@ -1,0 +1,189 @@
+/* Desktop v2 workspace refinements. */
+.hydra-session-header__utility,
+.hydra-terminal__actions button,
+.hydra-diff__button,
+.hydra-context__attention-actions .hydra-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.hydra-session-header__utility svg,
+.hydra-terminal__actions button svg,
+.hydra-diff__button svg {
+  flex: none;
+}
+
+.hydra-terminal__actions button {
+  min-height: 24px;
+}
+
+.hydra-tab__close svg {
+  display: block;
+}
+
+.hydra-session-header {
+  height: 54px;
+  min-height: 54px;
+  gap: 14px;
+  padding: 0 14px 0 27px;
+  background: var(--hy-canvas);
+}
+
+.hydra-session-header__identity {
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+}
+
+.hydra-session-header__titleline {
+  width: 100%;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.hydra-session-header h1 {
+  max-width: 32vw;
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+
+.hydra-session-header__titleline > .hydra-sdot {
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+}
+
+.hydra-session-header__status,
+.hydra-session-header__connection,
+.hydra-session-header__session,
+.hydra-session-header__separator {
+  flex: none;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.hydra-session-header__separator {
+  color: var(--hy-faint);
+}
+
+.hydra-session-header__session {
+  max-width: min(430px, 34vw);
+}
+
+.hydra-session-header__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hydra-session-header__utility {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 8px;
+}
+
+.hydra-session-header__utility:hover,
+.hydra-session-header__utility[aria-pressed='true'] {
+  background: var(--hy-hover);
+  color: var(--hy-text);
+}
+
+.hydra-session-header__utility--context {
+  width: 34px;
+  height: 34px;
+  border-color: var(--hy-border);
+  background: color-mix(in srgb, var(--hy-canvas) 92%, var(--hy-panel));
+}
+
+.hydra-session-header__utility--active {
+  border-color: var(--hy-border-strong);
+  background: var(--hy-canvas);
+}
+
+.hydra-session-header__attention-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--hy-canvas);
+  border-radius: 50%;
+  background: var(--hy-accent);
+}
+
+.hydra-session-header__more .hydra-row__menu {
+  position: static;
+  opacity: 1;
+  transform: none;
+}
+
+.hydra-session-header__more .hydra-iconbtn {
+  width: 30px;
+  height: 30px;
+}
+
+.hydra-session-header__utility--text {
+  width: auto;
+  padding: 0 10px;
+}
+
+.hydra-pane__view {
+  padding: 10px 12px 16px 9px;
+}
+
+.hydra-resizer {
+  margin-left: -8px;
+}
+
+.hydra-terminal__utility {
+  min-height: 45px;
+  gap: 16px;
+  padding: 0 18px;
+  font-size: 11px;
+}
+
+.hydra-terminal__connection {
+  padding-right: 16px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hydra-terminal__dot {
+  width: 7px;
+  height: 7px;
+}
+
+.hydra-terminal__actions {
+  gap: 0;
+}
+
+.hydra-terminal__actions button {
+  min-height: 26px;
+  padding: 4px 12px;
+  border-radius: 0;
+}
+
+.hydra-terminal__actions button + button {
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hydra-terminal__surface {
+  padding: 18px 18px 14px;
+}
+
+@media (max-width: 1100px) {
+  .hydra-session-header__session,
+  .hydra-session-header__separator {
+    display: none;
+  }
+
+  .hydra-session-header h1 {
+    max-width: 42vw;
+  }
+}

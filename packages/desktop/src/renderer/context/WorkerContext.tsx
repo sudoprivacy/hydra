@@ -4,6 +4,7 @@ import { isAttentionOccurrence, type WorkerContextModel } from '../controlState/
 import { useSessions } from '../sessions/SessionsProvider';
 import {
   ContextActions,
+  ContextActionButton,
   ContextFacts,
   ContextSection,
   CopyValue,
@@ -12,6 +13,7 @@ import {
   runtimeLabel,
   StateDot,
 } from './ContextPrimitives';
+import { Pencil, Play, Send, Square, Trash2 } from '../ui/icons';
 
 export function WorkerContext({
   context,
@@ -96,29 +98,40 @@ export function WorkerContext({
       </details>
 
       <ContextActions>
-        <button type="button" onClick={() => actions.send(worker)}>
-          <strong>Send message</strong>
-          <span>Reply through the Worker lifecycle path</span>
-        </button>
+        <ContextActionButton
+          icon={<Send size={15} />}
+          title="Send message"
+          description="Reply through the Worker lifecycle path"
+          onClick={() => actions.send(worker)}
+        />
         {worker.lifecycle === 'running' ? (
-          <button type="button" onClick={() => actions.stop(worker)}>
-            <strong>Stop Worker</strong>
-            <span>Keep its worktree and session metadata</span>
-          </button>
+          <ContextActionButton
+            icon={<Square size={15} />}
+            title="Stop Worker"
+            description="Keep its worktree and session metadata"
+            onClick={() => actions.stop(worker)}
+          />
         ) : (
-          <button type="button" onClick={() => actions.start(worker)}>
-            <strong>Start Worker</strong>
-            <span>Resume this Worker session</span>
-          </button>
+          <ContextActionButton
+            icon={<Play size={15} />}
+            title="Start Worker"
+            description="Resume this Worker session"
+            onClick={() => actions.start(worker)}
+          />
         )}
-        <button type="button" onClick={() => actions.rename(worker)}>
-          <strong>Rename</strong>
-          <span>Change the display and route name</span>
-        </button>
-        <button type="button" className="hydra-context__danger" onClick={() => actions.delete(worker)}>
-          <strong>Delete</strong>
-          <span>Remove this Worker after confirmation</span>
-        </button>
+        <ContextActionButton
+          icon={<Pencil size={15} />}
+          title="Rename"
+          description="Change the display and route name"
+          onClick={() => actions.rename(worker)}
+        />
+        <ContextActionButton
+          icon={<Trash2 size={15} />}
+          title="Delete"
+          description="Remove this Worker after confirmation"
+          danger
+          onClick={() => actions.delete(worker)}
+        />
       </ContextActions>
     </>
   );

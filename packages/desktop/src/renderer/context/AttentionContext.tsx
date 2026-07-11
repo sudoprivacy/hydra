@@ -2,6 +2,7 @@ import type { HydraNotificationV2 } from '@hydra/protocol';
 
 import type { AttentionControlRow, WorkerControlRow } from '../controlState/selectors';
 import { useSessions } from '../sessions/SessionsProvider';
+import { GitCompareArrows, Terminal, X } from '../ui/icons';
 import {
   ContextSection,
   formatObservedAt,
@@ -86,6 +87,9 @@ export function AttentionContext({
                       disabled={!row.worker}
                       onClick={() => onRoute(row.occurrence, row.worker)}
                     >
+                      {row.occurrence.kind === 'complete' && row.worker?.type === 'code'
+                        ? <GitCompareArrows size={13} aria-hidden="true" />
+                        : <Terminal size={13} aria-hidden="true" />}
                       {row.worker ? routeLabel : 'Worker unavailable'}
                     </button>
                     <button
@@ -93,6 +97,7 @@ export function AttentionContext({
                       className="hydra-btn"
                       onClick={() => actions.dismissNotification(row.occurrence.id)}
                     >
+                      <X size={13} aria-hidden="true" />
                       Dismiss
                     </button>
                   </div>

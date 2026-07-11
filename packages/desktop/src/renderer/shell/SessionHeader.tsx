@@ -1,34 +1,32 @@
-import type { TileModel } from '../missionControl/boardModel';
-import { STATUS_LABELS, tileStatus } from '../status';
+import type { SessionControlRow } from '../controlState/selectors';
+import { useContextUi } from '../context/ContextState';
+import { controlRowStatus, STATUS_LABELS } from '../status';
+import { useTabs, type Tab, type TabView } from '../tabs/TabsProvider';
+import { ListFilter, SquarePen } from '../ui/icons';
 import { useSessions } from '../sessions/SessionsProvider';
 import { useShellUi } from './shellState';
-import { useTabs, type Tab, type TabView } from '../tabs/TabsProvider';
-import { useContextUi } from '../context/ContextState';
+import { RowMenu } from '../sidebar/RowMenu';
 
-export function SessionHeader({ tab, tile }: { tab: Tab; tile: TileModel }): JSX.Element {
+export function SessionHeader({ tab, row }: { tab: Tab; row: SessionControlRow }): JSX.Element {
   const tabs = useTabs();
   const { control } = useSessions();
   const shell = useShellUi();
   const contextUi = useContextUi();
-  const status = tileStatus(tile);
-  const isCodeWorker = tile.kind === 'worker' && tile.type === 'code';
+  const status = controlRowStatus(row);
+  const isCodeWorker = row.kind === 'worker' && row.type === 'code';
   const view: TabView = isCodeWorker ? tab.view : 'terminal';
-  const activeAttentionCount = tab.sessionKind === 'worker'
-    ? control.view?.workers.find(worker => (
-      tab.workerId !== undefined ? worker.workerId === tab.workerId : worker.session === tile.session
-    ))?.activeAttentionCount ?? 0
-    : control.view?.copilots.find(copilot => copilot.session === tile.session)?.activeAttentionCount ?? 0;
 
   return (
     <header className="hydra-session-header">
       <div className="hydra-session-header__identity">
         <div className="hydra-session-header__titleline">
-          <h1 title={tile.name}>{tile.name}</h1>
+          <h1 title={row.name}>{row.name}</h1>
           <span className={`hydra-sdot hydra-sdot--${status}`} aria-hidden="true" />
-          <span className="hydra-session-header__status">{STATUS_LABELS[status]}</span>
+          <span className="hydra-session-header__status">{status === 'running' ? 'Live' : STATUS_LABELS[status]}</span>
+          <span className="hydra-session-header__separator" aria-hidden="true">•</span>
+          <span className="hydra-session-header__session" title={row.session}>Session: {row.session}</span>
           {!control.connected ? <span className="hydra-session-header__connection">Reconnecting…</span> : null}
         </div>
-        <code className="hydra-session-header__session" title={tile.session}>{tile.session}</code>
       </div>
 
       {isCodeWorker ? (
@@ -39,29 +37,43 @@ export function SessionHeader({ tab, tile }: { tab: Tab; tile: TileModel }): JSX
       ) : null}
 
       {!shell.terminalMaximized ? (
-        <button
-          type="button"
-          className={`hydra-session-header__utility${
-            contextUi.isOpenFor(tab.sessionKind, tile.session) ? ' hydra-session-header__utility--active' : ''
-          }`}
-          aria-pressed={contextUi.isOpenFor(tab.sessionKind, tile.session)}
-          onClick={() => contextUi.toggleForSession(tab.sessionKind, tile.session)}
-        >
-          Context
-          {activeAttentionCount > 0 ? (
-            <span className="hydra-session-header__count">{activeAttentionCount}</span>
-          ) : null}
-        </button>
+        <div className="hydra-session-header__actions">
+          <button
+            type="button"
+            className="hydra-session-header__utility"
+            aria-label="Open attention"
+            title="Open attention"
+            aria-pressed={contextUi.open && contextUi.mode === 'attention'}
+            onClick={contextUi.openAttention}
+          >
+            <ListFilter size={15} strokeWidth={1.7} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`hydra-session-header__utility hydra-session-header__utility--context${
+              contextUi.isOpenFor(tab.sessionKind, row.session) ? ' hydra-session-header__utility--active' : ''
+            }`}
+            aria-label="Toggle context"
+            title="Toggle context"
+            aria-pressed={contextUi.isOpenFor(tab.sessionKind, row.session)}
+            onClick={() => contextUi.toggleForSession(tab.sessionKind, row.session)}
+          >
+            <SquarePen size={15} strokeWidth={1.65} aria-hidden="true" />
+            {row.activeAttentionCount > 0 ? <span className="hydra-session-header__attention-dot" /> : null}
+          </button>
+          <div className="hydra-session-header__more"><RowMenu row={row} /></div>
+        </div>
       ) : null}
 
       {shell.terminalMaximized ? (
-        <button type="button" className="hydra-session-header__utility" onClick={shell.restoreTerminal}>
+        <button type="button" className="hydra-session-header__utility hydra-session-header__utility--text" onClick={shell.restoreTerminal}>
           Restore layout
         </button>
       ) : null}
     </header>
   );
 }
+
 function HeaderToggle({
   label,
   active,

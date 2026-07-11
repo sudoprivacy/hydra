@@ -1,11 +1,3 @@
-// Scoped styles for the diff review screen, injected as a single <style> tag.
-//
-// Kept inside the M4 lane (this dir) rather than the shared index.html so the
-// parallel M2/M3 workers never collide with it. The CSP allows inline styles
-// (`style-src 'unsafe-inline'`); every selector is prefixed `hydra-diff-` so it
-// can't leak into the M2/M3 shells.
-
-const DIFF_CSS = `
 .hydra-diff {
   display: flex;
   flex-direction: column;
@@ -227,9 +219,4 @@ const DIFF_CSS = `
   .hydra-diff__body {
     grid-template-columns: 1fr;
   }
-}
-`;
-
-export function DiffStyles(): JSX.Element {
-  return <style>{DIFF_CSS}</style>;
 }

@@ -1,6 +1,6 @@
 // A tiny dropdown menu: an icon trigger + a popover list that closes on outside
 // click or Escape. Shared by the sidebar header (＋ create, ⋯ more) and the
-// per-row ⋮ action menu. Clicks are contained (stopPropagation) so opening a
+// per-row action menu. Clicks are contained (stopPropagation) so opening a
 // row's menu never also selects/opens the row underneath it.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -9,6 +9,7 @@ export interface MenuItem {
   key: string;
   label: string;
   onSelect: () => void;
+  icon?: ReactNode;
   danger?: boolean;
   disabled?: boolean;
 }
@@ -79,6 +80,7 @@ export function Menu({ label, glyph, items, align = 'left', className }: MenuPro
                 item.onSelect();
               }}
             >
+              {item.icon ? <span className="hydra-menu__item-icon" aria-hidden="true">{item.icon}</span> : null}
               {item.label}
             </button>
           ))}

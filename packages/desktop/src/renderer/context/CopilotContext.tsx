@@ -2,12 +2,14 @@ import type { CopilotContextModel, WorkerControlRow } from '../controlState/sele
 import { useSessions } from '../sessions/SessionsProvider';
 import {
   ContextActions,
+  ContextActionButton,
   ContextFacts,
   ContextSection,
   CopyValue,
   runtimeLabel,
   StateDot,
 } from './ContextPrimitives';
+import { ChevronRight, History, Megaphone, Plus } from '../ui/icons';
 
 export function CopilotContext({
   context,
@@ -20,25 +22,32 @@ export function CopilotContext({
 }): JSX.Element {
   const { actions } = useSessions();
   const { copilot, workers } = context;
+  const agent = copilot.agent
+    ? `${copilot.agent[0].toUpperCase()}${copilot.agent.slice(1)}`
+    : 'Unavailable';
+  const workdir = copilot.workdir?.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
   return (
     <>
-      <ContextSection title="Environment">
+      <ContextSection title="Environment" className="hydra-context__environment">
         <ContextFacts facts={[
-          { label: 'Agent', value: copilot.agent },
-          { label: 'Mode', value: copilot.mode === 'plan' ? 'Plan' : 'Normal' },
+          { label: 'Agent', value: agent },
+          { label: 'Mode', value: copilot.mode === 'plan' ? 'Plan and execute' : 'Normal' },
           {
             label: 'Workdir',
-            value: copilot.workdir ? <CopyValue value={copilot.workdir} /> : 'Unavailable',
+            value: copilot.workdir ? <CopyValue value={copilot.workdir} displayValue={workdir} /> : 'Unavailable',
             title: copilot.workdir ?? undefined,
           },
         ]} />
       </ContextSection>
 
       <ContextSection className="hydra-context__summary">
-        <p>{copilot.workerCount} managed workers · {copilot.repoCount} repositories</p>
+        <p>
+          {copilot.workerCount} managed worker{copilot.workerCount === 1 ? '' : 's'} ·{' '}
+          {copilot.repoCount} {copilot.repoCount === 1 ? 'repository' : 'repositories'}
+        </p>
       </ContextSection>
 
-      <ContextSection title="Managed workers">
+      <ContextSection title="Managed workers" className="hydra-context__managed">
         {workers.length > 0 ? (
           <div className="hydra-context__worker-list">
             {workers.map(worker => {
@@ -47,13 +56,13 @@ export function CopilotContext({
                 <button
                   key={worker.workerId}
                   type="button"
-                  className="hydra-context__worker-row"
+                  className={`hydra-context__worker-row hydra-context__worker-row--${worker.runtimeState}`}
                   onClick={() => onOpenWorker(worker, view)}
                 >
                   <StateDot state={worker.runtimeState} />
                   <span className="hydra-context__worker-name">{worker.name}</span>
                   <span className="hydra-context__worker-state">{runtimeLabel(worker.runtimeState)}</span>
-                  <span className="hydra-context__open-label">Open</span>
+                  <ChevronRight className="hydra-context__open-label" size={13} aria-hidden="true" />
                 </button>
               );
             })}
@@ -62,21 +71,24 @@ export function CopilotContext({
       </ContextSection>
 
       <ContextActions>
-        <button type="button" onClick={actions.broadcast}>
-          <strong>Broadcast</strong>
-          <span>Send a message to all workers</span>
-        </button>
-        <button
-          type="button"
+        <ContextActionButton
+          icon={<Megaphone size={15} />}
+          title="Broadcast"
+          description="Send a message to all workers"
+          onClick={actions.broadcast}
+        />
+        <ContextActionButton
+          icon={<Plus size={15} />}
+          title="Create worker"
+          description="Spin up a new worker"
           onClick={() => actions.create('worker', { copilotSession: copilot.session })}
-        >
-          <strong>Create worker</strong>
-          <span>Start with this Copilot as parent</span>
-        </button>
-        <button type="button" onClick={onShowHistory}>
-          <strong>Attention history</strong>
-          <span>View resolved and dismissed occurrences</span>
-        </button>
+        />
+        <ContextActionButton
+          icon={<History size={15} />}
+          title="Attention history"
+          description="View recent attention events"
+          onClick={onShowHistory}
+        />
       </ContextActions>
     </>
   );

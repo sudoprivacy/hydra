@@ -7,10 +7,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { toChangedFileList, type ChangedFileView } from './diffModel';
 import { ChangedFileList } from './ChangedFileList';
-import { DiffStyles } from './DiffStyles';
 import { FileDiffView, type DiffViewMode } from './FileDiffView';
 import { ShipHandoff } from './ShipHandoff';
 import { useDiff, useFileDiff } from './useDiff';
+import { RefreshCw } from '../ui/icons';
 
 interface DiffReviewProps {
   session: string;
@@ -43,7 +43,6 @@ export function DiffReview({ session }: DiffReviewProps): JSX.Element {
 
   return (
     <section className="hydra-diff">
-      <DiffStyles />
       <header className="hydra-diff__header">
         <h1 className="hydra-diff__title">Diff — {session}</h1>
         {summary ? (
@@ -76,6 +75,7 @@ export function DiffReview({ session }: DiffReviewProps): JSX.Element {
             onClick={reload}
             disabled={loading}
           >
+            <RefreshCw size={13} strokeWidth={1.7} aria-hidden="true" />
             {loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>

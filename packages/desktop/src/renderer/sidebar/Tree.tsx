@@ -1,22 +1,25 @@
 import { useState, type ReactNode } from 'react';
 
-import type { BoardGroup, BoardView } from '../missionControl/boardModel';
+import type { DesktopControlView, WorkerControlGroup } from '../controlState/selectors';
+import { ChevronRight, Folder } from '../ui/icons';
+import { filterSidebarView } from './sidebarFilter';
 import { TreeRow } from './TreeRow';
 
-export function Tree({ view }: { view: BoardView }): JSX.Element {
-  const copilots = view.groups.find(group => group.kind === 'copilots');
-  const repositories = view.groups.filter(group => group.kind === 'repo');
-  const localTasks = view.groups.find(group => group.kind === 'tasks');
+export function Tree({ view, query }: { view: DesktopControlView; query: string }): JSX.Element {
+  const filtered = filterSidebarView(view, query);
+  const { copilots, workerGroups } = filtered;
+  const repositories = workerGroups.filter(group => group.kind === 'repository');
+  const localTasks = workerGroups.find(group => group.kind === 'local-tasks');
 
   return (
     <div className="hydra-tree" role="tree">
-      <TreeSection title="COPILOTS" count={view.copilotCount}>
-        {copilots && copilots.tiles.length > 0
-          ? copilots.tiles.map(tile => <TreeRow key={tile.session} tile={tile} />)
-          : <p className="hydra-tree__empty">No copilots</p>}
+      <TreeSection title="COPILOTS" count={copilots.length}>
+        {copilots.length > 0
+          ? copilots.map(copilot => <TreeRow key={copilot.session} row={copilot} />)
+          : <p className="hydra-tree__empty">{filtered.query ? 'No matching Copilots' : 'No Copilots'}</p>}
       </TreeSection>
 
-      <TreeSection title="WORKERS" count={view.workerCount}>
+      <TreeSection title="WORKERS" count={workerGroups.reduce((sum, group) => sum + group.workers.length, 0)}>
         {repositories.length > 0 ? (
           <TreeSubsection label="REPOSITORIES">
             {repositories.map(group => <WorkerGroup key={group.key} group={group} />)}
@@ -27,8 +30,12 @@ export function Tree({ view }: { view: BoardView }): JSX.Element {
             <WorkerGroup group={localTasks} showHeading={false} />
           </TreeSubsection>
         ) : null}
-        {repositories.length === 0 && !localTasks ? <p className="hydra-tree__empty">No workers</p> : null}
+        {workerGroups.length === 0 ? (
+          <p className="hydra-tree__empty">{filtered.query ? 'No matching Workers' : 'No Workers'}</p>
+        ) : null}
       </TreeSection>
+
+      {filtered.noMatches ? <p className="hydra-tree__search-empty">No sessions match “{query.trim()}”.</p> : null}
     </div>
   );
 }
@@ -44,16 +51,14 @@ function TreeSection({
 }): JSX.Element {
   const [open, setOpen] = useState(true);
   return (
-    <section className="hydra-tree__section">
+    <section className="hydra-tree__section" aria-label={`${title}, ${count}`}>
       <button
         type="button"
         className="hydra-tree__head"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
       >
-        <Caret open={open} />
         <span className="hydra-tree__title">{title}</span>
-        <span className="hydra-tree__count">{count}</span>
       </button>
       {open ? <div className="hydra-tree__body" role="group">{children}</div> : null}
     </section>
@@ -69,10 +74,20 @@ function TreeSubsection({ label, children }: { label: string; children: ReactNod
   );
 }
 
-function WorkerGroup({ group, showHeading = true }: { group: BoardGroup; showHeading?: boolean }): JSX.Element {
+function WorkerGroup({
+  group,
+  showHeading = true,
+}: {
+  group: WorkerControlGroup;
+  showHeading?: boolean;
+}): JSX.Element {
   const [open, setOpen] = useState(true);
   if (!showHeading) {
-    return <div className="hydra-repo__body">{group.tiles.map(tile => <TreeRow key={tile.session} tile={tile} />)}</div>;
+    return (
+      <div className="hydra-repo__body hydra-repo__body--local">
+        {group.workers.map(worker => <TreeRow key={worker.workerId} row={worker} />)}
+      </div>
+    );
   }
   return (
     <div className="hydra-repo">
@@ -83,12 +98,12 @@ function WorkerGroup({ group, showHeading = true }: { group: BoardGroup; showHea
         onClick={() => setOpen(value => !value)}
       >
         <Caret open={open} />
+        <Folder size={14} strokeWidth={1.6} aria-hidden="true" />
         <span className="hydra-repo__label">{group.label}</span>
-        <span className="hydra-tree__count">{group.tiles.length}</span>
       </button>
       {open ? (
         <div className="hydra-repo__body" role="group">
-          {group.tiles.map(tile => <TreeRow key={tile.session} tile={tile} />)}
+          {group.workers.map(worker => <TreeRow key={worker.workerId} row={worker} />)}
         </div>
       ) : null}
     </div>
@@ -96,5 +111,12 @@ function WorkerGroup({ group, showHeading = true }: { group: BoardGroup; showHea
 }
 
 function Caret({ open }: { open: boolean }): JSX.Element {
-  return <span className={`hydra-caret${open ? ' hydra-caret--open' : ''}`} aria-hidden="true">▸</span>;
+  return (
+    <ChevronRight
+      className={`hydra-caret${open ? ' hydra-caret--open' : ''}`}
+      size={13}
+      strokeWidth={1.8}
+      aria-hidden="true"
+    />
+  );
 }

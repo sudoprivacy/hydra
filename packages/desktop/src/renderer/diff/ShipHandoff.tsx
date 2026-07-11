@@ -7,6 +7,7 @@
 import { useState } from 'react';
 
 import { buildShipCommands, type ShipCommand } from './diffModel';
+import { Copy } from '../ui/icons';
 
 function CopyButton({ command }: { command: string }): JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -22,6 +23,7 @@ function CopyButton({ command }: { command: string }): JSX.Element {
   };
   return (
     <button type="button" className="hydra-diff__button" onClick={copy}>
+      <Copy size={13} strokeWidth={1.7} aria-hidden="true" />
       {copied ? 'Copied' : 'Copy'}
     </button>
   );

@@ -3,7 +3,7 @@
 
 import type { WorkerRuntimeState } from '@hydra/protocol';
 
-import type { TileLifecycle } from './boardModel';
+import type { SessionLifecycle } from '../controlState/selectors';
 
 export const RUNTIME_LABELS: Record<WorkerRuntimeState, string> = {
   unknown: 'Unknown',
@@ -23,12 +23,12 @@ export function runtimeModifier(state: WorkerRuntimeState): string {
   return state;
 }
 
-export function lifecycleLabel(lifecycle: TileLifecycle): string {
+export function lifecycleLabel(lifecycle: SessionLifecycle): string {
   return lifecycle === 'running' ? 'running' : 'stopped';
 }
 
 /** The small green completed chip (mirrors the old tree's `complete → completed`). */
-export const COMPLETED_CHIP_LABEL = '✓ 已完成';
+export const COMPLETED_CHIP_LABEL = 'Complete';
 
 /**
  * A worker's lifecycle/runtime text token for the row (`running` / `idle` /
@@ -36,7 +36,7 @@ export const COMPLETED_CHIP_LABEL = '✓ 已完成';
  * runtime, so lifecycle wins; otherwise the runtime state drives it. Mirrors the
  * old tree's `formatWorkerRuntimeStateLabel`.
  */
-export function runtimeToken(lifecycle: TileLifecycle, runtime: WorkerRuntimeState): string {
+export function runtimeToken(lifecycle: SessionLifecycle, runtime: WorkerRuntimeState): string {
   if (lifecycle === 'stopped') {
     return 'stopped';
   }
@@ -53,16 +53,14 @@ export function copilotSummaryLabel(workerCount: number, repoCount: number): str
     return null;
   }
   const workers = `${workerCount} worker${workerCount === 1 ? '' : 's'}`;
-  if (repoCount <= 0) {
-    return `[${workers}]`;
-  }
+  if (repoCount <= 0) return workers;
   const repos = `${repoCount} repo${repoCount === 1 ? '' : 's'}`;
-  return `[${workers} · ${repos}]`;
+  return `${workers} · ${repos}`;
 }
 
-/** The `U:N` git-change token for a code-worker row, hidden (null) at 0/unknown. */
+/** Compact changed-file count for a code-worker row, hidden at 0/unknown. */
 export function gitChangeLabel(changed: number | null | undefined): string | null {
-  return changed && changed > 0 ? `U:${changed}` : null;
+  return changed && changed > 0 ? String(changed) : null;
 }
 
 /**
