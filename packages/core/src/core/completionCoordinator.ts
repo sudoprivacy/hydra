@@ -15,6 +15,7 @@ import {
 } from './workerRuntimeCoordinator';
 import {
   WorkerRuntimeStateStoreV2,
+  type WorkerRuntimeSignalOriginV2,
   type WorkerRuntimeSnapshotV2,
 } from './workerRuntimeV2';
 
@@ -30,6 +31,7 @@ export interface CompletionSignal {
   lifecycleEpoch: string;
   observedAt?: string;
   sourceSequence?: number;
+  origin?: Extract<WorkerRuntimeSignalOriginV2, 'hook' | 'codex-transcript'>;
 }
 
 export type CompletionApplyOutcome =
@@ -158,7 +160,7 @@ export class CompletionCoordinator {
       signalId: runtimeSignalId,
       occurrenceId,
       sourceSequence: signal.sourceSequence,
-      origin: 'hook',
+      origin: signal.origin ?? 'hook',
       reason: 'complete',
       observedAt: signal.observedAt ?? timestamp(this.now()),
       agent: identity.worker.agent,
@@ -325,6 +327,9 @@ function validateSignal(signal: CompletionSignal): void {
   if (signal.sourceSequence !== undefined
     && (!Number.isSafeInteger(signal.sourceSequence) || signal.sourceSequence < 0)) {
     throw new Error('Completion signal sourceSequence must be a non-negative safe integer');
+  }
+  if (signal.origin !== undefined && signal.origin !== 'hook' && signal.origin !== 'codex-transcript') {
+    throw new Error('Completion signal origin must be hook or codex-transcript');
   }
 }
 

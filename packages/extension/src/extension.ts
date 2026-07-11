@@ -36,7 +36,7 @@ import { configureLoggerFromVSCode, logExtensionActivated, registerHydraLogComma
 import { exec } from './utils/exec';
 import { NotificationDecorationProvider } from './providers/notificationDecorationProvider';
 import { createNotificationTreeCommands } from './commands/notificationTreeCommands';
-import { WorkerNeedsInputMonitor } from '@hydra/core/workerNeedsInputMonitor';
+import { WorkerAttentionSupervisor } from '@hydra/core/workerAttentionSupervisor';
 import { WorkerRuntimeStateService } from '@hydra/core/workerRuntimeStateService';
 
 const SESSION_REFRESH_DEBOUNCE_MS = 200;
@@ -60,8 +60,8 @@ export function activate(context: vscode.ExtensionContext) {
   const workerRuntimeState = new WorkerRuntimeStateService();
   workerRuntimeState.initialize();
   const notificationDecorations = new NotificationDecorationProvider(notificationState);
-  const needsInputMonitor = new WorkerNeedsInputMonitor();
-  needsInputMonitor.initialize();
+  const attentionSupervisor = new WorkerAttentionSupervisor({ producerKind: 'extension' });
+  attentionSupervisor.initialize();
 
   const copilotProvider = new CopilotProvider(notificationState, workerRuntimeState);
   copilotProvider.setExtensionUri(context.extensionUri);
@@ -189,7 +189,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     notificationState,
     workerRuntimeState,
-    needsInputMonitor,
+    attentionSupervisor,
     notificationState.onDidChange(() => {
       refreshTreeViews();
       notificationDecorations.refresh();

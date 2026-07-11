@@ -62,6 +62,8 @@ function testCapabilityDiagnostics(): void {
     runtimeError: 'unsupported',
   });
   assert.equal(getAgentHookDiagnostic('codex').capabilities.needsInput, 'transcript');
+  assert.equal(getAgentHookDiagnostic('codex').capabilities.inputResolved, 'transcript');
+  assert.equal(getAgentHookDiagnostic('codex').capabilities.aborted, 'transcript');
   assert.equal(getAgentHookDiagnostic('sudocode').capabilities.complete, 'unsupported');
   assert.deepEqual(getAgentHookDiagnostic('unknown-agent'), {
     agentType: 'unknown-agent',
