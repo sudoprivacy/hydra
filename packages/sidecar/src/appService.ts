@@ -24,6 +24,7 @@
 //  Op.broadcastToWorkers    WorkerLifecycleService.broadcastToWorkers            (worker send --all)
 //  Op.listNotifications     NotificationStore.list
 //  Op.markNotificationRead  NotificationStore.markRead
+//  Op.dismissNotification   NotificationStore.dismiss
 //  Op.clearNotifications    NotificationStore.clear
 //  Op.getDiff               DiffService.getDiff (workdir from SessionManager)
 //  Op.getFileSnapshot       DiffService.getFileSnapshot (path-constrained)
@@ -68,6 +69,7 @@ import {
   type CreateWorkerInput,
   type CreateWorkerResult,
   type DeleteSessionPayload,
+  type DismissNotificationPayload,
   type DiffSummary,
   type EventSubscribeInput,
   type FileSnapshot,
@@ -85,6 +87,7 @@ import {
   type NotificationListResult,
   type NotificationReadResult,
   type NotificationSnapshot,
+  type NotificationStatusMutationResult,
   type RenameSessionPayload,
   type RestoreSessionPayload,
   type SendMessagePayload,
@@ -208,6 +211,8 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.listNotifications(payload as NotificationListFilters);
       case Op.markNotificationRead:
         return this.markNotificationRead(payload as MarkNotificationReadPayload);
+      case Op.dismissNotification:
+        return this.dismissNotification(payload as DismissNotificationPayload);
       case Op.clearNotifications:
         return this.clearNotifications(payload as NotificationClearFilters);
       case Op.getDiff:
@@ -496,6 +501,11 @@ export class HydraAppService implements HydraAppServiceApi {
   /** NotificationStore.markRead. */
   private async markNotificationRead(payload: MarkNotificationReadPayload): Promise<NotificationReadResult> {
     return this.notificationStore.markRead(payload.id, this.notificationEventSource);
+  }
+
+  /** NotificationStore.dismiss. Runtime remains unchanged. */
+  private async dismissNotification(payload: DismissNotificationPayload): Promise<NotificationStatusMutationResult> {
+    return this.notificationStore.dismiss(payload.id, this.notificationEventSource);
   }
 
   /** NotificationStore.clear. */

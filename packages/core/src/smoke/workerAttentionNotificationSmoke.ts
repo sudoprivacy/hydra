@@ -156,17 +156,18 @@ async function testRuntimeErrorNotification(): Promise<void> {
   }
 }
 
-async function testMissingCopilotSkips(): Promise<void> {
+async function testMissingCopilotUsesGlobalInbox(): Promise<void> {
   const ctx = setupContext();
   try {
     await withProcessEnv(ctx, async () => {
-      const skipped = publishWorkerRuntimeErrorNotification(
+      const global = publishWorkerRuntimeErrorNotification(
         createWorker({ copilotSessionName: null }),
         new Error('Initial prompt delivery failed'),
       );
-      assert.equal(skipped.created, false);
-      assert.equal(skipped.skipped, 'missing-target');
-      assert.equal(new NotificationStore().list().notifications.length, 0);
+      assert.equal(global.created, true);
+      assert.equal(global.notification.targetSession, null);
+      assert.equal(global.notification.kind, 'error');
+      assert.equal(new NotificationStore().list().notifications.length, 1);
     });
   } finally {
     fs.rmSync(ctx.tmp, { recursive: true, force: true });
@@ -219,7 +220,7 @@ async function testPostCreateHelperPublishesAndRethrows(): Promise<void> {
 
 async function main(): Promise<void> {
   await testRuntimeErrorNotification();
-  await testMissingCopilotSkips();
+  await testMissingCopilotUsesGlobalInbox();
   await testStoreFailureDoesNotThrow();
   await testPostCreateHelperPublishesAndRethrows();
   console.log('workerAttentionNotificationSmoke: ok');

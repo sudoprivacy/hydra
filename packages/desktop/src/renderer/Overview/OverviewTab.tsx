@@ -4,7 +4,9 @@
 // so a tile's terminal/diff buttons open tabs instead of navigating a URL.
 
 import { MissionControlBoard } from '../missionControl/MissionControlBoard';
+import type { InboxNotificationModel, TileModel } from '../missionControl/boardModel';
 import type { TileActions } from '../missionControl/SessionTile';
+import { AttentionInbox } from '../notifications/AttentionInbox';
 import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
 
@@ -31,9 +33,31 @@ export function OverviewTab(): JSX.Element {
     onStart: actions.start,
     onStop: actions.stop,
   };
+  const tiles = board.view.groups.flatMap(group => group.tiles);
+  const tileBySession = new Map(tiles.map(tile => [tile.session, tile]));
+  const notificationTile = (notification: InboxNotificationModel): TileModel | undefined => {
+    const session = notification.action?.session ?? notification.sourceSession;
+    return session ? tileBySession.get(session) : undefined;
+  };
 
   return (
     <div className="hydra-overview">
+      <AttentionInbox
+        notifications={board.view.inbox}
+        canOpen={(notification) => Boolean(notificationTile(notification))}
+        onOpen={(notification) => {
+          const tile = notificationTile(notification);
+          if (!tile) return;
+          actions.markNotificationRead(notification.id);
+          tabs.openTab(tile.session, tile.kind);
+          tabs.setView(
+            tile.session,
+            notification.action?.type === 'review-diff' && tile.kind === 'worker' ? 'diff' : 'terminal',
+          );
+        }}
+        onMarkRead={(notification) => actions.markNotificationRead(notification.id)}
+        onDismiss={(notification) => actions.dismissNotification(notification.id)}
+      />
       <MissionControlBoard
         view={board.view}
         connected={board.connected}

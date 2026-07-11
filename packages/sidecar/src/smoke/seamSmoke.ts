@@ -69,8 +69,10 @@ async function main(): Promise<void> {
   try {
     // ── Build the seam: engine-free client over the in-process transport ──
     const backend = new FakeBackend();
+    const { SessionManager } = await import('@hydra/core/sessionManager');
     const { HydraAppService } = await import('../appService');
-    const appService = new HydraAppService({ backend });
+    const sessionManager = new SessionManager(backend);
+    const appService = new HydraAppService({ backend, sessionManager });
     const transport = transportFactory({ kind: 'in-process', appService });
     const client = createHydraControlClient(transport);
 
@@ -91,7 +93,120 @@ async function main(): Promise<void> {
       ),
       'desktop seam sends copilot onboarding prompt',
     );
+    const parentedWorker = await client.createWorker({
+      temp: true,
+      name: 'parented-worker',
+      agent: 'claude',
+      copilot: copilot.session,
+      task: 'report to the selected parent',
+    });
+    const parentedEntry = (await client.listSessions()).workers.find(worker => worker.session === parentedWorker.session);
+    assert.equal(parentedEntry?.copilotSessionName, copilot.session, 'desktop-selected parent is persisted on the worker');
+    await client.deleteSession(parentedWorker.session, 'worker', { deleteFiles: true });
     await client.deleteSession(copilot.session, 'copilot');
+
+    // ── Desktop-only global Inbox: no extension and no parent copilot ──
+    const completeWorkerResult = await client.createWorker({ temp: true, name: 'global-complete', agent: 'claude', task: 'complete this task' });
+    const inputWorkerResult = await client.createWorker({ temp: true, name: 'global-input', agent: 'claude', task: 'ask for input' });
+    const errorWorkerResult = await client.createWorker({ temp: true, name: 'global-error', agent: 'claude', task: 'fail this task' });
+    const attentionWorkers = await Promise.all([
+      sessionManager.getWorker(completeWorkerResult.session),
+      sessionManager.getWorker(inputWorkerResult.session),
+      sessionManager.getWorker(errorWorkerResult.session),
+    ]);
+    assert.ok(attentionWorkers.every(Boolean), 'sidecar lifecycle persisted all attention workers');
+    const [completeWorker, inputWorker, errorWorker] = attentionWorkers;
+    assert.ok(completeWorker && inputWorker && errorWorker);
+
+    const { CompletionCoordinator } = await import('@hydra/core/completionCoordinator');
+    const { CompletionJobStore } = await import('@hydra/core/completionJobStore');
+    const { EventLog } = await import('@hydra/core/events');
+    const { NotificationStore } = await import('@hydra/core/notifications');
+    const { getWorkerLifecycleEpoch } = await import('@hydra/core/workerIdentity');
+    const { WorkerRuntimeCoordinator } = await import('@hydra/core/workerRuntimeCoordinator');
+    const { WorkerRuntimeStateStore } = await import('@hydra/core/workerRuntimeState');
+    const { WorkerRuntimeStateStoreV2 } = await import('@hydra/core/workerRuntimeV2');
+    const { AgentHookEventCoordinator } = await import('@hydra/core/agentHookEventCoordinator');
+    const byId = new Map(attentionWorkers.map(worker => [worker!.workerId, worker!]));
+    const eventLog = new EventLog();
+    const runtimeStore = new WorkerRuntimeStateStoreV2();
+    const compatibilityStore = new WorkerRuntimeStateStore();
+    const notificationStore = new NotificationStore(
+      undefined, undefined, eventLog, compatibilityStore, Date.now, undefined, runtimeStore,
+    );
+    const runtimeCoordinator = new WorkerRuntimeCoordinator(
+      workerId => {
+        const worker = byId.get(workerId);
+        return worker ? {
+          workerId,
+          sessionName: worker.sessionName,
+          lifecycleEpoch: getWorkerLifecycleEpoch(worker),
+          agent: worker.agent,
+          workdir: worker.workdir,
+        } : undefined;
+      },
+      runtimeStore,
+      compatibilityStore,
+      eventLog,
+    );
+    const completion = new CompletionCoordinator({
+      resolveWorker: workerId => {
+        const worker = byId.get(workerId);
+        return worker ? { worker, lifecycleEpoch: getWorkerLifecycleEpoch(worker) } : undefined;
+      },
+      jobStore: new CompletionJobStore(),
+      runtimeStore,
+      runtimeCoordinator,
+      notificationStore,
+      eventSource: 'session-manager',
+    });
+    const completed = await completion.complete({
+      workerId: completeWorker.workerId,
+      lifecycleEpoch: getWorkerLifecycleEpoch(completeWorker),
+      origin: 'hook',
+    });
+    assert.equal(completed.outcome, 'completed', 'sidecar lifecycle completion reaches the global inbox');
+
+    const hookCoordinator = new AgentHookEventCoordinator({
+      resolveWorker: workerId => byId.get(workerId),
+      runtimeStore,
+      compatibilityStore,
+      notificationStore,
+      completionJobStore: new CompletionJobStore(),
+      eventLog,
+      runtimeCoordinator,
+      eventSource: 'session-manager',
+    });
+    const needsInput = hookCoordinator.process({
+      workerId: inputWorker.workerId,
+      lifecycleEpoch: getWorkerLifecycleEpoch(inputWorker),
+      agent: 'claude',
+      eventName: 'PermissionRequest',
+      payload: { tool_name: 'Bash', tool_use_id: 'sidecar-input', tool_input: { command: 'npm test' } },
+    });
+    assert.equal(needsInput.status, 'applied');
+    const runtimeError = hookCoordinator.process({
+      workerId: errorWorker.workerId,
+      lifecycleEpoch: getWorkerLifecycleEpoch(errorWorker),
+      agent: 'claude',
+      eventName: 'StopFailure',
+      payload: { error: 'server_error', error_details: 'service unavailable' },
+    });
+    assert.equal(runtimeError.status, 'applied');
+
+    const globalInbox = await client.listNotifications();
+    const globalAttention = globalInbox.notifications.filter(notification =>
+      [completeWorker.sessionName, inputWorker.sessionName, errorWorker.sessionName].includes(notification.sourceSession ?? ''),
+    );
+    assert.deepEqual(
+      globalAttention.map(notification => notification.kind).sort(),
+      ['complete', 'error', 'needs-input'],
+      'desktop-only operation produces all three attention kinds',
+    );
+    assert.ok(globalAttention.every(notification => notification.targetSession === null), 'all three use global fallback');
+    for (const worker of attentionWorkers) {
+      await client.deleteSession(worker!.sessionName, 'worker', { deleteFiles: true });
+    }
 
     // ── Mutation: create + delete a task worker ──
     const created = await client.createWorker({ temp: true, name: 'seam-temp', agent: 'claude' });
@@ -121,6 +236,8 @@ async function main(): Promise<void> {
     buildGitRepo(repoRoot);
     const diffWorker = await client.createWorker({ dir: repoRoot, name: 'repo', agent: 'claude' });
     const diffSession = diffWorker.session;
+    const diffWorkerId = (await client.listSessions()).workers.find(worker => worker.session === diffSession)?.number;
+    assert.equal(typeof diffWorkerId, 'number', 'diff worker has a stable worker id');
 
     const diff = await client.getDiff(diffSession);
     assert.equal(diff.session, diffSession, 'diff carries the session');
@@ -169,20 +286,30 @@ async function main(): Promise<void> {
     assert.deepEqual(broadcast.sessions, [diffSession], 'broadcast hits the running worker');
 
     // ── Notifications round-trip: seed via core, drive via the client ──
-    const { NotificationStore } = await import('@hydra/core/notifications');
     new NotificationStore().create({
       kind: 'needs-input',
       title: 'Needs input',
       sourceSession: diffSession,
       targetSession: diffSession,
+      context: { workerId: diffWorkerId },
     });
     const listed = await client.listNotifications({ session: diffSession });
     assert.equal(listed.count, 1, 'client lists the seeded notification');
     const notificationId = listed.notifications[0].id;
     const read = await client.markNotificationRead(notificationId);
     assert.equal(read.markedRead, 1, 'markNotificationRead flips unread → read');
+    const dismissed = await client.dismissNotification(notificationId);
+    assert.equal(dismissed.changed, true, 'dismissNotification removes one occurrence from the active inbox');
+    assert.equal(dismissed.status, 'dismissed');
+    new NotificationStore().create({
+      kind: 'complete',
+      title: 'Complete',
+      sourceSession: diffSession,
+      targetSession: null,
+      context: { workerId: diffWorkerId },
+    });
     const cleared = await client.clearNotifications({ session: diffSession });
-    assert.equal(cleared.cleared, 1, 'clearNotifications removes it');
+    assert.equal(cleared.cleared, 1, 'clearNotifications dismisses the remaining active occurrence');
 
     // ── subscribeEvents stream: the create mutation left a worker.created ──
     const events = await collectEvents(

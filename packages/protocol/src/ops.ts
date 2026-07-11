@@ -22,6 +22,7 @@ export const Op = {
   broadcastToWorkers: 'worker.broadcast',
   listNotifications: 'notifications.list',
   markNotificationRead: 'notifications.markRead',
+  dismissNotification: 'notifications.dismiss',
   clearNotifications: 'notifications.clear',
   getDiff: 'diff.get',
   getFileSnapshot: 'diff.fileSnapshot',

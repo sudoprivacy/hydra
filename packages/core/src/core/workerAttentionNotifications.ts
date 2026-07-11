@@ -56,7 +56,7 @@ export interface PublishWorkerNeedsInputOptions {
 
 export type PublishWorkerAttentionNotificationResult =
   | (CreateNotificationResult & { skipped?: undefined })
-  | { created: false; notification?: undefined; skipped: 'missing-target' | 'store-failed' };
+  | { created: false; notification?: undefined; skipped: 'store-failed' };
 
 const ERROR_BODY_LIMIT = 600;
 const NEEDS_INPUT_BODY_LIMIT = 600;
@@ -65,16 +65,13 @@ export function publishWorkerAttentionNotification(
   input: PublishWorkerAttentionNotificationInput,
 ): PublishWorkerAttentionNotificationResult {
   const targetCopilotSession = input.targetCopilotSession?.trim();
-  if (!targetCopilotSession) {
-    return { created: false, skipped: 'missing-target' };
-  }
 
   try {
     return (input.store ?? new NotificationStore()).create({
       kind: input.kind,
       title: input.title,
       body: input.body,
-      targetSession: targetCopilotSession,
+      targetSession: targetCopilotSession || null,
       sourceSession: input.sourceWorkerSession,
       dedupeKey: input.dedupeKey,
       action: {

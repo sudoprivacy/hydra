@@ -13,6 +13,7 @@ export type CreateKind = 'worker' | 'copilot';
 
 interface CreateSessionModalProps {
   initialKind: CreateKind;
+  copilots: readonly { session: string; name: string; running: boolean }[];
   busy?: boolean;
   error?: string | null;
   onCreateWorker: (input: CreateWorkerInput) => void;
@@ -24,6 +25,7 @@ type WorkerType = 'code' | 'task';
 
 export function CreateSessionModal({
   initialKind,
+  copilots,
   busy = false,
   error,
   onCreateWorker,
@@ -42,6 +44,7 @@ export function CreateSessionModal({
   const [agent, setAgent] = useState('');
   const [base, setBase] = useState('');
   const [task, setTask] = useState('');
+  const [copilot, setCopilot] = useState(() => copilots.length === 1 ? copilots[0].session : '');
 
   // Copilot fields.
   const [copilotWorkdir, setCopilotWorkdir] = useState('');
@@ -72,6 +75,7 @@ export function CreateSessionModal({
         agent,
         base,
         task,
+        copilot,
       }));
       return;
     }
@@ -81,6 +85,7 @@ export function CreateSessionModal({
       name,
       agent,
       task,
+      copilot,
     }));
   };
 
@@ -131,6 +136,17 @@ export function CreateSessionModal({
             )}
 
             <Field label="Agent" value={agent} onChange={setAgent} placeholder="default agent" />
+            <SelectField
+              label="Parent copilot"
+              value={copilot}
+              onChange={setCopilot}
+              options={copilots.map(item => ({
+                value: item.session,
+                label: `${item.name}${item.running ? '' : ' (stopped)'}`,
+              }))}
+              emptyLabel="Global inbox (no parent)"
+              hint={copilots.length === 0 ? 'No copilots yet; attention will go to the global inbox.' : undefined}
+            />
             <Field label="Task" value={task} onChange={setTask} placeholder="optional first instruction" multiline />
           </>
         ) : (
@@ -245,6 +261,35 @@ function Field({
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  emptyLabel,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly { value: string; label: string }[];
+  emptyLabel: string;
+  hint?: string;
+}): JSX.Element {
+  return (
+    <label className="hydra-field">
+      <span className="hydra-field__label">{label}</span>
+      <select className="hydra-field__input" value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{emptyLabel}</option>
+        {options.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+      {hint ? <span className="hydra-field__hint">{hint}</span> : null}
     </label>
   );
 }
