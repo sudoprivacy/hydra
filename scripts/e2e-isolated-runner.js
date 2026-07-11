@@ -28,7 +28,7 @@ function printUsage() {
     'Examples:',
     '  npm run e2e:isolated',
     '  npm run e2e:isolated -- --keep -- hydra list --json',
-    '  npm run e2e:isolated -- --keep -- code --extensionDevelopmentPath=. /tmp/hydra-test-$(date +%s)',
+    '  npm run e2e:isolated -- --keep -- code --disable-extensions --extensionDevelopmentPath=packages/extension /tmp/hydra-test-$(date +%s)',
     '  npm run e2e:isolated:shell',
   ];
   console.error(lines.join('\n'));

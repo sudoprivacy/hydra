@@ -13,6 +13,7 @@ import * as coreGit from '../core/git';
 import { CompletionCoordinator } from '../core/completionCoordinator';
 import { CompletionJobStore } from '../core/completionJobStore';
 import { EventLog } from '../core/events';
+import { NotificationStore } from '../core/notifications';
 import { lookupWorkerId, SessionManager, type WorkerInfo } from '../core/sessionManager';
 import type {
   HydraRole,
@@ -386,12 +387,56 @@ async function testRenamePreservesIdentityAndAddsAlias(): Promise<void> {
       workdir: original.workdir,
     }, 'cli').outcome, 'applied');
 
+    const jobStore = new CompletionJobStore(path.join(ctx.hydraHome, 'completion-jobs.json'));
+    const pendingCompletion = jobStore.armForDispatch({
+      workerId: original.workerId,
+      lifecycleEpoch: original.lifecycleEpoch!,
+      runId: 'run-during-rename',
+    }, {
+      runtimeActive: true,
+      runtimeRunId: 'run-during-rename',
+    });
+    assert.equal(runtimeCoordinator.apply({
+      workerId: original.workerId,
+      sessionName: original.sessionName,
+      lifecycleEpoch: original.lifecycleEpoch!,
+      runId: 'run-during-rename',
+      revision: 1,
+      state: 'needs-input',
+      signalId: 'question-before-rename',
+      occurrenceId: 'question-occurrence-before-rename',
+      origin: 'hook',
+      reason: 'needs-input',
+      observedAt: new Date().toISOString(),
+      agent: original.agent,
+      workdir: original.workdir,
+    }, 'hook').outcome, 'applied');
+    const notificationStore = new NotificationStore(
+      path.join(ctx.hydraHome, 'notifications.json'),
+      1000,
+      eventLog,
+    );
+    const needsInput = notificationStore.create({
+      kind: 'needs-input',
+      title: 'Worker needs input during rename',
+      sourceSession: original.sessionName,
+      targetSession: original.copilotSessionName,
+      action: { type: 'open-session', session: original.sessionName },
+      context: { workerId: original.workerId },
+      occurrenceId: 'question-occurrence-before-rename',
+      lifecycleEpoch: original.lifecycleEpoch,
+      runId: 'run-during-rename',
+      signalId: 'question-before-rename',
+    }).occurrence!;
+
     const manager = new SessionManager(backend, eventLog, compatibilityStore);
     const lifecycle = new WorkerLifecycleService({
       backend,
       sessionManager: manager,
       runtimeStateStore: compatibilityStore,
       runtimeV2Store: runtimeV2,
+      completionJobStore: jobStore,
+      notificationStore,
       eventLog,
       eventSource: 'cli',
     });
@@ -402,8 +447,15 @@ async function testRenamePreservesIdentityAndAddsAlias(): Promise<void> {
     assert.equal(manager.getPersistedWorker(oldSession)?.sessionName, renamed.sessionName);
     assert.equal(lookupWorkerId(oldSession), original.workerId);
     assert.equal(runtimeV2.get(original.workerId)?.sessionName, renamed.sessionName);
+    assert.equal(runtimeV2.get(original.workerId)?.state, 'needs-input');
+    assert.equal(jobStore.get(pendingCompletion.job.jobId)?.status, 'pending');
+    const routedNeedsInput = notificationStore.listOccurrences('active')
+      .find(notification => notification.id === needsInput.id);
+    assert.equal(routedNeedsInput?.sourceSession, renamed.sessionName);
+    assert.equal(routedNeedsInput?.action?.session, renamed.sessionName);
+    assert.equal(notificationStore.list({ sourceSession: renamed.sessionName, kind: 'needs-input' }).count, 1);
     assert.equal(compatibilityStore.get(oldSession), undefined);
-    assert.equal(compatibilityStore.get(renamed.sessionName)?.state, 'running');
+    assert.equal(compatibilityStore.get(renamed.sessionName)?.state, 'needs-input');
   });
 }
 
@@ -457,6 +509,63 @@ async function testRestoreRotatesEpochAndRejectsOldHook(): Promise<void> {
     const runtimeV2 = new WorkerRuntimeStateStoreV2(
       path.join(ctx.hydraHome, 'worker-runtime-state-v2.json'),
     );
+    const notificationStore = new NotificationStore(
+      path.join(ctx.hydraHome, 'notifications.json'),
+      1000,
+      eventLog,
+    );
+    const oldRuntimeCoordinator = new WorkerRuntimeCoordinator(
+      workerId => workerId === archivedWorker.workerId ? {
+        workerId,
+        sessionName: archivedWorker.sessionName,
+        lifecycleEpoch: archivedWorker.lifecycleEpoch!,
+        agent: archivedWorker.agent,
+        workdir: archivedWorker.workdir,
+      } : undefined,
+      runtimeV2,
+      compatibilityStore,
+      eventLog,
+    );
+    assert.equal(oldRuntimeCoordinator.apply({
+      workerId: archivedWorker.workerId,
+      sessionName: archivedWorker.sessionName,
+      lifecycleEpoch: archivedWorker.lifecycleEpoch!,
+      runId: 'run-before-restore',
+      revision: 0,
+      state: 'running',
+      signalId: 'dispatch-before-restore',
+      origin: 'lifecycle',
+      reason: 'worker-send',
+      observedAt: new Date().toISOString(),
+      agent: archivedWorker.agent,
+      workdir: archivedWorker.workdir,
+    }, 'cli').outcome, 'applied');
+    assert.equal(oldRuntimeCoordinator.apply({
+      workerId: archivedWorker.workerId,
+      sessionName: archivedWorker.sessionName,
+      lifecycleEpoch: archivedWorker.lifecycleEpoch!,
+      runId: 'run-before-restore',
+      revision: 1,
+      state: 'needs-input',
+      signalId: 'question-before-restore',
+      occurrenceId: 'question-occurrence-before-restore',
+      origin: 'hook',
+      reason: 'needs-input',
+      observedAt: new Date().toISOString(),
+      agent: archivedWorker.agent,
+      workdir: archivedWorker.workdir,
+    }, 'hook').outcome, 'applied');
+    const oldNeedsInput = notificationStore.create({
+      kind: 'needs-input',
+      title: 'Worker needs input before restore',
+      sourceSession: archivedWorker.sessionName,
+      action: { type: 'open-session', session: archivedWorker.sessionName },
+      context: { workerId: archivedWorker.workerId },
+      occurrenceId: 'question-occurrence-before-restore',
+      lifecycleEpoch: archivedWorker.lifecycleEpoch,
+      runId: 'run-before-restore',
+      signalId: 'question-before-restore',
+    }).occurrence!;
     const backend = new IdentityBackend();
     const manager = new SessionManager(backend, eventLog, compatibilityStore);
     forceFastSleeps(manager);
@@ -464,6 +573,7 @@ async function testRestoreRotatesEpochAndRejectsOldHook(): Promise<void> {
       backend,
       sessionManager: manager,
       completionJobStore: jobStore,
+      notificationStore,
       runtimeStateStore: compatibilityStore,
       runtimeV2Store: runtimeV2,
       eventLog,
@@ -475,6 +585,8 @@ async function testRestoreRotatesEpochAndRejectsOldHook(): Promise<void> {
     assert.equal(result.workerInfo.workerId, archivedWorker.workerId);
     assert.notEqual(result.workerInfo.lifecycleEpoch, archivedWorker.lifecycleEpoch);
     assert.equal(jobStore.get(oldJob.job.jobId)?.status, 'cancelled');
+    assert.equal(notificationStore.listOccurrences('active').some(item => item.id === oldNeedsInput.id), false);
+    assert.equal(notificationStore.listOccurrences('resolved').some(item => item.id === oldNeedsInput.id), true);
 
     const runtimeCoordinator = new WorkerRuntimeCoordinator(
       workerId => workerId === result.workerInfo.workerId ? {

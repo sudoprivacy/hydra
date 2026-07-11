@@ -1,6 +1,6 @@
 # Worker Attention Control Plane Re-architecture
 
-**Status:** Approved implementation contract — Wave 3 complete; Wave 4 next
+**Status:** Approved implementation contract — Wave 4 complete; Wave 5 validation passed on candidate branch, integration pending
 
 **Implementation gate:** Satisfied by PR #276 (`77a523a`).
 
@@ -8,7 +8,7 @@
 
 **Approved:** 2026-07-10
 
-**Last updated:** 2026-07-10
+**Last updated:** 2026-07-11
 
 This document is the source of truth for the notification, worker runtime,
 completion, needs-input, and attention-inbox re-architecture. It supplements
@@ -744,11 +744,11 @@ After each merged wave, update only these sections:
 - [x] PR7 WorkerLifecycleService (#285, `35b529e`)
 - [x] PR8 CompletionJobStore/Coordinator (#286, `d10a633`)
 - [x] PR9 Stable identity migration (#287, `b558fe4`)
-- [ ] PR10A Codex/Supervisor
-- [ ] PR10B Claude/agent adapters
-- [ ] PR10C Desktop Inbox
-- [ ] PR10D VS Code/CLI convergence
-- [ ] PR10E EventHub/stream/retention
+- [x] PR10A Codex/Supervisor (#291, `fa20754`)
+- [x] PR10B Claude/agent adapters (#292, `c43d654`)
+- [x] PR10C Desktop Inbox (#293, `28036a1`)
+- [x] PR10D VS Code/CLI convergence (#294, `30499c9`)
+- [x] PR10E EventHub/stream/retention (#295, `1068214`)
 - [ ] Wave 5 migration and release validation
 
 ## 18. Validation evidence
@@ -835,3 +835,81 @@ After each merged wave, update only these sections:
   foreign tmux ownership, and archive concurrency as `fixed`. Codex turn abort
   resolution remains `known-failure` for PR10A.
 - No frozen decision or PR dependency was changed during Wave 3.
+
+### Wave 4 — 2026-07-11
+
+- Validated integration commit: `1068214` on
+  `feat/worker-attention-control-plane`.
+- PR10A through PR10E each passed the repository Claude Code Review workflow
+  with no ordinary comments or inline findings before squash merge.
+- PR10A added the incremental Codex transcript parser and a leased attention
+  supervisor shared by the sidecar and extension fallback producer.
+- PR10B normalized Claude hook needs-input, resolution, completion, abort, and
+  error signals through the same coordinator path.
+- PR10C added the Desktop global attention inbox and parent-aware routing while
+  preserving global occurrences for workers without a copilot parent.
+- PR10D converged VS Code and CLI read, resolve, dismiss, clear, and open
+  semantics on the shared notification service.
+- PR10E added one shared `EventHub`, cancellable subscriptions, a single
+  external-writer tailer, bounded in-memory replay, and segmented event-log
+  retention with sequence-gap recovery.
+- `npm run lint`
+- `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
+- No frozen decision or PR dependency was changed during Wave 4.
+
+### Wave 5 candidate validation — 2026-07-11
+
+- Validation branch: `feat/wa-wave-5-validation`, based on integration commit
+  `1068214`. The final validated integration commit is recorded after this
+  branch is squash-merged.
+- Added `smoke:wave5-migration` to the default `npm test` contract. It verifies
+  a 100,000-event segmented log, cursor reads and EventHub replay ordering, a
+  100,000-notification v2 store with active-attention preservation and bounded
+  terminal history, durable signal receipts, and v1/v2 shadow equivalence
+  across create, read, resolve, dismiss, restart, and clear.
+- Rename/current-route completion and restore/stale-epoch coverage passed in
+  `smoke:completion-coordinator` and `smoke:worker-identity`; active
+  needs-input and completion producer paths passed in the Codex supervisor,
+  Claude hook coordinator, and sidecar seam smokes.
+- The combined pending-work scenario found and fixed an active-attention route
+  gap: rename now migrates active v2 and v1 compatibility `sourceSession` and
+  action routes while preserving the run and completion job. Restore cancels
+  the old completion intent and resolves old-epoch needs-input attention.
+- Desktop-only validation ran the fresh packaged app with VS Code closed and
+  an isolated Hydra home/tmux socket. The packaged main, renderer, and bundled
+  sidecar remained live; the loopback listener bound to `127.0.0.1`; the
+  attention lease heartbeated with `ownerKind: sidecar`; quitting the app also
+  terminated the sidecar.
+- Extension-only validation ran with all Hydra Desktop processes closed. VS
+  Code loaded the development extension from `packages/extension`, activated
+  `zhoujinjing.hydra-code` through `onView:hydraCopilots`, registered the Hydra
+  command set, and heartbeated the attention lease with
+  `ownerKind: extension`.
+- Corrected the `test-hydra` skill and isolated-runner example to use the
+  monorepo extension path at `packages/extension` and disable installed user
+  extensions during validation.
+- macOS/Linux shell and Windows PowerShell hook formats passed their quoting,
+  wrapper, and end-to-end smokes.
+- `npm run compile`
+- `npm run lint`
+- `git diff --check`
+- `npm run smoke:wave5-migration`
+- `npm run smoke:notification-v2`
+- `npm run smoke:event-hub`
+- `npm run smoke:completion-coordinator`
+- `npm run smoke:worker-identity`
+- `npm run smoke:worker-attention-supervisor`
+- `npm run smoke:agent-hook-event-coordinator`
+- `npm run smoke:seam`
+- `npm run smoke:windows-format-quoting`
+- `npm run smoke:notify-hook-windows`
+- `npm run smoke:shell-quote`
+- `npm run verify:shell-quoting`
+- `env -u HYDRA_CONFIG_PATH -u HYDRA_HOME npm test`
+- `npm run desktop:build`
+- `npm run desktop:boot-check`
+- `npm run dist:mac -w @hydra/desktop`
+- Packaged artifacts:
+  `packages/desktop/dist/Hydra-0.3.2026062800-arm64.dmg` and
+  `packages/desktop/dist/Hydra-0.3.2026062800-arm64-mac.zip`.
+- No frozen decision or PR dependency was changed during candidate validation.

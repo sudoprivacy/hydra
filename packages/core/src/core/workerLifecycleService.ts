@@ -217,6 +217,7 @@ export class WorkerLifecycleService {
     try {
       const renamed = await this.sessionManager.renameWorker(worker.sessionName, newBranchName);
       this.refreshRuntimeRoute(renamed, 'worker-renamed');
+      this.refreshNotificationRoute(renamed);
       return renamed;
     } catch (error) {
       this.publishError(worker, error, 'rename');
@@ -441,6 +442,18 @@ export class WorkerLifecycleService {
       sessionName: worker.sessionName,
       lifecycleEpoch: getWorkerLifecycleEpoch(worker),
     });
+  }
+
+  private refreshNotificationRoute(worker: WorkerInfo): void {
+    try {
+      this.notificationStore.rerouteActiveWorker(worker.workerId, worker.sessionName);
+    } catch (error) {
+      logger.warn('worker-lifecycle.notification-route', 'Failed to migrate active notification routes after rename', {
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        error,
+      });
+    }
   }
 
   private resolveNeedsInputOccurrences(
