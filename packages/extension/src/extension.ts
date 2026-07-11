@@ -168,6 +168,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tmux.newWindow', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], newWindow, ...args)),
     vscode.commands.registerCommand('hydra.openSessionNotification', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.openSessionNotification, ...args)),
     vscode.commands.registerCommand('hydra.markSessionNotificationsRead', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.markSessionNotificationsRead, ...args)),
+    vscode.commands.registerCommand('hydra.dismissSessionNotification', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.dismissSessionNotification, ...args)),
     vscode.commands.registerCommand('hydra.clearSessionNotifications', async (...args: unknown[]) => runWithHydraItem(['worker', 'copilot'], notificationCommands.clearSessionNotifications, ...args)),
     vscode.commands.registerCommand('tmux.terminalPaste', terminalSmartPaste),
     vscode.commands.registerCommand('tmux.pasteImage', pasteImageForce),

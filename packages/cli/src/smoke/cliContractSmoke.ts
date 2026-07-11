@@ -129,6 +129,8 @@ function assertHelpProbes(baseEnv: Record<string, string | undefined>): void {
     { args: ['notify', 'create', '--help'], expected: 'Usage: hydra notify create [options]' },
     { args: ['notify', 'list', '--help'], expected: 'Usage: hydra notify list [options]' },
     { args: ['notify', 'read', '--help'], expected: 'Usage: hydra notify read [options] <id>' },
+    { args: ['notify', 'resolve', '--help'], expected: 'Usage: hydra notify resolve [options] <id>' },
+    { args: ['notify', 'dismiss', '--help'], expected: 'Usage: hydra notify dismiss [options] <id>' },
     { args: ['notify', 'clear', '--help'], expected: 'Usage: hydra notify clear [options]' },
     { args: ['notify', 'open', '--help'], expected: 'Usage: hydra notify open [options] <id>' },
   ];

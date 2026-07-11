@@ -216,12 +216,68 @@ function main(): void {
     assert.equal(info.status, 'created');
     assert.equal(info.notification.kind, 'info');
 
-    const cleared = parseStdoutJson<{ status: string; cleared: number }>(
-      runCli(['notify', 'clear', '--session', 'repo_worker', '--kind', 'complete', '--json'], ctx.env),
-      'hydra notify clear --kind complete --json',
+    const dismissed = parseStdoutJson<{
+      status: string;
+      notificationStatus: string;
+      changed: boolean;
+      notification: { id: string };
+    }>(
+      runCli(['notify', 'dismiss', created.notification.id, '--json'], ctx.env),
+      'hydra notify dismiss --json',
     );
-    assert.equal(cleared.status, 'ok');
-    assert.equal(cleared.cleared, 1);
+    assert.equal(dismissed.status, 'ok');
+    assert.equal(dismissed.notificationStatus, 'dismissed');
+    assert.equal(dismissed.changed, true);
+    assert.equal(dismissed.notification.id, created.notification.id);
+
+    const dismissedAgain = parseStdoutJson<typeof dismissed>(
+      runCli(['notify', 'dismiss', created.notification.id, '--json'], ctx.env),
+      'hydra notify dismiss idempotent --json',
+    );
+    assert.equal(dismissedAgain.notificationStatus, 'dismissed');
+    assert.equal(dismissedAgain.changed, false);
+
+    const needsInput = parseStdoutJson<typeof created>(
+      runCli([
+        'notify',
+        'create',
+        '--session',
+        'repo_copilot',
+        '--from',
+        'repo_worker',
+        '--kind',
+        'needs-input',
+        '--title',
+        'Worker needs input',
+        '--dedupe-key',
+        'needs-input:repo_worker:def',
+        '--worker-id',
+        '7',
+        '--json',
+      ], ctx.env),
+      'hydra notify create needs-input --json',
+    );
+
+    const resolved = parseStdoutJson<{
+      status: string;
+      notificationStatus: string;
+      changed: boolean;
+      notification: { id: string };
+    }>(
+      runCli(['notify', 'resolve', needsInput.notification.id, '--reason', 'worker answered', '--json'], ctx.env),
+      'hydra notify resolve --json',
+    );
+    assert.equal(resolved.status, 'ok');
+    assert.equal(resolved.notificationStatus, 'resolved');
+    assert.equal(resolved.changed, true);
+    assert.equal(resolved.notification.id, needsInput.notification.id);
+
+    const resolvedAgain = parseStdoutJson<typeof resolved>(
+      runCli(['notify', 'resolve', needsInput.notification.id, '--reason', 'duplicate signal', '--json'], ctx.env),
+      'hydra notify resolve idempotent --json',
+    );
+    assert.equal(resolvedAgain.notificationStatus, 'resolved');
+    assert.equal(resolvedAgain.changed, false);
 
     const remainingList = parseStdoutJson<{
       notifications: Array<{ id: string; kind: string }>;
@@ -243,7 +299,7 @@ function main(): void {
       'hydra notify clear remaining --json',
     );
     assert.equal(clearedRemaining.status, 'ok');
-    assert.equal(clearedRemaining.cleared, 1);
+    assert.equal(clearedRemaining.cleared, 2, 'clear also evicts matching resolved history');
 
     const emptyList = parseStdoutJson<{ notifications: unknown[]; count: number; unreadCount: number; totalCount: number }>(
       runCli(['notify', 'list', '--json'], ctx.env),
@@ -260,10 +316,12 @@ function main(): void {
       'worker.runtime.changed',
       'notify.read',
       'notify.created',
-      'notify.cleared',
+      'notify.dismissed',
+      'notify.created',
+      'notify.resolved',
       'notify.cleared',
     ]);
-    assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(events.map(event => event.seq), [1, 2, 3, 4, 5, 6, 7, 8]);
     assert.equal(fs.readFileSync(eventsPath, 'utf-8').includes('Branch: feat/auth'), false);
 
     console.log('notifyCliSmoke: ok');

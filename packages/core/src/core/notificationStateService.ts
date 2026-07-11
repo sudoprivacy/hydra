@@ -12,10 +12,12 @@ import {
   type HydraNotification,
   type NotificationKind,
   type NotificationClearFilters,
+  type NotificationReadFilters,
   type NotificationMarkSessionReadResult,
   type NotificationClearResult,
   type NotificationOpenResult,
   type NotificationReadResult,
+  type NotificationStatusMutationResult,
 } from './notifications';
 import {
   buildNotificationState,
@@ -183,25 +185,20 @@ export class NotificationStateService implements Disposable {
   }
 
   markSessionRead(sessionName: string, eventSource: HydraEventSource = 'extension'): NotificationMarkSessionReadResult {
-    const result = this.store.markSessionRead(sessionName, eventSource);
-    this.reloadNow({ emit: true, reason: 'mark-session-read' });
+    return this.markMatchingRead({ session: sessionName }, eventSource);
+  }
+
+  markMatchingRead(
+    filters: NotificationReadFilters,
+    eventSource: HydraEventSource = 'extension',
+  ): NotificationMarkSessionReadResult {
+    const result = this.store.markMatchingRead(filters, eventSource);
+    this.reloadNow({ emit: true, reason: 'mark-matching-read' });
     return result;
   }
 
   markTargetSessionRead(sessionName: string, eventSource: HydraEventSource = 'extension'): NotificationMarkSessionReadResult {
-    const unread = this.store.list({ targetSession: sessionName, unread: true }).notifications;
-    const notifications: HydraNotification[] = [];
-    for (const notification of unread) {
-      const result = this.store.markRead(notification.id, eventSource);
-      if (result.markedRead > 0) {
-        notifications.push(result.notification);
-      }
-    }
-    this.reloadNow({ emit: true, reason: 'mark-target-session-read' });
-    return {
-      notifications,
-      markedRead: notifications.length,
-    };
+    return this.markMatchingRead({ targetSession: sessionName }, eventSource);
   }
 
   clear(
@@ -216,6 +213,22 @@ export class NotificationStateService implements Disposable {
   open(id: string, eventSource: HydraEventSource = 'extension'): NotificationOpenResult {
     const result = this.store.open(id, eventSource);
     this.reloadNow({ emit: true, reason: 'open' });
+    return result;
+  }
+
+  resolve(
+    id: string,
+    reason: string,
+    eventSource: HydraEventSource = 'extension',
+  ): NotificationStatusMutationResult {
+    const result = this.store.resolve(id, reason, eventSource);
+    this.reloadNow({ emit: true, reason: 'resolve' });
+    return result;
+  }
+
+  dismiss(id: string, eventSource: HydraEventSource = 'extension'): NotificationStatusMutationResult {
+    const result = this.store.dismiss(id, eventSource);
+    this.reloadNow({ emit: true, reason: 'dismiss' });
     return result;
   }
 

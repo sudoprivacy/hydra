@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { EXIT_OK } from '../cli/output';
-import { resolveSessionNotificationClearScope } from '@hydra/core/notificationScope';
+import { resolveSessionNotificationScope } from '@hydra/core/notificationScope';
 import { EventLog } from '@hydra/core/events';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import {
@@ -333,7 +333,7 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
         assert.equal(service.getLatestSourceAttention('repo_worker')?.id, completed.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker')?.id, completed.id);
 
-        const workerScope = resolveSessionNotificationClearScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
+        const workerScope = resolveSessionNotificationScope({ contextValue: 'taskWorkerItem' }, 'repo_worker');
         assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
         assert.equal(service.getBySession('repo_worker').length, 2);
         assert.equal(service.clear({ ...workerScope.filters, kind: 'complete' }).cleared, 1);
@@ -342,8 +342,76 @@ async function testWorkerClearScopeClearsSourceNotifications(): Promise<void> {
         assert.equal(service.getLatestSourceAttention('repo_worker')?.id, needsInput.id);
         assert.equal(service.getLatestSourceCompletion('repo_worker'), undefined);
 
-        const copilotScope = resolveSessionNotificationClearScope({ contextValue: 'copilotItem' }, 'repo_copilot');
+        const copilotScope = resolveSessionNotificationScope({ contextValue: 'copilotItem' }, 'repo_copilot');
         assert.deepEqual(copilotScope.filters, { targetSession: 'repo_copilot' });
+      } finally {
+        service.dispose();
+      }
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
+async function testWorkerAndCopilotScopesConvergeForReadResolveAndDismiss(): Promise<void> {
+  const ctx = setupContext('hydra-notification-state-scope-ops-');
+  try {
+    await withProcessEnv(ctx, async () => {
+      const store = new NotificationStore();
+      const workerOutbound = store.create({
+        kind: 'needs-input',
+        title: 'Worker needs input',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_worker',
+        context: { workerId: 7 },
+      }).notification;
+      const workerInbound = store.create({
+        kind: 'info',
+        title: 'Copilot instruction',
+        targetSession: 'repo_worker',
+        sourceSession: 'repo_copilot',
+      }).notification;
+      const otherWorker = store.create({
+        kind: 'error',
+        title: 'Other worker error',
+        targetSession: 'repo_copilot',
+        sourceSession: 'repo_other',
+        context: { workerId: 8 },
+      }).notification;
+
+      const service = createService();
+      try {
+        service.initialize();
+        const workerScope = resolveSessionNotificationScope({ contextValue: 'workerItem' }, 'repo_worker');
+        assert.deepEqual(workerScope.filters, { session: 'repo_worker' });
+        assert.deepEqual(
+          service.getBySession('repo_worker').map(notification => notification.id).sort(),
+          [workerOutbound.id, workerInbound.id].sort(),
+        );
+        assert.equal(service.markMatchingRead(workerScope.filters).markedRead, 2);
+        assert.notEqual(service.getById(workerOutbound.id)?.readAt, null);
+        assert.notEqual(service.getById(workerInbound.id)?.readAt, null);
+        assert.equal(service.getById(otherWorker.id)?.readAt, null, 'worker scope must not read a sibling worker');
+
+        const dismissed = service.dismiss(workerOutbound.id);
+        assert.equal(dismissed.changed, true);
+        assert.equal(dismissed.status, 'dismissed');
+        assert.equal(service.getById(workerOutbound.id), undefined);
+
+        const copilotScope = resolveSessionNotificationScope({ contextValue: 'copilotItem' }, 'repo_copilot');
+        assert.deepEqual(copilotScope.filters, { targetSession: 'repo_copilot' });
+        assert.equal(service.markMatchingRead(copilotScope.filters).markedRead, 1);
+        assert.notEqual(service.getById(otherWorker.id)?.readAt, null);
+
+        const resolved = service.resolve(otherWorker.id, 'worker recovered');
+        assert.equal(resolved.changed, true);
+        assert.equal(resolved.status, 'resolved');
+        assert.equal(service.getById(otherWorker.id), undefined);
+        assert.equal(service.getById(workerInbound.id)?.id, workerInbound.id);
+
+        const events = readEventLines(ctx);
+        assert.ok(events.some(event => event.type === 'notify.dismissed' && event.source === 'extension'));
+        assert.ok(events.some(event => event.type === 'notify.resolved' && event.source === 'extension'));
       } finally {
         service.dispose();
       }
@@ -919,6 +987,7 @@ async function main(): Promise<void> {
   await testInitialLoadAndIndexes();
   await testServiceOperationsReloadSynchronously();
   await testTargetSessionOperationsIgnoreSourceOnlyNotifications();
+  await testWorkerAndCopilotScopesConvergeForReadResolveAndDismiss();
   await testMonotonicCreationOrderingAcrossBurstAndClockRollback();
   await testWorkerClearScopeClearsSourceNotifications();
   await testWatcherUpdatesFromNotificationFileOnly();

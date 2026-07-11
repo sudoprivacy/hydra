@@ -88,6 +88,8 @@ export type NotificationClearFilters = Pick<
   'session' | 'targetSession' | 'sourceSession' | 'kind'
 >;
 
+export type NotificationReadFilters = NotificationClearFilters;
+
 export interface NotificationReadResult {
   notification: HydraNotification;
   markedRead: number;
@@ -284,12 +286,19 @@ export class NotificationStore {
   }
 
   markSessionRead(sessionName: string, eventSource: HydraEventSource = 'cli'): NotificationMarkSessionReadResult {
+    return this.markMatchingRead({ session: sessionName }, eventSource);
+  }
+
+  markMatchingRead(
+    filters: NotificationReadFilters,
+    eventSource: HydraEventSource = 'cli',
+  ): NotificationMarkSessionReadResult {
     return this.withLock(() => {
       const store = this.readStore();
       this.reconcileCompatibility(store);
       const readAt = new Date(this.now()).toISOString();
       const updatedById = new Map<string, HydraNotification>();
-      const updatedOccurrences = this.v2Store.markMatchingRead({ session: sessionName }, readAt);
+      const updatedOccurrences = this.v2Store.markMatchingRead(filters, readAt);
       for (const occurrence of updatedOccurrences) {
         const existing = store.notifications.find(notification => notification.id === occurrence.id);
         updatedById.set(occurrence.id, toLegacyNotification(occurrence, existing));
@@ -298,7 +307,7 @@ export class NotificationStore {
       store.notifications = store.notifications.map(notification => {
         if (
           notification.readAt !== null ||
-          (notification.targetSession !== sessionName && notification.sourceSession !== sessionName)
+          !matchesFilters(notification, filters)
         ) {
           return notification;
         }
@@ -370,7 +379,9 @@ export class NotificationStore {
     reason: string,
     eventSource: HydraEventSource = 'session-manager',
   ): NotificationStatusMutationResult {
-    return this.changeStatus(id, 'resolved', reason, eventSource);
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error('Notification resolve reason is required');
+    return this.changeStatus(id, 'resolved', truncate(normalizedReason, MAX_TITLE_LENGTH), eventSource);
   }
 
   dismiss(
