@@ -9,6 +9,8 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { CompletionJobStore } from '@hydra/core/completionJobStore';
+import { EventLog } from '@hydra/core/events';
 import { NotificationStore } from '@hydra/core/notifications';
 import type { WorkerInfo } from '@hydra/core/sessionManager';
 import {
@@ -19,6 +21,9 @@ import {
 } from '@hydra/core/workerNeedsInputClassifier';
 import { publishWorkerNeedsInputNotification } from '@hydra/core/workerAttentionNotifications';
 import { WorkerNeedsInputMonitor } from '@hydra/core/workerNeedsInputMonitor';
+import { WorkerRuntimeCoordinator } from '@hydra/core/workerRuntimeCoordinator';
+import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
+import { WorkerRuntimeStateStoreV2 } from '@hydra/core/workerRuntimeV2';
 
 interface TestContext {
   tmp: string;
@@ -70,6 +75,8 @@ function createWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     sessionName: 'repo_worker_feat_input',
     displayName: 'feat/input',
     workerId: 9,
+    lifecycleEpoch: 'epoch-worker-9',
+    sessionAliases: [],
     repo: 'hydra',
     repoRoot: '/tmp/hydra',
     branch: 'feat/input',
@@ -292,6 +299,116 @@ async function testHookCliE2e(): Promise<void> {
   }
 }
 
+async function testNormalizedHookCliE2e(): Promise<void> {
+  const ctx = setupContext();
+  try {
+    await withProcessEnv(ctx, async () => {
+      const worker = createWorker();
+      writeSessions(ctx, worker);
+      const eventLog = new EventLog(
+        path.join(ctx.hydraHome, 'events.jsonl'),
+        path.join(ctx.hydraHome, 'events.state.json'),
+      );
+      const runtimeStore = new WorkerRuntimeStateStoreV2(
+        path.join(ctx.hydraHome, 'worker-runtime-state-v2.json'),
+      );
+      const compatibilityStore = new WorkerRuntimeStateStore(
+        path.join(ctx.hydraHome, 'worker-runtime-state.json'),
+        eventLog,
+      );
+      const runtimeCoordinator = new WorkerRuntimeCoordinator(
+        workerId => workerId === worker.workerId ? {
+          workerId,
+          sessionName: worker.sessionName,
+          lifecycleEpoch: worker.lifecycleEpoch!,
+          agent: worker.agent,
+          workdir: worker.workdir,
+        } : undefined,
+        runtimeStore,
+        compatibilityStore,
+        eventLog,
+      );
+      const runId = 'run-hook-cli';
+      assert.equal(runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch: worker.lifecycleEpoch!,
+        runId,
+        revision: 0,
+        state: 'running',
+        signalId: 'lifecycle:run-hook-cli',
+        origin: 'lifecycle',
+        reason: 'message-delivery',
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }).outcome, 'applied');
+      new CompletionJobStore(path.join(ctx.hydraHome, 'completion-jobs.json')).armForDispatch({
+        workerId: worker.workerId,
+        lifecycleEpoch: worker.lifecycleEpoch!,
+        runId,
+      }, { runtimeActive: true, runtimeRunId: runId });
+
+      const cliPath = path.join(__dirname, '..', 'cli', 'index.js');
+      const baseArgs = [
+        cliPath,
+        '--json',
+        'hooks',
+        'signal',
+        '--worker-id',
+        String(worker.workerId),
+        '--lifecycle-epoch',
+        worker.lifecycleEpoch!,
+        '--agent',
+        'claude',
+      ];
+      const needsInput = spawnSync(
+        process.execPath,
+        [...baseArgs, '--event', 'PermissionRequest'],
+        {
+          cwd: ctx.tmp,
+          env: { ...process.env },
+          input: JSON.stringify({
+            hook_event_name: 'PermissionRequest',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-cli-1',
+            tool_input: { command: 'npm test' },
+          }),
+          encoding: 'utf-8',
+        },
+      );
+      assert.equal(needsInput.status, 0, needsInput.stderr);
+      assert.equal(JSON.parse(needsInput.stdout).status, 'applied');
+      assert.equal(runtimeStore.get(worker.workerId)?.state, 'needs-input');
+
+      const resolved = spawnSync(
+        process.execPath,
+        [...baseArgs, '--event', 'PostToolUse'],
+        {
+          cwd: ctx.tmp,
+          env: { ...process.env },
+          input: JSON.stringify({
+            hook_event_name: 'PostToolUse',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-cli-1',
+            tool_response: { success: true },
+          }),
+          encoding: 'utf-8',
+        },
+      );
+      assert.equal(resolved.status, 0, resolved.stderr);
+      const resolvedOutput = JSON.parse(resolved.stdout);
+      assert.equal(resolvedOutput.status, 'applied');
+      assert.equal(resolvedOutput.resolvedNotifications, 1);
+      assert.equal(runtimeStore.get(worker.workerId)?.state, 'running');
+      const notifications = new NotificationStore().listOccurrences();
+      assert.equal(notifications.filter(item => item.kind === 'needs-input' && item.status === 'resolved').length, 1);
+    });
+  } finally {
+    fs.rmSync(ctx.tmp, { recursive: true, force: true });
+  }
+}
+
 async function testCodexMonitor(): Promise<void> {
   const ctx = setupContext();
   try {
@@ -336,6 +453,7 @@ async function main(): Promise<void> {
   await testClassifier();
   await testPublisher();
   await testHookCliE2e();
+  await testNormalizedHookCliE2e();
   await testCodexMonitor();
   console.log('workerNeedsInputSmoke: ok');
 }

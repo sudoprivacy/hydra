@@ -41,12 +41,43 @@ export interface WorkerNeedsInputHookEventInput {
   payload?: unknown;
 }
 
+export type NormalizedAgentHookEvent =
+  | (WorkerNeedsInputSignal & {
+    kind: 'needs-input';
+  })
+  | {
+    kind: 'input-resolved';
+    reason: 'tool-completed' | 'tool-failed';
+    fingerprint: string;
+    correlationFingerprint?: string;
+  }
+  | {
+    kind: 'runtime-error';
+    reason: 'agent-stop-failure';
+    message: string;
+    fingerprint: string;
+  };
+
 const BODY_LIMIT = 600;
 const FINGERPRINT_LIMIT = 2048;
 
 export function classifyWorkerNeedsInputEvent(
   input: WorkerNeedsInputHookEventInput,
 ): WorkerNeedsInputSignal | undefined {
+  const event = classifyAgentHookEvent(input);
+  if (event?.kind !== 'needs-input') return undefined;
+  return {
+    source: event.source,
+    reason: event.reason,
+    title: event.title,
+    body: event.body,
+    fingerprint: event.fingerprint,
+  };
+}
+
+export function classifyAgentHookEvent(
+  input: WorkerNeedsInputHookEventInput,
+): NormalizedAgentHookEvent | undefined {
   const agent = input.agent.trim().toLowerCase();
   if (agent !== 'claude') {
     return undefined;
@@ -59,9 +90,18 @@ export function classifyWorkerNeedsInputEvent(
     || getString(payload, ['tool_name', 'toolName', 'tool']);
   const permissionMode = input.permissionMode
     || getString(payload, ['permission_mode', 'permissionMode']);
+  const toolUseId = getString(payload, ['tool_use_id', 'toolUseId']);
+  const correlationFingerprint = toolUseId
+    ? toolCorrelationFingerprint(toolUseId)
+    : undefined;
 
   if (eventName === 'PermissionRequest') {
-    return buildClaudeSignal('PermissionRequest', toolName, permissionMode, payload);
+    const signal = buildClaudeSignal('PermissionRequest', toolName, permissionMode, payload);
+    return signal ? {
+      kind: 'needs-input',
+      ...signal,
+      fingerprint: correlationFingerprint ?? signal.fingerprint,
+    } : undefined;
   }
 
   if (
@@ -69,7 +109,46 @@ export function classifyWorkerNeedsInputEvent(
     && permissionMode === 'bypassPermissions'
     && (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode')
   ) {
-    return buildClaudeSignal('PreToolUse', toolName, permissionMode, payload);
+    const signal = buildClaudeSignal('PreToolUse', toolName, permissionMode, payload);
+    return signal ? {
+      kind: 'needs-input',
+      ...signal,
+      fingerprint: correlationFingerprint ?? signal.fingerprint,
+    } : undefined;
+  }
+
+  if (eventName === 'PostToolUse' || eventName === 'PostToolUseFailure') {
+    const eventFingerprint = correlationFingerprint
+      ?? fingerprint('claude', eventName, toolName, permissionMode, stablePayloadIdentity(payload));
+    return {
+      kind: 'input-resolved',
+      reason: eventName === 'PostToolUse' ? 'tool-completed' : 'tool-failed',
+      fingerprint: eventFingerprint,
+      correlationFingerprint,
+    };
+  }
+
+  if (eventName === 'StopFailure') {
+    const errorType = getString(payload, ['error']) || 'unknown';
+    const errorDetails = getString(payload, ['error_details', 'errorDetails']);
+    const assistantMessage = getString(payload, ['last_assistant_message', 'lastAssistantMessage']);
+    const message = [
+      `Claude stopped because of ${errorType}.`,
+      errorDetails,
+      assistantMessage,
+    ].filter(Boolean).join('\n');
+    return {
+      kind: 'runtime-error',
+      reason: 'agent-stop-failure',
+      message: truncateBody(message),
+      fingerprint: fingerprint(
+        'claude',
+        eventName,
+        getString(payload, ['session_id', 'sessionId']),
+        errorType,
+        `${errorDetails ?? ''}\n${assistantMessage ?? ''}`,
+      ),
+    };
   }
 
   return undefined;
@@ -295,4 +374,13 @@ function truncateBody(value: string): string {
 
 function fingerprint(...parts: Array<string | undefined>): string {
   return hashText(parts.filter(Boolean).join('\n').slice(0, FINGERPRINT_LIMIT));
+}
+
+function toolCorrelationFingerprint(toolUseId: string): string {
+  return `tool-use:${hashText(toolUseId)}`;
+}
+
+function stablePayloadIdentity(payload: Record<string, unknown> | undefined): string {
+  if (!payload) return '';
+  return JSON.stringify(payload).slice(0, FINGERPRINT_LIMIT);
 }

@@ -2776,6 +2776,8 @@ export class SessionManager {
         agentType,
         workdir: worktreePath,
         sessionName: info.sessionName,
+        workerId: info.workerId,
+        lifecycleEpoch: info.lifecycleEpoch,
         completion: includeCompletion ? {
           path: scriptPath,
           content: buildCompletionHookScript({

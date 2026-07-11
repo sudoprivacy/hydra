@@ -57,9 +57,9 @@ function testCapabilityDiagnostics(): void {
   assert.deepEqual(getAgentHookDiagnostic('claude').capabilities, {
     complete: 'hook',
     needsInput: 'hook',
-    inputResolved: 'unsupported',
+    inputResolved: 'hook',
     aborted: 'unsupported',
-    runtimeError: 'unsupported',
+    runtimeError: 'hook',
   });
   assert.equal(getAgentHookDiagnostic('codex').capabilities.needsInput, 'transcript');
   assert.equal(getAgentHookDiagnostic('codex').capabilities.inputResolved, 'transcript');
@@ -105,6 +105,9 @@ function testClaudeInstallAndRemovePreservesUserConfig(): void {
         Stop: unknown[];
         PermissionRequest: unknown[];
         PreToolUse: unknown[];
+        PostToolUse: unknown[];
+        PostToolUseFailure: unknown[];
+        StopFailure: unknown[];
         CustomEvent: unknown[];
       };
     }>(configPath);
@@ -114,6 +117,16 @@ function testClaudeInstallAndRemovePreservesUserConfig(): void {
     assert.equal(installedConfig.hooks.Stop.length, 2);
     assert.equal(installedConfig.hooks.PermissionRequest.length, 1);
     assert.equal(installedConfig.hooks.PreToolUse.length, 1);
+    assert.equal(installedConfig.hooks.PostToolUse.length, 1);
+    assert.equal(installedConfig.hooks.PostToolUseFailure.length, 1);
+    assert.equal(installedConfig.hooks.StopFailure.length, 1);
+    for (const eventName of ['PermissionRequest', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'StopFailure'] as const) {
+      const command = (installedConfig.hooks[eventName][0] as { hooks: Array<{ command: string }> }).hooks[0].command;
+      assert.match(command, /hooks signal/);
+      assert.match(command, /--worker-id 41/);
+      assert.match(command, /--lifecycle-epoch/);
+      assert.equal(command.includes(sessionName), false, 'normalized hook commands must not copy the mutable session route');
+    }
 
     const firstWrite = fs.readFileSync(configPath, 'utf-8');
     const secondInstall = installAgentHooks(request);
@@ -315,6 +328,8 @@ function createInstallRequest(
     agentType,
     workdir: ctx.workdir,
     sessionName,
+    workerId: 41,
+    lifecycleEpoch: '11111111-2222-4333-8444-555555555555',
     completion: {
       path: path.join(ctx.hydraHome, 'hooks', `notify-${sessionName}.sh`),
       content: `#!/bin/sh\necho ${sessionName}\n`,
