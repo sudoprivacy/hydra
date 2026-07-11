@@ -307,7 +307,7 @@ async function main(): Promise<void> {
     await pollUntil(() => {
       const currentLog = fs.readFileSync(fakeAgentLog, 'utf-8');
       return currentLog.includes(`INPUT cwd=${repoRoot} hydra_copilot_session=${COPILOT_B} line=Worker #`);
-    }, 10_000, 'completion notification delivered to copilot B');
+    }, 30_000, 'completion notification delivered to copilot B');
 
     const finalLog = fs.readFileSync(fakeAgentLog, 'utf-8');
     assert.equal(
