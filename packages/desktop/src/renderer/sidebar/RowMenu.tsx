@@ -13,22 +13,21 @@ export function RowMenu({ tile }: { tile: TileModel }): JSX.Element {
   const { actions } = useSessions();
 
   const items: MenuItem[] = [];
-  const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
   const openTile = (view: 'terminal' | 'diff') => {
-    tabs.openTab(tile.session, tile.kind);
-    tabs.setView(tile.session, view);
-    actions.acknowledgeCompletion(tile);
+    tabs.openTab(tile.session, tile.kind, {
+      workerId: tile.kind === 'worker' ? tile.number : undefined,
+      agentSessionId: tile.raw.agentSessionId,
+      view,
+    });
   };
 
-  if (canOpenTerminal) {
-    items.push({
-      key: 'terminal',
-      label: 'Open Terminal',
-      onSelect: () => openTile('terminal'),
-    });
-  }
+  items.push({
+    key: 'terminal',
+    label: 'Open Terminal',
+    onSelect: () => openTile('terminal'),
+  });
 
-  if (tile.kind === 'worker') {
+  if (tile.kind === 'worker' && tile.type === 'code') {
     items.push({
       key: 'diff',
       label: 'Open Diff',

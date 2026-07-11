@@ -241,6 +241,7 @@ async function main(): Promise<void> {
     assert.equal(channel.mode, 'mirror', 'channel carries the requested mode');
     assert.equal(typeof channel.write, 'function', 'channel exposes write');
     assert.equal(typeof channel.resize, 'function', 'channel exposes resize');
+    assert.equal(typeof channel.onError, 'function', 'channel exposes structured control errors');
     channel.close();
 
     // ── auth is ENFORCED (FINAL security posture) ──

@@ -48,6 +48,8 @@ export interface TerminalChannel {
   onData(listener: (chunk: string) => void): Disposable;
   /** Fires once when the underlying PTY exits. */
   onExit(listener: (info: { code: number | null }) => void): Disposable;
+  /** Structured terminal control error (for example, interactive-owner replacement). */
+  onError(listener: (info: { message: string }) => void): Disposable;
   /** Forward keystrokes to the interactive owner (no-op for mirrors). */
   write(data: string): void;
   /** Resize the PTY / tmux client. */

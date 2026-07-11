@@ -75,6 +75,7 @@ function tmuxHasSession(session: string): boolean {
 /** A test harness over one TerminalChannel — buffers output, waits on patterns. */
 class Term {
   private buf = '';
+  private readonly errors: string[] = [];
   private readonly channel: TerminalChannel;
   exited = false;
   exitCode: number | null = null;
@@ -92,6 +93,9 @@ class Term {
     this.channel.onExit(({ code }) => {
       this.exited = true;
       this.exitCode = code;
+    });
+    this.channel.onError(({ message }) => {
+      this.errors.push(message);
     });
   }
 
@@ -123,6 +127,16 @@ class Term {
       if (match) {
         return match;
       }
+      await sleep(50);
+    }
+    return null;
+  }
+
+  async waitForError(re: RegExp, ms = 5000): Promise<string | null> {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const message = this.errors.find(error => re.test(error));
+      if (message) return message;
       await sleep(50);
     }
     return null;
@@ -332,13 +346,22 @@ async function main(): Promise<void> {
     const responsive = await t2.sttySize();
     check('reattached terminal is interactive', Boolean(responsive), responsive ? `${responsive.cols}c` : 'no response');
 
+    // A newer interactive owner must evict the previous one with a structured
+    // reason so Desktop can stop auto-reconnect instead of stealing ownership
+    // back in a loop.
+    const replacement = new Term(client, SESSION, { mode: 'interactive', cols: 120, rows: 40 });
+    await replacement.waitFor(/./, 5000);
+    const replacementReason = await t2.waitForError(/replaced by a newer interactive client/, 5000);
+    check('interactive owner replacement exposes a structured error', Boolean(replacementReason));
+    t2.close();
+
     // ── 5. read-only mirror sees the current screen ──
     console.log('5. Read-only mirror');
     const mirror = new Term(client, SESSION, { mode: 'mirror', cols: 120, rows: 40 });
     const mirrored = await mirror.waitFor(new RegExp(persist), 5000);
     check('mirror observer receives the current screen (capture-pane)', Boolean(mirrored));
     mirror.close();
-    t2.close();
+    replacement.close();
     await sleep(300);
 
     // ── 6. auth: a wrong token on the terminal WS is rejected ──

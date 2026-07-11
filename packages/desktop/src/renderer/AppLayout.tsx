@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 
 import { Sidebar } from './sidebar/Sidebar';
 import { TabArea } from './tabs/TabArea';
-import { StatusBar } from './StatusBar';
+import { useShellUi } from './shell/shellState';
 
 const MIN_WIDTH = 236;
 const MAX_WIDTH = 340;
@@ -32,6 +32,7 @@ function loadWidth(): number {
 }
 
 export function AppLayout(): JSX.Element {
+  const shell = useShellUi();
   const [width, setWidth] = useState(loadWidth);
   const dragStart = useRef<DragState | null>(null);
 
@@ -95,23 +96,26 @@ export function AppLayout(): JSX.Element {
   useEffect(() => stopDrag, [stopDrag]);
 
   return (
-    <div className="hydra-app">
+    <div className={`hydra-app${shell.terminalMaximized ? ' hydra-app--terminal-maximized' : ''}`}>
       <div className="hydra-app__main">
-        <div className="hydra-app__sidebar" style={{ width }}>
-          <Sidebar />
-        </div>
-        <div
-          className="hydra-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize sidebar"
-          onPointerDown={startDrag}
-        />
+        {!shell.terminalMaximized ? (
+          <>
+            <div className="hydra-app__sidebar" style={{ width }}>
+              <Sidebar />
+            </div>
+            <div
+              className="hydra-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+              onPointerDown={startDrag}
+            />
+          </>
+        ) : null}
         <div className="hydra-app__tabs">
           <TabArea />
         </div>
       </div>
-      <StatusBar />
     </div>
   );
 }

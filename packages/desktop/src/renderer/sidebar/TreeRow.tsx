@@ -19,32 +19,26 @@ import {
   runtimeToken,
 } from '../missionControl/format';
 import { STATUS_LABELS, tileStatus } from '../status';
-import { useSessions } from '../sessions/SessionsProvider';
 import { useTabs } from '../tabs/TabsProvider';
 import { RowMenu } from './RowMenu';
 
 export function TreeRow({ tile }: { tile: TileModel }): JSX.Element {
   const tabs = useTabs();
-  const { actions } = useSessions();
   const status = tileStatus(tile);
-  const selected = tabs.activeId === tile.session;
-  const canOpenTerminal = tile.kind === 'worker' || tile.lifecycle !== 'stopped';
+  const selected = tabs.activeSession === tile.session;
 
   const summary = tile.kind === 'copilot' ? copilotSummaryLabel(tile.workerCount, tile.repoCount) : null;
   const gitLabel = tile.kind === 'worker' ? gitChangeLabel(tile.changed) : null;
   const openTerminal = () => {
-    if (!canOpenTerminal) {
-      return;
-    }
-    tabs.openTab(tile.session, tile.kind);
-    actions.acknowledgeCompletion(tile);
+    tabs.openTab(tile.session, tile.kind, {
+      workerId: tile.kind === 'worker' ? tile.number : undefined,
+      agentSessionId: tile.raw.agentSessionId,
+    });
   };
 
   return (
     <div
-      className={`hydra-row${selected ? ' hydra-row--selected' : ''}${
-        canOpenTerminal ? '' : ' hydra-row--no-open'
-      }`}
+      className={`hydra-row${selected ? ' hydra-row--selected' : ''}`}
       role="treeitem"
       aria-selected={selected}
       tabIndex={0}

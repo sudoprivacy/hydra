@@ -1963,6 +1963,228 @@
         font-weight: 600;
       }
 
+      /* ── Desktop v2 terminal-first shell (Phase 3) ─────────────────── */
+      .hydra-app--terminal-maximized {
+        padding: 0;
+      }
+      .hydra-tree__subsection {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 4px;
+      }
+      .hydra-tree__subtitle {
+        padding: 3px 8px 2px 22px;
+        color: var(--hy-faint);
+        font-size: 10px;
+        font-weight: 650;
+        letter-spacing: 0.04em;
+      }
+
+      .hydra-first-run,
+      .hydra-session-missing {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+        background: var(--hy-canvas);
+      }
+      .hydra-first-run__content,
+      .hydra-session-missing {
+        max-width: 520px;
+      }
+      .hydra-first-run__eyebrow {
+        color: var(--hy-muted);
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .hydra-first-run h1,
+      .hydra-session-missing h1 {
+        margin: 10px 0 8px;
+        font-size: 26px;
+        font-weight: 650;
+        letter-spacing: -0.025em;
+      }
+      .hydra-first-run p,
+      .hydra-session-missing p {
+        margin: 0;
+        color: var(--hy-muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .hydra-first-run__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .hydra-session-header {
+        flex: none;
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 7px 14px 7px 18px;
+        border-bottom: 1px solid var(--hy-border);
+        background: var(--hy-canvas);
+      }
+      .hydra-session-header__identity {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .hydra-session-header__titleline {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .hydra-session-header h1 {
+        min-width: 0;
+        max-width: 46vw;
+        margin: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+      .hydra-session-header__status,
+      .hydra-session-header__connection,
+      .hydra-session-header__session {
+        color: var(--hy-muted);
+        font-size: 11px;
+      }
+      .hydra-session-header__connection {
+        color: var(--hy-warn);
+      }
+      .hydra-session-header__session {
+        max-width: min(520px, 56vw);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hydra-session-header__utility {
+        appearance: none;
+        border: 1px solid var(--hy-border);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--hy-muted);
+        padding: 5px 9px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .hydra-stopped-session {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .hydra-stopped-session__label {
+        color: var(--hy-muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .hydra-stopped-session h2 {
+        margin: 8px 0 4px;
+        font-size: 20px;
+      }
+      .hydra-stopped-session p {
+        margin: 0 0 18px;
+        color: var(--hy-muted);
+      }
+
+      .hydra-terminal {
+        gap: 0;
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--hy-terminal);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+      }
+      .hydra-terminal__utility {
+        flex: none;
+        min-height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 5px 10px 4px;
+        color: rgba(255, 255, 255, 0.62);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+        font-size: 11px;
+      }
+      .hydra-terminal__connection {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      .hydra-terminal__dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #7d7e79;
+      }
+      .hydra-terminal__dot--connected { background: #3ecf75; }
+      .hydra-terminal__dot--connecting,
+      .hydra-terminal__dot--reconnecting { background: #d29a42; }
+      .hydra-terminal__dot--exited,
+      .hydra-terminal__dot--replaced,
+      .hydra-terminal__dot--error { background: #e06455; }
+      .hydra-terminal__utility .hydra-terminal__session {
+        max-width: 32vw;
+        color: rgba(255, 255, 255, 0.52);
+      }
+      .hydra-terminal__detail {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #e5a24f;
+      }
+      .hydra-terminal__actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .hydra-terminal__actions button {
+        appearance: none;
+        border: 0;
+        border-radius: 6px;
+        padding: 4px 7px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.64);
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .hydra-terminal__actions button:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.9);
+      }
+      .hydra-terminal__actions button:disabled {
+        opacity: 0.38;
+        cursor: default;
+      }
+      .hydra-terminal__surface {
+        border-radius: 0;
+        box-shadow: none;
+        padding: 7px 9px 9px;
+      }
+
       @media (max-width: 980px) {
         .hydra-board__bar {
           grid-template-columns: 1fr;

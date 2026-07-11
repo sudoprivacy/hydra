@@ -231,10 +231,12 @@ class LoopbackTerminalChannel implements TerminalChannel {
   private readonly decoder = new TextDecoder();
   private readonly dataListeners = new Set<(chunk: string) => void>();
   private readonly exitListeners = new Set<(info: { code: number | null }) => void>();
+  private readonly errorListeners = new Set<(info: { message: string }) => void>();
   /** Frames requested before the socket opened; flushed on 'open'. */
   private readonly outbound: TerminalClientFrame[] = [];
   /** Output that arrived before any onData listener registered. */
   private pendingData = '';
+  private errorMessage: string | null = null;
   /** Numeric code from a clean `exit` control frame, else null (transient). */
   private exitCode: number | null = null;
   private exited = false;
@@ -277,6 +279,15 @@ class LoopbackTerminalChannel implements TerminalChannel {
     }
     this.exitListeners.add(listener);
     return { dispose: () => this.exitListeners.delete(listener) };
+  }
+
+  onError(listener: (info: { message: string }) => void): Disposable {
+    if (this.errorMessage) {
+      listener({ message: this.errorMessage });
+      return { dispose: () => undefined };
+    }
+    this.errorListeners.add(listener);
+    return { dispose: () => this.errorListeners.delete(listener) };
   }
 
   write(data: string): void {
@@ -331,6 +342,8 @@ class LoopbackTerminalChannel implements TerminalChannel {
       // real exit (not a transient drop).
       this.exitCode = frame.code ?? 0;
     } else if (frame.t === 'error') {
+      this.errorMessage = frame.message;
+      for (const listener of this.errorListeners) listener({ message: frame.message });
       // Surface the server's reason as terminal output; 'close' follows.
       this.emitData(`\r\n\x1b[31m[hydra] ${frame.message}\x1b[0m\r\n`);
     }
@@ -356,5 +369,6 @@ class LoopbackTerminalChannel implements TerminalChannel {
       listener({ code: this.exitCode });
     }
     this.exitListeners.clear();
+    this.errorListeners.clear();
   }
 }
