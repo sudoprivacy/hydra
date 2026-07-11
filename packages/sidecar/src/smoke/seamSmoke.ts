@@ -223,6 +223,12 @@ async function main(): Promise<void> {
     assert.equal(typeof workerEntry.number, 'number', 'worker has a numeric id');
     assert.equal(workerEntry.runtimeState.state, 'running', 'just-launched worker projects running');
     assert.equal(workerEntry.agentSessionId, workerEntry.sessionId, 'agentSessionId mirrors sessionId');
+    const runtimeV2 = await client.listWorkerRuntimeV2();
+    const runtimeV2Entry = runtimeV2.runtimes.find(runtime => runtime.workerId === workerEntry.number);
+    assert.equal(runtimeV2.version, 2, 'Desktop runtime snapshot uses the v2 contract');
+    assert.equal(runtimeV2Entry?.sessionName, tempSession, 'runtime v2 snapshot shares durable worker identity');
+    assert.equal(runtimeV2Entry?.state, 'running', 'runtime v2 snapshot carries the authoritative state');
+    assert.ok(Number.isSafeInteger(runtimeV2.lastEventSeq), 'runtime v2 snapshot carries an event cursor');
 
     const deleted = await client.deleteSession(tempSession, 'worker');
     assert.equal(deleted.status, 'deleted', 'worker deleted');
@@ -286,7 +292,7 @@ async function main(): Promise<void> {
     assert.deepEqual(broadcast.sessions, [diffSession], 'broadcast hits the running worker');
 
     // ── Notifications round-trip: seed via core, drive via the client ──
-    new NotificationStore().create({
+    const seededNotification = new NotificationStore().create({
       kind: 'needs-input',
       title: 'Needs input',
       sourceSession: diffSession,
@@ -296,6 +302,21 @@ async function main(): Promise<void> {
     const listed = await client.listNotifications({ session: diffSession });
     assert.equal(listed.count, 1, 'client lists the seeded notification');
     const notificationId = listed.notifications[0].id;
+    const occurrences = await client.listNotificationOccurrencesV2({
+      workerId: diffWorkerId,
+      status: 'active',
+    });
+    assert.deepEqual(
+      occurrences.occurrences.map(occurrence => occurrence.id),
+      [seededNotification.notification.id],
+      'in-process seam exposes the matching v2 occurrence',
+    );
+    const occurrenceIterable = client.subscribeNotificationOccurrencesV2({ workerId: diffWorkerId });
+    const occurrenceStream = occurrenceIterable[Symbol.asyncIterator]();
+    const initialOccurrences = await occurrenceStream.next();
+    assert.equal(initialOccurrences.done, false, 'v2 occurrence stream yields an initial snapshot');
+    assert.equal(initialOccurrences.value?.totalCount, 1);
+    await occurrenceStream.return?.();
     const read = await client.markNotificationRead(notificationId);
     assert.equal(read.markedRead, 1, 'markNotificationRead flips unread → read');
     const dismissed = await client.dismissNotification(notificationId);

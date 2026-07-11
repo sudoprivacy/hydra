@@ -11,6 +11,7 @@
 //
 // ── verb → engine mapping (every op grounded in real code) ────────────────────
 //  Op.listSessions          SessionManager.sync + WorkerRuntimeStateStore.get   (list.ts)
+//  Op.listWorkerRuntimeV2   WorkerRuntimeStateStoreV2.list
 //  Op.createWorker          WorkerLifecycleService.create*                       (worker.ts)
 //  Op.createCopilot         SessionManager.createCopilotAndFinalize             (copilot.ts)
 //  Op.startSession          WorkerLifecycleService.startWorker / startCopilot
@@ -23,6 +24,7 @@
 //  Op.sendMessage           WorkerLifecycleService / TmuxBackendCore             (worker.ts)
 //  Op.broadcastToWorkers    WorkerLifecycleService.broadcastToWorkers            (worker send --all)
 //  Op.listNotifications     NotificationStore.list
+//  Op.listNotificationOccurrencesV2 NotificationStore.listOccurrences
 //  Op.markNotificationRead  NotificationStore.markRead
 //  Op.dismissNotification   NotificationStore.dismiss
 //  Op.clearNotifications    NotificationStore.clear
@@ -31,6 +33,7 @@
 //  Op.getGitStatus          SessionManager.sync + git status --porcelain        (sidebar U:N)
 //  Topic.events             EventHub (one tailer + in-process fan-out)            (eventHub.ts)
 //  Topic.notifications      shared NotificationStateService.onDidChange
+//  Topic.notificationOccurrencesV2 filtered NotificationStore occurrence snapshots
 //  openTerminal             reserved in-process terminal seam; loopback attach
 //                             is handled by TerminalBridge after ownership auth
 
@@ -45,6 +48,7 @@ import {
 } from '@hydra/core/sessionManager';
 import type { CopilotMode, MultiplexerBackendCore } from '@hydra/core/types';
 import { WorkerRuntimeStateStore } from '@hydra/core/workerRuntimeState';
+import { WorkerRuntimeStateStoreV2 } from '@hydra/core/workerRuntimeV2';
 import { NotificationStore } from '@hydra/core/notifications';
 import { NotificationStateService } from '@hydra/core/notificationStateService';
 import { EventLog, type HydraEventSource } from '@hydra/core/events';
@@ -85,10 +89,15 @@ import {
   type MarkNotificationReadPayload,
   type NotificationClearFilters,
   type NotificationClearResult,
+  type NotificationKind,
   type NotificationListFilters,
   type NotificationListResult,
+  type NotificationOccurrenceFiltersV2,
+  type NotificationOccurrenceListV2Result,
+  type NotificationOccurrenceSnapshotV2,
   type NotificationReadResult,
   type NotificationSnapshot,
+  type NotificationStatus,
   type NotificationStatusMutationResult,
   type RenameSessionPayload,
   type RestoreSessionPayload,
@@ -102,15 +111,38 @@ import {
   type TerminalAttachInput,
   type TerminalChannel,
   type WorkerRuntimeCliSnapshot,
+  type WorkerRuntimeListV2Result,
 } from '@hydra/protocol';
 
 const DEFAULT_LOG_LINES = 50;
+const MAX_NOTIFICATION_SESSION_LENGTH = 200;
+const MAX_NOTIFICATION_OCCURRENCE_LIMIT = 1000;
+const NOTIFICATION_KINDS = new Set<NotificationKind>([
+  'complete',
+  'needs-input',
+  'error',
+  'blocked',
+  'info',
+]);
+const NOTIFICATION_STATUSES = new Set<NotificationStatus>([
+  'active',
+  'resolved',
+  'superseded',
+  'dismissed',
+]);
+
+interface NotificationOccurrenceSubscriber {
+  readonly filters: NotificationOccurrenceFiltersV2;
+  readonly stream: AsyncPushIterator<NotificationOccurrenceSnapshotV2>;
+}
+
 export interface HydraAppServiceOptions {
   /** Multiplexer backend. Defaults to the real tmux backend. Tests inject a fake. */
   backend?: MultiplexerBackendCore;
   sessionManager?: SessionManager;
   notificationStore?: NotificationStore;
   runtimeStateStore?: WorkerRuntimeStateStore;
+  runtimeV2Store?: WorkerRuntimeStateStoreV2;
   eventLog?: EventLog;
   eventHub?: EventHub;
   notificationStateService?: NotificationStateService;
@@ -128,6 +160,7 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly sessionManager: SessionManager;
   private readonly notificationStore: NotificationStore;
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
+  private readonly runtimeV2Store: WorkerRuntimeStateStoreV2;
   private readonly workerLifecycle: WorkerLifecycleService;
   private readonly eventLog: EventLog;
   private readonly eventHub: EventHub;
@@ -135,6 +168,7 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly diffService: DiffService;
   private readonly notificationEventSource: HydraEventSource;
   private readonly notificationStreams = new Set<AsyncPushIterator<NotificationSnapshot>>();
+  private readonly notificationOccurrenceStreams = new Set<NotificationOccurrenceSubscriber>();
   private notificationStateSubscription: { dispose(): void } | undefined;
   private notificationStateInitialized = false;
 
@@ -142,8 +176,17 @@ export class HydraAppService implements HydraAppServiceApi {
     this.backend = options.backend ?? new TmuxBackendCore();
     this.eventLog = options.eventLog ?? new EventLog();
     this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore(undefined, this.eventLog);
+    this.runtimeV2Store = options.runtimeV2Store ?? new WorkerRuntimeStateStoreV2();
     this.sessionManager = options.sessionManager ?? new SessionManager(this.backend, this.eventLog, this.runtimeStateStore);
-    this.notificationStore = options.notificationStore ?? new NotificationStore(undefined, undefined, this.eventLog);
+    this.notificationStore = options.notificationStore ?? new NotificationStore(
+      undefined,
+      undefined,
+      this.eventLog,
+      undefined,
+      Date.now,
+      undefined,
+      this.runtimeV2Store,
+    );
     this.eventHub = options.eventHub ?? new EventHub(this.eventLog);
     this.notificationStateService = options.notificationStateService ?? new NotificationStateService({
       store: this.notificationStore,
@@ -157,6 +200,7 @@ export class HydraAppService implements HydraAppServiceApi {
       sessionManager: this.sessionManager,
       notificationStore: this.notificationStore,
       runtimeStateStore: this.runtimeStateStore,
+      runtimeV2Store: this.runtimeV2Store,
       eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
     });
@@ -177,6 +221,10 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.subscribeEvents((payload ?? {}) as EventSubscribeInput) as AsyncIterable<TEvt>;
       case Topic.notifications:
         return this.subscribeNotifications() as AsyncIterable<TEvt>;
+      case Topic.notificationOccurrencesV2:
+        return this.subscribeNotificationOccurrencesV2(
+          (payload ?? {}) as NotificationOccurrenceFiltersV2,
+        ) as AsyncIterable<TEvt>;
       default:
         throw new Error(`HydraAppService: unknown stream topic "${topic}"`);
     }
@@ -185,6 +233,7 @@ export class HydraAppService implements HydraAppServiceApi {
   dispose(): void {
     this.eventHub.dispose();
     for (const stream of [...this.notificationStreams]) stream.close();
+    for (const subscriber of [...this.notificationOccurrenceStreams]) subscriber.stream.close();
     this.stopNotificationState();
   }
 
@@ -206,6 +255,8 @@ export class HydraAppService implements HydraAppServiceApi {
     switch (op) {
       case Op.listSessions:
         return this.listSessions();
+      case Op.listWorkerRuntimeV2:
+        return this.listWorkerRuntimeV2();
       case Op.createWorker:
         return this.createWorker(payload as CreateWorkerInput);
       case Op.createCopilot:
@@ -228,6 +279,10 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.broadcastToWorkers(payload as BroadcastPayload);
       case Op.listNotifications:
         return this.listNotifications(payload as NotificationListFilters);
+      case Op.listNotificationOccurrencesV2:
+        return this.listNotificationOccurrencesV2(
+          (payload ?? {}) as NotificationOccurrenceFiltersV2,
+        );
       case Op.markNotificationRead:
         return this.markNotificationRead(payload as MarkNotificationReadPayload);
       case Op.dismissNotification:
@@ -286,6 +341,19 @@ export class HydraAppService implements HydraAppServiceApi {
     }));
 
     return { copilots, workers, count: copilots.length + workers.length };
+  }
+
+  /** Capture the event cursor before the store read so a concurrent change cannot be skipped. */
+  private async listWorkerRuntimeV2(): Promise<WorkerRuntimeListV2Result> {
+    const lastEventSeq = this.eventLog.readLastSeq();
+    const runtimes = this.runtimeV2Store.list();
+    return {
+      version: 2,
+      loadedAt: new Date().toISOString(),
+      lastEventSeq,
+      runtimes,
+      count: runtimes.length,
+    };
   }
 
   /** WorkerLifecycleService.create* — mirrors `hydra worker create`. */
@@ -517,6 +585,13 @@ export class HydraAppService implements HydraAppServiceApi {
     return this.notificationStore.list(filters ?? {});
   }
 
+  /** NotificationStore occurrence history, filtered at the trusted sidecar boundary. */
+  private async listNotificationOccurrencesV2(
+    filters: NotificationOccurrenceFiltersV2,
+  ): Promise<NotificationOccurrenceListV2Result> {
+    return this.buildNotificationOccurrenceList(validateNotificationOccurrenceFilters(filters));
+  }
+
   /** NotificationStore.markRead. */
   private async markNotificationRead(payload: MarkNotificationReadPayload): Promise<NotificationReadResult> {
     return this.notificationStore.markRead(payload.id, this.notificationEventSource);
@@ -590,10 +665,26 @@ export class HydraAppService implements HydraAppServiceApi {
     let stream: AsyncPushIterator<NotificationSnapshot>;
     stream = new AsyncPushIterator(() => {
       this.notificationStreams.delete(stream);
-      if (this.notificationStreams.size === 0) this.stopNotificationState();
+      this.stopNotificationStateIfIdle();
     });
     this.notificationStreams.add(stream);
     stream.push(this.notificationStateService.getSnapshot());
+    return stream;
+  }
+
+  private subscribeNotificationOccurrencesV2(
+    input: NotificationOccurrenceFiltersV2,
+  ): AsyncIterableIterator<NotificationOccurrenceSnapshotV2> {
+    const filters = validateNotificationOccurrenceFilters(input);
+    this.startNotificationState();
+    let subscriber: NotificationOccurrenceSubscriber;
+    const stream = new AsyncPushIterator<NotificationOccurrenceSnapshotV2>(() => {
+      this.notificationOccurrenceStreams.delete(subscriber);
+      this.stopNotificationStateIfIdle();
+    });
+    subscriber = { filters, stream };
+    this.notificationOccurrenceStreams.add(subscriber);
+    stream.push(this.buildNotificationOccurrenceSnapshot(filters));
     return stream;
   }
 
@@ -603,7 +694,16 @@ export class HydraAppService implements HydraAppServiceApi {
     this.notificationStateService.initialize();
     this.notificationStateSubscription = this.notificationStateService.onDidChange(snapshot => {
       for (const stream of this.notificationStreams) stream.push(snapshot);
+      for (const subscriber of this.notificationOccurrenceStreams) {
+        subscriber.stream.push(this.buildNotificationOccurrenceSnapshot(subscriber.filters));
+      }
     });
+  }
+
+  private stopNotificationStateIfIdle(): void {
+    if (this.notificationStreams.size === 0 && this.notificationOccurrenceStreams.size === 0) {
+      this.stopNotificationState();
+    }
   }
 
   private stopNotificationState(): void {
@@ -612,6 +712,35 @@ export class HydraAppService implements HydraAppServiceApi {
     this.notificationStateSubscription?.dispose();
     this.notificationStateSubscription = undefined;
     this.notificationStateService.dispose();
+  }
+
+  private buildNotificationOccurrenceSnapshot(
+    filters: NotificationOccurrenceFiltersV2,
+  ): NotificationOccurrenceSnapshotV2 {
+    const lastEventSeq = this.eventLog.readLastSeq();
+    return {
+      ...this.buildNotificationOccurrenceList(filters),
+      loadedAt: new Date().toISOString(),
+      lastEventSeq,
+    };
+  }
+
+  private buildNotificationOccurrenceList(
+    filters: NotificationOccurrenceFiltersV2,
+  ): NotificationOccurrenceListV2Result {
+    const matching = this.notificationStore.listOccurrences()
+      .filter(occurrence => matchesNotificationOccurrenceFilters(occurrence, filters));
+    const occurrences = filters.limit === undefined
+      ? matching
+      : matching.slice(0, filters.limit);
+    return {
+      version: 2,
+      occurrences,
+      count: occurrences.length,
+      totalCount: matching.length,
+      activeCount: matching.filter(occurrence => occurrence.status === 'active').length,
+      unreadCount: matching.filter(occurrence => occurrence.readAt === null).length,
+    };
   }
 
   // ── shared helpers ──
@@ -646,6 +775,72 @@ export class HydraAppService implements HydraAppServiceApi {
     throw new Error(`Session "${session}" not found`);
   }
 
+}
+
+function validateNotificationOccurrenceFilters(
+  value: unknown,
+): NotificationOccurrenceFiltersV2 {
+  if (!isRecord(value)) {
+    throw new Error('notification occurrence filters must be an object');
+  }
+
+  const filters: NotificationOccurrenceFiltersV2 = {};
+  const workerId = value.workerId;
+  if (workerId !== undefined) {
+    if (typeof workerId !== 'number' || !Number.isSafeInteger(workerId) || workerId <= 0) {
+      throw new Error('workerId must be a positive safe integer');
+    }
+    filters.workerId = workerId;
+  }
+  for (const key of ['session', 'sourceSession', 'targetSession'] as const) {
+    const session = value[key];
+    if (session === undefined) continue;
+    if (typeof session !== 'string' || session.length === 0 || session.length > MAX_NOTIFICATION_SESSION_LENGTH) {
+      throw new Error(`${key} must be a non-empty string of at most ${MAX_NOTIFICATION_SESSION_LENGTH} characters`);
+    }
+    filters[key] = session;
+  }
+  const kind = value.kind;
+  if (kind !== undefined) {
+    if (typeof kind !== 'string' || !NOTIFICATION_KINDS.has(kind as NotificationKind)) {
+      throw new Error(`unsupported notification kind "${String(kind)}"`);
+    }
+    filters.kind = kind as NotificationKind;
+  }
+  const status = value.status;
+  if (status !== undefined) {
+    if (typeof status !== 'string' || !NOTIFICATION_STATUSES.has(status as NotificationStatus)) {
+      throw new Error(`unsupported notification status "${String(status)}"`);
+    }
+    filters.status = status as NotificationStatus;
+  }
+  const limit = value.limit;
+  if (limit !== undefined) {
+    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_NOTIFICATION_OCCURRENCE_LIMIT) {
+      throw new Error(`limit must be a positive safe integer no greater than ${MAX_NOTIFICATION_OCCURRENCE_LIMIT}`);
+    }
+    filters.limit = limit;
+  }
+  return filters;
+}
+
+function matchesNotificationOccurrenceFilters(
+  occurrence: NotificationOccurrenceSnapshotV2['occurrences'][number],
+  filters: NotificationOccurrenceFiltersV2,
+): boolean {
+  if (filters.workerId !== undefined && occurrence.workerId !== filters.workerId) return false;
+  if (filters.session !== undefined
+    && occurrence.sourceSession !== filters.session
+    && occurrence.targetSession !== filters.session) return false;
+  if (filters.sourceSession !== undefined && occurrence.sourceSession !== filters.sourceSession) return false;
+  if (filters.targetSession !== undefined && occurrence.targetSession !== filters.targetSession) return false;
+  if (filters.kind !== undefined && occurrence.kind !== filters.kind) return false;
+  if (filters.status !== undefined && occurrence.status !== filters.status) return false;
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // ── module-local helpers (mirror list.ts / copilot.ts) ──

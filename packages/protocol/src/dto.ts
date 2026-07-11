@@ -18,13 +18,19 @@ import type { HydraEvent } from '@hydra/core/events';
 import type {
   HydraNotification,
   NotificationClearFilters,
+  NotificationKind,
   NotificationListFilters,
   NotificationListResult,
   NotificationReadResult,
   NotificationClearResult,
   NotificationStatusMutationResult,
 } from '@hydra/core/notifications';
+import type {
+  HydraNotificationV2,
+  NotificationStatus,
+} from '@hydra/core/notificationV2';
 import type { NotificationSnapshot } from '@hydra/core/notificationState';
+import type { WorkerRuntimeSnapshotV2 } from '@hydra/core/workerRuntimeV2';
 import type { DiffChange } from '@hydra/core/diff';
 import type { SessionKind } from './types';
 
@@ -36,13 +42,17 @@ export type {
   WorkerRuntimeSignalOrigin,
   HydraEvent,
   HydraNotification,
+  HydraNotificationV2,
   NotificationClearFilters,
+  NotificationKind,
   NotificationListFilters,
   NotificationListResult,
   NotificationReadResult,
   NotificationClearResult,
   NotificationStatusMutationResult,
+  NotificationStatus,
   NotificationSnapshot,
+  WorkerRuntimeSnapshotV2,
   DiffChange,
 };
 
@@ -93,6 +103,45 @@ export interface HydraSessionList {
   copilots: SessionListCopilot[];
   workers: SessionListWorker[];
   count: number;
+}
+
+// ── Desktop v2 control-plane snapshots ──
+//
+// These are additive app/control-plane operations. They intentionally do not
+// add fields to the CLI-shaped listSessions/notification DTOs above, so older
+// CLI and extension consumers keep their frozen compatibility surface.
+
+export interface WorkerRuntimeListV2Result {
+  version: 2;
+  loadedAt: string;
+  lastEventSeq: number;
+  runtimes: WorkerRuntimeSnapshotV2[];
+  count: number;
+}
+
+export interface NotificationOccurrenceFiltersV2 {
+  workerId?: number;
+  /** Match either sourceSession or targetSession. */
+  session?: string;
+  sourceSession?: string;
+  targetSession?: string;
+  kind?: NotificationKind;
+  status?: NotificationStatus;
+  limit?: number;
+}
+
+export interface NotificationOccurrenceListV2Result {
+  version: 2;
+  occurrences: HydraNotificationV2[];
+  count: number;
+  totalCount: number;
+  activeCount: number;
+  unreadCount: number;
+}
+
+export interface NotificationOccurrenceSnapshotV2 extends NotificationOccurrenceListV2Result {
+  loadedAt: string;
+  lastEventSeq: number;
 }
 
 // ── createWorker ── (mirrors `hydra worker create`)

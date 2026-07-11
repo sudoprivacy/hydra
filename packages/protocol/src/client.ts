@@ -37,6 +37,9 @@ import type {
   NotificationClearResult,
   NotificationListFilters,
   NotificationListResult,
+  NotificationOccurrenceFiltersV2,
+  NotificationOccurrenceListV2Result,
+  NotificationOccurrenceSnapshotV2,
   NotificationReadResult,
   NotificationSnapshot,
   NotificationStatusMutationResult,
@@ -49,11 +52,13 @@ import type {
   StartSessionOptions,
   StartSessionPayload,
   StopWorkerPayload,
+  WorkerRuntimeListV2Result,
 } from './dto';
 
 export interface HydraControlClient {
   // Board + lifecycle
   listSessions(): Promise<HydraSessionList>;
+  listWorkerRuntimeV2(): Promise<WorkerRuntimeListV2Result>;
   createWorker(input: CreateWorkerInput): Promise<CreateWorkerResult>;
   createCopilot(input: CreateCopilotInput): Promise<CreateCopilotResult>;
   startSession(session: string, kind: SessionKind, options?: StartSessionOptions): Promise<SessionResult>;
@@ -69,6 +74,9 @@ export interface HydraControlClient {
 
   // Attention inbox
   listNotifications(filters?: NotificationListFilters): Promise<NotificationListResult>;
+  listNotificationOccurrencesV2(
+    filters?: NotificationOccurrenceFiltersV2,
+  ): Promise<NotificationOccurrenceListV2Result>;
   markNotificationRead(id: string): Promise<NotificationReadResult>;
   dismissNotification(id: string): Promise<NotificationStatusMutationResult>;
   clearNotifications(filters?: NotificationClearFilters): Promise<NotificationClearResult>;
@@ -83,6 +91,9 @@ export interface HydraControlClient {
   // Live push
   subscribeEvents(input?: EventSubscribeInput): AsyncIterable<HydraEvent>;
   subscribeNotifications(input?: NotificationSubscribeInput): AsyncIterable<NotificationSnapshot>;
+  subscribeNotificationOccurrencesV2(
+    filters?: NotificationOccurrenceFiltersV2,
+  ): AsyncIterable<NotificationOccurrenceSnapshotV2>;
 
   // Terminal attach (high-privilege — its own transport method)
   attachTerminal(input: TerminalAttachInput): TerminalChannel;
@@ -99,6 +110,10 @@ export function createHydraControlClient(
   return {
     listSessions: () =>
       transport.request<undefined, HydraSessionList>(Op.listSessions, undefined, auth),
+
+    listWorkerRuntimeV2: () =>
+      transport.request<undefined, WorkerRuntimeListV2Result>(
+        Op.listWorkerRuntimeV2, undefined, auth),
 
     createWorker: (input) =>
       transport.request<CreateWorkerInput, CreateWorkerResult>(Op.createWorker, input, auth),
@@ -138,6 +153,10 @@ export function createHydraControlClient(
       transport.request<NotificationListFilters, NotificationListResult>(
         Op.listNotifications, filters ?? {}, auth),
 
+    listNotificationOccurrencesV2: (filters) =>
+      transport.request<NotificationOccurrenceFiltersV2, NotificationOccurrenceListV2Result>(
+        Op.listNotificationOccurrencesV2, filters ?? {}, auth),
+
     markNotificationRead: (id) =>
       transport.request<MarkNotificationReadPayload, NotificationReadResult>(
         Op.markNotificationRead, { id }, auth),
@@ -165,6 +184,10 @@ export function createHydraControlClient(
     subscribeNotifications: (input) =>
       transport.stream<NotificationSubscribeInput, NotificationSnapshot>(
         Topic.notifications, (input ?? {}) as NotificationSubscribeInput, auth),
+
+    subscribeNotificationOccurrencesV2: (filters) =>
+      transport.stream<NotificationOccurrenceFiltersV2, NotificationOccurrenceSnapshotV2>(
+        Topic.notificationOccurrencesV2, filters ?? {}, auth),
 
     attachTerminal: (input) =>
       transport.openTerminal(input, auth),

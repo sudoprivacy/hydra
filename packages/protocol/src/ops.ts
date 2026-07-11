@@ -10,6 +10,7 @@
 /** Request/response operations, carried by `HydraTransport.request`. */
 export const Op = {
   listSessions: 'sessions.list',
+  listWorkerRuntimeV2: 'workerRuntime.v2.list',
   createWorker: 'worker.create',
   createCopilot: 'copilot.create',
   startSession: 'session.start',
@@ -21,6 +22,7 @@ export const Op = {
   sendMessage: 'session.send',
   broadcastToWorkers: 'worker.broadcast',
   listNotifications: 'notifications.list',
+  listNotificationOccurrencesV2: 'notifications.v2.list',
   markNotificationRead: 'notifications.markRead',
   dismissNotification: 'notifications.dismiss',
   clearNotifications: 'notifications.clear',
@@ -37,6 +39,7 @@ export type OpName = (typeof Op)[keyof typeof Op];
 export const Topic = {
   events: 'events',
   notifications: 'notifications',
+  notificationOccurrencesV2: 'notifications-v2',
 } as const;
 
 export type TopicName = (typeof Topic)[keyof typeof Topic];

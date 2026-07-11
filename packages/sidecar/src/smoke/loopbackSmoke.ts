@@ -141,6 +141,12 @@ async function main(): Promise<void> {
     const afterCreate = await client.listSessions();
     assert.equal(afterCreate.count, 1, 'one session after create');
     assert.equal(afterCreate.workers[0].session, session, 'listed worker matches created session');
+    const runtimeV2 = await client.listWorkerRuntimeV2();
+    assert.ok(
+      runtimeV2.runtimes.some(runtime => runtime.workerId === afterCreate.workers[0].number),
+      'runtime v2 snapshot crosses the authenticated HTTP seam',
+    );
+    assert.ok(Number.isSafeInteger(runtimeV2.lastEventSeq), 'runtime v2 response carries an event cursor');
 
     // ── round-trip 3: getLogs + sendMessage over the wire ──
     const logs = await client.getLogs(session, 'worker', 5);
@@ -181,23 +187,50 @@ async function main(): Promise<void> {
       sourceSession: session,
       targetSession: null,
       context: { workerId: afterCreate.workers[0].number },
-    }).notification;
+    });
+    const listedOccurrences = await client.listNotificationOccurrencesV2({
+      workerId: afterCreate.workers[0].number,
+      status: 'active',
+    });
+    assert.deepEqual(
+      listedOccurrences.occurrences.map(occurrence => occurrence.id),
+      [seededNotification.notification.id],
+      'notification occurrence list crosses the authenticated HTTP seam',
+    );
     const notifications = client.subscribeNotifications()[Symbol.asyncIterator]();
     const initialNotifications = await notifications.next();
     assert.equal(initialNotifications.done, false, 'notification stream yields its initial snapshot');
     assert.equal(initialNotifications.value?.totalCount, 1, 'initial snapshot includes stored attention');
+    const occurrenceNotifications = client.subscribeNotificationOccurrencesV2({
+      workerId: afterCreate.workers[0].number,
+      status: 'active',
+    })[Symbol.asyncIterator]();
+    const initialOccurrences = await occurrenceNotifications.next();
+    assert.equal(initialOccurrences.done, false, 'v2 notification topic opens over WebSocket');
+    assert.equal(initialOccurrences.value?.totalCount, 1, 'v2 topic sends its authoritative initial snapshot');
     const pendingNotification = notifications.next();
-    await client.dismissNotification(seededNotification.id);
+    const pendingOccurrence = occurrenceNotifications.next();
+    await client.dismissNotification(seededNotification.notification.id);
     const changedNotifications = await Promise.race([
       pendingNotification,
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('notification push timeout')), 600)),
     ]);
     assert.equal(changedNotifications.value?.totalCount, 0, 'shared watcher pushes local notification changes');
+    const changedOccurrences = await Promise.race([
+      pendingOccurrence,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('v2 notification push timeout')), 600)),
+    ]);
+    assert.equal(changedOccurrences.value?.totalCount, 0, 'v2 topic pushes the dismissed occurrence state');
     const idleNotification = notifications.next();
     const notificationCancelStarted = Date.now();
     await notifications.return?.();
     assert.ok(Date.now() - notificationCancelStarted < 100, 'idle notification stream cancels immediately');
     assert.equal((await idleNotification).done, true, 'notification cancellation releases pending next()');
+    const idleOccurrence = occurrenceNotifications.next();
+    const occurrenceCancelStarted = Date.now();
+    await occurrenceNotifications.return?.();
+    assert.ok(Date.now() - occurrenceCancelStarted < 100, 'idle v2 notification stream cancels immediately');
+    assert.equal((await idleOccurrence).done, true, 'v2 notification cancellation releases pending next()');
 
     // ── openTerminal now returns a live channel (node-pty ⇄ tmux is M3) ──
     // The full node-pty bridge is exercised against a real tmux session in
