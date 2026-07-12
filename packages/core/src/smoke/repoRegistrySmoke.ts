@@ -15,6 +15,7 @@ import {
   resolveRepoIdentifier,
   resolveRepoInput,
 } from '../core/repoRegistry';
+import { getPrimaryRepoRootFromPath } from '../core/git';
 
 interface SubTest {
   name: string;
@@ -251,6 +252,23 @@ test('resolveRepoInput: short-form path-traversal attempts are rejected', () => 
     assert.throws(() => resolveRepoInput('foo/.git'), /non-empty|unsafe path component/i);
   } finally {
     env.cleanup();
+  }
+});
+
+test('code worker repo source: linked worktree resolves to the primary checkout', async () => {
+  const origin = makeFakeGitOrigin();
+  const linkedWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-linked-worktree-'));
+  fs.rmSync(linkedWorktree, { recursive: true, force: true });
+  try {
+    execSync(`git worktree add -q -b feat/linked-source "${linkedWorktree}"`, { cwd: origin.dir });
+    const resolved = await getPrimaryRepoRootFromPath(linkedWorktree);
+    assert.equal(fs.realpathSync(resolved), fs.realpathSync(origin.dir));
+    assert.notEqual(fs.realpathSync(resolved), fs.realpathSync(linkedWorktree));
+  } finally {
+    try {
+      execSync(`git worktree remove --force "${linkedWorktree}"`, { cwd: origin.dir, stdio: 'ignore' });
+    } catch { /* ignore */ }
+    origin.cleanup();
   }
 });
 

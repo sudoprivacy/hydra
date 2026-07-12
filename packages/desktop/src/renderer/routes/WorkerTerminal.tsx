@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
@@ -36,9 +37,17 @@ export interface WorkerTerminalProps {
   session: string;
   /** Only the visible Terminal owns an interactive loopback/PTy channel. */
   active?: boolean;
+  /** Human-readable worker/repo/folder context shown above the terminal. */
+  identity?: string;
+  identityTitle?: string;
 }
 
-export function WorkerTerminal({ session, active = true }: WorkerTerminalProps): JSX.Element {
+export function WorkerTerminal({
+  session,
+  active = true,
+  identity,
+  identityTitle,
+}: WorkerTerminalProps): JSX.Element {
   const client = useHydraClient();
   const shell = useShellUi();
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -68,6 +77,9 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       lineHeight: 1.2,
       scrollback: 5000,
       macOptionIsMeta: true,
+      // tmux owns mouse mode; Option-drag still needs to force a local xterm
+      // selection so users can copy terminal text on macOS.
+      macOptionClickForcesSelection: true,
       allowProposedApi: true,
       linkHandler: { activate: (_event, uri) => openTerminalLink(uri) },
       theme: { background: '#151a1e' },
@@ -85,6 +97,9 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
     let errorSub: Disposable | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let fitFrame: number | null = null;
+    let webglAddon: WebglAddon | null = null;
+    let webglContextLossSub: Disposable | null = null;
+    let webglUnavailable = false;
     let retryMs = INITIAL_RETRY_MS;
     let disposed = false;
     let hardError = false;
@@ -106,6 +121,46 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
         fitFrame = null;
         safeFit();
       });
+    };
+
+    const disposeWebgl = () => {
+      webglContextLossSub?.dispose();
+      webglContextLossSub = null;
+      const addon = webglAddon;
+      webglAddon = null;
+      if (!addon) return;
+      try {
+        addon.dispose();
+      } catch {
+        // A lost context may already have torn the addon down. WebGL is only
+        // an optimization; xterm's default renderer remains available.
+      }
+    };
+
+    const enableWebgl = () => {
+      if (!activeRef.current || disposed || webglAddon || webglUnavailable) return;
+      let addon: WebglAddon | null = null;
+      let contextLossSub: Disposable | null = null;
+      try {
+        addon = new WebglAddon();
+        contextLossSub = addon.onContextLoss(() => {
+          if (webglAddon === addon) {
+            disposeWebgl();
+            webglUnavailable = true;
+          }
+        });
+        term.loadAddon(addon);
+        webglAddon = addon;
+        webglContextLossSub = contextLossSub;
+      } catch {
+        webglUnavailable = true;
+        contextLossSub?.dispose();
+        try {
+          addon?.dispose();
+        } catch {
+          // Fall back to xterm's default renderer.
+        }
+      }
     };
 
     const disposeChannel = (close: boolean) => {
@@ -193,6 +248,8 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
 
     const deactivate = () => {
       disposeChannel(true);
+      disposeWebgl();
+      webglUnavailable = false;
       setStatus('inactive');
       setDetail(null);
     };
@@ -204,6 +261,7 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       // not stall on a throttled rAF; the single scheduled fit then reconciles
       // the visible geometry and emits a deduplicated resize if needed.
       connect();
+      enableWebgl();
       scheduleFit();
       term.focus();
     };
@@ -245,6 +303,7 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
       observer.disconnect();
       if (fitFrame !== null) cancelAnimationFrame(fitFrame);
       disposeChannel(true);
+      disposeWebgl();
       inputSub.dispose();
       resizeSub.dispose();
       term.dispose();
@@ -263,7 +322,9 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
           <span className={`hydra-terminal__dot hydra-terminal__dot--${status}`} aria-hidden="true" />
           <span>{statusLabel(status)}</span>
         </div>
-        <code className="hydra-terminal__session" title={session}>{session}</code>
+        <code className="hydra-terminal__session" title={identityTitle ?? session}>
+          {identity ?? session}
+        </code>
         {detail ? <span className="hydra-terminal__detail" title={detail}>{detail}</span> : null}
         <div className="hydra-terminal__actions">
           <button
@@ -287,7 +348,12 @@ export function WorkerTerminal({ session, active = true }: WorkerTerminalProps):
           </button>
         </div>
       </header>
-      <div ref={surfaceRef} className="hydra-terminal__surface" />
+      <div
+        ref={surfaceRef}
+        className="hydra-terminal__surface"
+        aria-label="Interactive terminal. On macOS, hold Option while dragging to select text."
+        title="Hold Option while dragging to select terminal text"
+      />
     </section>
   );
 }

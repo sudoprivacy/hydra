@@ -20,10 +20,14 @@ export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
     ? row.activeAttentionCount
     : row.activeAttentionCount > 1 ? row.activeAttentionCount : 0;
   const showLifecycleDot = row.kind === 'worker' || status !== 'running';
-  const openTerminal = () => {
+  const canOpen = row.lifecycle === 'running' || (row.kind === 'worker' && row.type === 'code');
+  const preferredView = row.lifecycle === 'stopped' ? 'diff' : 'terminal';
+  const openPreferredView = () => {
+    if (!canOpen) return;
     tabs.openTab(row.session, row.kind, {
       workerId: row.kind === 'worker' ? row.workerId : undefined,
       agentSessionId: row.raw.agentSessionId,
+      view: preferredView,
     });
   };
 
@@ -32,14 +36,15 @@ export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
       className={`hydra-row hydra-row--${row.kind}${selected ? ' hydra-row--selected' : ''}`}
       role="treeitem"
       aria-selected={selected}
-      tabIndex={0}
+      aria-disabled={!canOpen || undefined}
+      tabIndex={canOpen ? 0 : -1}
       title={row.session}
-      onClick={openTerminal}
+      onClick={openPreferredView}
       onKeyDown={event => {
         if (event.currentTarget !== event.target) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          openTerminal();
+          openPreferredView();
         }
       }}
     >

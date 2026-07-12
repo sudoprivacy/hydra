@@ -10,6 +10,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function autoAttachOnStartup(): Promise<void> {
+  // Restoring every detached tmux session creates one terminal/client per
+  // worker, steals focus repeatedly, and keeps hidden sessions rendering in the
+  // background. Make eager restore opt-in; the sidebar remains the lazy attach
+  // surface and tmux keeps every session alive regardless.
+  const enabled = vscode.workspace.getConfiguration('hydra').get<boolean>('autoAttachOnStartup', false);
+  if (!enabled) return;
+
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) return;
 
@@ -46,7 +53,8 @@ export async function autoAttachOnStartup(): Promise<void> {
     if (index > 0) {
       await sleep(ATTACH_STAGGER_MS);
     }
-    const role = await backend.getSessionRole(sessionName);
+    const session = sessions.find(candidate => candidate.name === sessionName);
+    const role = session?.role || await backend.getSessionRole(sessionName);
     backend.attachSession(sessionName, undefined, undefined, role);
   }
 }

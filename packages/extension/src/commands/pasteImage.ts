@@ -8,14 +8,14 @@ import * as fs from 'fs';
 const tempFiles: string[] = [];
 
 /**
- * Smart terminal paste: intercepts Cmd+V in terminal context.
+ * Smart terminal paste, exposed on a dedicated shortcut so ordinary text paste
+ * stays on VS Code's native terminal path.
  *
  * When clipboard contains image data (and no text), saves the image to a temp file
  * and types the file path into the active terminal. This enables image paste for
  * AI CLI tools (Claude Code, OpenCode) that accept file path input for images.
  *
- * When clipboard contains text, falls through to the default terminal paste behavior
- * with zero performance impact (no external process invocation needed).
+ * When clipboard contains text, falls through to the default terminal paste behavior.
  */
 export async function terminalSmartPaste(): Promise<void> {
   const terminal = vscode.window.activeTerminal;

@@ -7,7 +7,7 @@ import { getRepoIdentifier } from '@hydra/core/git';
 import { getActiveBackend, MultiplexerSession, HydraRole } from '../utils/multiplexer';
 import { toCanonicalPath } from '../utils/path';
 import { parseCpuPercentSum } from '../utils/cpuPercent';
-import { isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '@hydra/core/sessionManager';
+import { CopilotInfo, isDirectoryWorker, isRepoWorker, SessionManager, WorkerInfo } from '@hydra/core/sessionManager';
 import { CopilotMode, Worktree } from '@hydra/core/types';
 import {
   buildSessionNotificationSummary,
@@ -44,6 +44,49 @@ interface SessionWithStatus extends MultiplexerSession {
   hydraRole?: HydraRole;
   hydraAgent?: string;
   hydraCopilotMode?: CopilotMode;
+}
+
+interface ProviderSessionSnapshot {
+  copilots: CopilotInfo[];
+  workers: WorkerInfo[];
+}
+
+// Both sidebar providers are invalidated together. Without a shared in-flight
+// snapshot, Copilots and Workers each call SessionManager.sync() (and Worker
+// groups call it again), multiplying the tmux metadata probes behind one UI
+// refresh. Keep a short-lived shared snapshot so one refresh performs one
+// reconciliation and both trees render from the same state.
+const PROVIDER_SESSION_SNAPSHOT_TTL_MS = 1000;
+let providerSessionSnapshot:
+  | { expiresAt: number; promise: Promise<ProviderSessionSnapshot> }
+  | undefined;
+
+export function invalidateProviderSessionSnapshot(): void {
+  providerSessionSnapshot = undefined;
+}
+
+async function getProviderSessionSnapshot(): Promise<ProviderSessionSnapshot> {
+  const now = Date.now();
+  if (providerSessionSnapshot && providerSessionSnapshot.expiresAt > now) {
+    return providerSessionSnapshot.promise;
+  }
+
+  const backend = getActiveBackend();
+  const sm = new SessionManager(backend);
+  const promise = sm.sync().then((state) => ({
+    copilots: Object.values(state.copilots),
+    workers: Object.values(state.workers),
+  }));
+  providerSessionSnapshot = {
+    expiresAt: now + PROVIDER_SESSION_SNAPSHOT_TTL_MS,
+    promise,
+  };
+  void promise.catch(() => {
+    if (providerSessionSnapshot?.promise === promise) {
+      providerSessionSnapshot = undefined;
+    }
+  });
+  return promise;
 }
 
 function isCurrentWorkspacePath(targetPath: string | undefined, activeWorkspacePath: string): boolean {
@@ -1262,9 +1305,7 @@ export class CopilotProvider implements vscode.TreeDataProvider<TmuxItem> {
 
   private async getRootItems(): Promise<TmuxItem[]> {
     try {
-      const backend = getActiveBackend();
-      const sm = new SessionManager(backend);
-      const [copilots, workers] = await Promise.all([sm.listCopilots(), sm.listWorkers()]);
+      const { copilots, workers } = await getProviderSessionSnapshot();
 
       if (copilots.length === 0) {
         this._copilotItems = [];
@@ -1338,6 +1379,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   private _taskGroup: TaskGroupItem | undefined;
   private _workerItemsByRepo = new Map<string, TmuxItem[]>();
   private _taskWorkerItems: TmuxItem[] = [];
+  private _workersByRepo = new Map<string, WorkerInfo[]>();
+  private _taskWorkers: WorkerInfo[] = [];
 
   constructor(
     private readonly notifications?: SessionNotificationSource,
@@ -1348,6 +1391,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
   refresh(): void {
     this._workerItemsByRepo.clear();
     this._taskWorkerItems = [];
+    this._workersByRepo.clear();
+    this._taskWorkers = [];
     this._onDidChangeTreeData.fire(undefined);
   }
   getTreeItem(element: TmuxItem): vscode.TreeItem { return element; }
@@ -1426,6 +1471,15 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
     return all;
   }
 
+  getCachedWorkerItems(): TmuxItem[] {
+    const all: TmuxItem[] = [];
+    for (const items of this._workerItemsByRepo.values()) {
+      all.push(...items);
+    }
+    all.push(...this._taskWorkerItems);
+    return all;
+  }
+
   async getChildren(element?: TmuxItem): Promise<TmuxItem[]> {
     if (!element) return this.getRootItems();
     if (element instanceof RepoGroupItem) return this.getRepoGroupChildren(element);
@@ -1445,9 +1499,7 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
 
   private async getRootItems(): Promise<TmuxItem[]> {
     try {
-      const backend = getActiveBackend();
-      const sm = new SessionManager(backend);
-      const workers = await sm.listWorkers();
+      const { workers } = await getProviderSessionSnapshot();
 
       if (workers.length === 0) {
         this._repoGroups = [];
@@ -1455,6 +1507,8 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         this._taskGroup = undefined;
         this._workerItemsByRepo.clear();
         this._taskWorkerItems = [];
+        this._workersByRepo.clear();
+        this._taskWorkers = [];
         const hint = new TmuxItem('No workers', vscode.TreeItemCollapsibleState.None);
         hint.iconPath = new vscode.ThemeIcon('info');
         hint.description = 'Ask your copilot to create a worker';
@@ -1476,6 +1530,11 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
         }
         group.workers.push(w);
       }
+
+      this._workersByRepo = new Map(
+        [...byRepo.entries()].map(([repoRoot, group]) => [repoRoot, group.workers]),
+      );
+      this._taskWorkers = taskWorkers;
 
       // Always show RepoGroupItem per repo
       const items: TmuxItem[] = [];
@@ -1510,15 +1569,25 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
       this._taskGroup = undefined;
       this._workerItemsByRepo.clear();
       this._taskWorkerItems = [];
+      this._workersByRepo.clear();
+      this._taskWorkers = [];
       return [];
     }
   }
 
   private async getRepoGroupChildren(group: RepoGroupItem): Promise<TmuxItem[]> {
     try {
-      const backend = getActiveBackend();
-      const sm = new SessionManager(backend);
-      const workers = await sm.listWorkers(group.repoRoot);
+      let workers = this._workersByRepo.get(group.repoRoot);
+      if (!workers) {
+        const snapshot = await getProviderSessionSnapshot();
+        const canonicalRoot = path.resolve(group.repoRoot);
+        workers = snapshot.workers.filter(
+          (worker) => isRepoWorker(worker)
+            && Boolean(worker.repoRoot)
+            && path.resolve(worker.repoRoot!) === canonicalRoot,
+        );
+        this._workersByRepo.set(group.repoRoot, workers);
+      }
       const items = await this.buildWorkerItems(workers, group.repoName, group.repoRoot);
       this._workerItemsByRepo.set(group.repoRoot, items);
       return items;
@@ -1529,9 +1598,11 @@ export class WorkerProvider implements vscode.TreeDataProvider<TmuxItem> {
 
   private async getTaskGroupChildren(): Promise<TmuxItem[]> {
     try {
-      const backend = getActiveBackend();
-      const sm = new SessionManager(backend);
-      const workers = (await sm.listWorkers()).filter(isDirectoryWorker);
+      let workers = this._taskWorkers;
+      if (workers.length === 0) {
+        workers = (await getProviderSessionSnapshot()).workers.filter(isDirectoryWorker);
+        this._taskWorkers = workers;
+      }
       const items = await this.buildTaskWorkerItems(workers);
       this._taskWorkerItems = items;
       return items;

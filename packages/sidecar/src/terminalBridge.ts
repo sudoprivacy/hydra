@@ -112,15 +112,19 @@ export class TerminalBridge {
     // to the attached session so tmux owns wheel scrollback without changing
     // the user's global tmux configuration. This matches the extension attach
     // path in packages/core/src/core/tmuxAttach.ts.
-    runTmux(['set-option', '-t', session, 'mouse', 'on']);
-
-    // `status off` so the browser's N rows map to N program rows (tmux's status
-    // bar would otherwise eat one — FINDINGS §3).
-    runTmux(['set-option', '-t', session, 'status', 'off']);
-
     let term: IPty;
     try {
-      term = spawnPty(tmuxBinary(), [...tmuxBaseArgs(), 'attach-session', '-t', session], {
+      // Configure session-local mouse/status and attach in the same tmux client.
+      // This removes two synchronous child processes from every tab activation;
+      // `status off` keeps the browser's N rows equal to N program rows.
+      term = spawnPty(tmuxBinary(), [
+        ...tmuxBaseArgs(),
+        'set-option', '-t', session, 'mouse', 'on',
+        ';',
+        'set-option', '-t', session, 'status', 'off',
+        ';',
+        'attach-session', '-t', session,
+      ], {
         name: 'xterm-256color',
         cols,
         rows,
@@ -143,6 +147,7 @@ export class TerminalBridge {
     // ── output coalescing + backpressure ──
     let pending: string[] = [];
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushNextOutputImmediately = false;
     let paused = false;
     let disposed = false;
 
@@ -173,8 +178,24 @@ export class TerminalBridge {
       }
     };
 
+    const flushNow = (): void => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      flush();
+    };
+
     const onData: IDisposable = term.onData((data) => {
       pending.push(data);
+      if (flushNextOutputImmediately) {
+        // Echo/response to a user keystroke is latency-sensitive. Flush its first
+        // PTY chunk immediately; subsequent chatty output still takes the normal
+        // coalescing/backpressure path.
+        flushNextOutputImmediately = false;
+        flushNow();
+        return;
+      }
       schedule();
     });
 
@@ -216,6 +237,12 @@ export class TerminalBridge {
         return;
       }
       if (frame.t === 'i') {
+        // Separate already-buffered background output from the response to this
+        // input, then let the next PTY chunk bypass the 8 ms coalescing delay.
+        if (pending.length > 0) {
+          flushNow();
+        }
+        flushNextOutputImmediately = frame.d.length > 0;
         term.write(frame.d);
       } else if (frame.t === 'r') {
         const c = clampInt(frame.c, cols, MIN_COLS, MAX_COLS);
@@ -348,7 +375,10 @@ function sendControl(ws: WsWebSocket, frame: TerminalControlFrame): void {
 function parseClientFrame(raw: RawData): TerminalClientFrame | null {
   try {
     const message = JSON.parse(raw.toString()) as TerminalClientFrame;
-    if (message && (message.t === 'i' || message.t === 'r')) {
+    if (message?.t === 'i' && typeof message.d === 'string') {
+      return message;
+    }
+    if (message?.t === 'r') {
       return message;
     }
   } catch {

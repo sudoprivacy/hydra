@@ -31,6 +31,10 @@ import {
 // Node's undici global (both follow the WHATWG numeric values).
 const WS_OPEN = 1;
 const WS_CLOSING = 2;
+// A terminal `error` control frame is a definitive server rejection (unknown
+// session, ownership conflict, spawn failure, ...), not a transient socket drop.
+// Keep it non-null so renderer reconnect loops stop instead of retrying forever.
+const TERMINAL_HARD_ERROR_EXIT_CODE = 1;
 
 export interface LoopbackTransportOptions {
   /** Base URL of the sidecar, e.g. `http://127.0.0.1:53211`. */
@@ -344,7 +348,11 @@ class LoopbackTerminalChannel implements TerminalChannel {
     } else if (frame.t === 'error') {
       this.errorMessage = frame.message;
       for (const listener of this.errorListeners) listener({ message: frame.message });
-      // Surface the server's reason as terminal output; 'close' follows.
+      // Surface the server's reason as terminal output; 'close' follows. Mark it
+      // non-transient before that close so callers do not enter reconnect loops.
+      if (this.exitCode === null) {
+        this.exitCode = TERMINAL_HARD_ERROR_EXIT_CODE;
+      }
       this.emitData(`\r\n\x1b[31m[hydra] ${frame.message}\x1b[0m\r\n`);
     }
     // 'hello' is informational; the caller learns readiness from live output.

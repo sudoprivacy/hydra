@@ -55,7 +55,7 @@ import { EventLog, type HydraEventSource } from '@hydra/core/events';
 import { EventHub } from '@hydra/core/eventHub';
 import { AsyncPushIterator } from '@hydra/core/asyncPushIterator';
 import { resolveAgentSessionFile, expandAndResolvePath } from '@hydra/core/path';
-import { getRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hydra/core/git';
+import { getPrimaryRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hydra/core/git';
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
@@ -373,7 +373,7 @@ export class HydraAppService implements HydraAppServiceApi {
         throw new Error('--branch is required when using --repo.');
       }
       const { path: repoPath, isManaged } = resolveRepoInput(input.repo);
-      const repoRoot = await getRepoRootFromPath(repoPath);
+      const repoRoot = await getPrimaryRepoRootFromPath(repoPath);
       const branch = input.branch.trim();
       const branchExisted = await localBranchExists(repoRoot, branch);
 

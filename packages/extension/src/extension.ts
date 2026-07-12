@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CopilotProvider, WorkerProvider, TmuxItem } from './providers/tmuxSessionProvider';
+import {
+  CopilotProvider,
+  WorkerProvider,
+  TmuxItem,
+  invalidateProviderSessionSnapshot,
+} from './providers/tmuxSessionProvider';
 import { attachCreate } from './commands/attachCreate';
 import { newTask } from './commands/newTask';
 import { removeTask } from './commands/removeTask';
@@ -44,6 +49,8 @@ const SESSION_REFRESH_POLL_INTERVAL_MS = 1000;
 const WORKER_GIT_HEAD_REFRESH_POLL_INTERVAL_MS = 1000;
 const RECENT_TREE_SELECTION_MS = 1000;
 const TREE_SELECTION_SETTLE_MS = 75;
+const TERMINAL_REFRESH_DEBOUNCE_MS = 200;
+const TERMINAL_REVEAL_DELAY_MS = 300;
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -145,7 +152,11 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   let syncWorkerGitHeadWatchers: () => void = () => {};
-  const refreshTreeViews = () => { copilotProvider.refresh(); workerProvider.refresh(); };
+  const refreshTreeViews = () => {
+    invalidateProviderSessionSnapshot();
+    copilotProvider.refresh();
+    workerProvider.refresh();
+  };
   const refreshAll = () => {
     refreshTreeViews();
     syncWorkerGitHeadWatchers();
@@ -202,7 +213,9 @@ export function activate(context: vscode.ExtensionContext) {
   silentInstallCli(context);
   seedDefaultAgentToHydraConfig();
   syncAgentCommandsToHydraConfig();
-  autoAttachOnStartup();
+  void autoAttachOnStartup().catch(() => {
+    // Startup restore is optional and must never fail extension activation.
+  });
   detectAndSetAgentContext();
 
   syncWorkerGitHeadWatchers = registerWorkerGitHeadRefreshWatcher(context, refreshTreeViews);
@@ -224,27 +237,78 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  let terminalRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let terminalRevealTimer: ReturnType<typeof setTimeout> | undefined;
+  let terminalRevealGeneration = 0;
+
+  const scheduleTerminalRefresh = () => {
+    if (terminalRefreshTimer) clearTimeout(terminalRefreshTimer);
+    terminalRefreshTimer = setTimeout(() => {
+      terminalRefreshTimer = undefined;
+      // Opening/closing a terminal changes attachment state, but it does not
+      // change the worker set or Git HEAD paths. Keep the expensive watcher
+      // rescan off this hot UI path.
+      refreshTreeViews();
+    }, TERMINAL_REFRESH_DEBOUNCE_MS);
+  };
+
+  const scheduleTerminalReveal = (terminal: vscode.Terminal) => {
+    const generation = ++terminalRevealGeneration;
+    if (terminalRevealTimer) clearTimeout(terminalRevealTimer);
+    terminalRevealTimer = setTimeout(() => {
+      terminalRevealTimer = undefined;
+      if (generation !== terminalRevealGeneration || vscode.window.activeTerminal !== terminal) {
+        return;
+      }
+      void revealSidebarItem(
+        terminal,
+        copilotProvider,
+        workerProvider,
+        copilotView,
+        workerView,
+      );
+    }, TERMINAL_REVEAL_DELAY_MS);
+  };
+
+  const updateActiveTerminalContext = (terminal: vscode.Terminal | undefined) => {
+    const isHydraTerminal = Boolean(terminal && (
+      terminal.name.startsWith(HYDRA_PREFIX_COPILOT)
+      || terminal.name.startsWith(HYDRA_PREFIX_WORKER)
+    ));
+    void vscode.commands.executeCommand('setContext', 'hydra.activeTerminal', isHydraTerminal);
+  };
+  updateActiveTerminalContext(vscode.window.activeTerminal);
+
   context.subscriptions.push(
-    vscode.window.onDidOpenTerminal(() => {
-      refreshAll();
-    }),
-    vscode.window.onDidCloseTerminal(() => {
-      refreshAll();
-    }),
-    vscode.window.onDidChangeWindowState((e) => {
-        if (e.focused) refreshAll();
+    vscode.window.onDidOpenTerminal(scheduleTerminalRefresh),
+    vscode.window.onDidCloseTerminal(scheduleTerminalRefresh),
+    vscode.window.onDidChangeWindowState((event) => {
+      if (event.focused) scheduleTerminalRefresh();
     }),
     vscode.window.onDidChangeActiveTerminal((terminal) => {
-      if (!terminal) return;
-      refreshAll();
-      delay(750)
-        .then(() => revealSidebarItem(terminal, copilotProvider, workerProvider, copilotView, workerView))
-        .then(undefined, () => {});
-    })
+      updateActiveTerminalContext(terminal);
+      terminalRevealGeneration += 1;
+      if (terminalRevealTimer) {
+        clearTimeout(terminalRevealTimer);
+        terminalRevealTimer = undefined;
+      }
+      if (terminal && (
+        terminal.name.startsWith(HYDRA_PREFIX_COPILOT)
+        || terminal.name.startsWith(HYDRA_PREFIX_WORKER)
+      )) {
+        scheduleTerminalReveal(terminal);
+      }
+    }),
+    {
+      dispose: () => {
+        if (terminalRefreshTimer) clearTimeout(terminalRefreshTimer);
+        if (terminalRevealTimer) clearTimeout(terminalRevealTimer);
+      },
+    },
   );
 
   const intervalId = setInterval(() => {
-      refreshAll();
+      refreshTreeViews();
   }, 60000);
 
   context.subscriptions.push({
@@ -455,12 +519,16 @@ async function revealSidebarItem(
   const name = terminal.name;
 
   if (name.startsWith(HYDRA_PREFIX_COPILOT)) {
-    const items = await copilotProvider.refreshAndGetCopilotItems();
-    const found = items.find(item => {
+    const findCopilot = (items: readonly TmuxItem[]) => items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
       return name === buildHydraTerminalName(shortName, 'copilot');
     });
+    let found = findCopilot(copilotProvider.getCopilotItems());
+    if (!found) {
+      found = findCopilot(await copilotProvider.refreshAndGetCopilotItems());
+    }
+    if (vscode.window.activeTerminal !== terminal) return;
     if (found) {
       copilotView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
     }
@@ -468,13 +536,17 @@ async function revealSidebarItem(
   }
 
   if (name.startsWith(HYDRA_PREFIX_WORKER)) {
-    const items = await workerProvider.refreshAndGetWorkerItems();
-    const found = items.find(item => {
+    const findWorker = (items: readonly TmuxItem[]) => items.find(item => {
       if (!item.sessionName) return false;
       const shortName = getShortName(item.sessionName);
       const workerId = lookupWorkerId(item.sessionName);
       return name === buildHydraTerminalName(shortName, 'worker', workerId);
     });
+    let found = findWorker(workerProvider.getCachedWorkerItems());
+    if (!found) {
+      found = findWorker(await workerProvider.refreshAndGetWorkerItems());
+    }
+    if (vscode.window.activeTerminal !== terminal) return;
     if (found) {
       workerView.reveal(found, { select: true, focus: false }).then(undefined, () => {});
     }

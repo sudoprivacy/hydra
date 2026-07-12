@@ -46,7 +46,7 @@ function main(): void {
 
     assert.match(
       buildListSessionsCommand(),
-      /-F "#\{session_name\}\|\|\|#\{session_windows\}\|\|\|#\{session_attached\}"$/,
+      /-F "#\{session_name\}\|\|\|#\{session_windows\}\|\|\|#\{session_attached\}\|\|\|#\{@hydra-role\}\|\|\|#\{@hydra-agent\}\|\|\|#\{@workdir\}"$/,
     );
     assert.match(
       buildSessionInfoCommand(sessionName),

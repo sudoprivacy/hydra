@@ -22,13 +22,17 @@ import { launchSidecar } from './sidecarLauncher';
 async function main(): Promise<void> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-desktop-bootcheck-'));
   const token = randomBytes(32).toString('hex');
+  const hydraHome = path.join(home, '.hydra');
+  const tmuxSocket = path.join(hydraHome, 'tmux', 'hydra.sock');
+  fs.mkdirSync(path.dirname(tmuxSocket), { recursive: true });
 
   const sidecar = await launchSidecar({
     token,
     env: {
       HOME: home,
       USERPROFILE: home,
-      HYDRA_HOME: path.join(home, '.hydra'),
+      HYDRA_HOME: hydraHome,
+      HYDRA_TMUX_SOCKET: tmuxSocket,
       HYDRA_TELEMETRY: '0',
     },
   });
@@ -44,8 +48,25 @@ async function main(): Promise<void> {
     );
     console.log('bootCheck: ok');
   } finally {
-    sidecar.stop();
-    fs.rmSync(home, { recursive: true, force: true });
+    await stopSidecar(sidecar);
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
+async function stopSidecar(sidecar: Awaited<ReturnType<typeof launchSidecar>>): Promise<void> {
+  if (sidecar.child.exitCode !== null || sidecar.child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => sidecar.child.once('exit', () => resolve()));
+  sidecar.stop();
+  await Promise.race([
+    exited,
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  if (sidecar.child.exitCode === null && sidecar.child.signalCode === null) {
+    sidecar.child.kill('SIGKILL');
+    await Promise.race([
+      exited,
+      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+    ]);
   }
 }
 

@@ -21,19 +21,27 @@ class TaskWorkerBackend implements MultiplexerBackendCore {
   readonly keys: Array<{ sessionName: string; keys: string }> = [];
   readonly messages: Array<{ sessionName: string; message: string }> = [];
   readonly killed: string[] = [];
+  readonly metadataProbeCounts = { workdir: 0, role: 0, agent: 0 };
+  omitListMetadataFor: string | undefined;
 
   async isInstalled(): Promise<boolean> {
     return true;
   }
 
   async listSessions(): Promise<MultiplexerSession[]> {
-    return [...this.sessions].map(name => ({
-      name,
-      windows: 1,
-      attached: false,
-      workdir: this.workdirs.get(name),
-      slug: name,
-    }));
+    return [...this.sessions].map(name => {
+      const session: MultiplexerSession = {
+        name,
+        windows: 1,
+        attached: false,
+      };
+      if (name !== this.omitListMetadataFor) {
+        session.workdir = this.workdirs.get(name);
+        session.role = this.roles.get(name);
+        session.agent = this.agents.get(name);
+      }
+      return session;
+    });
   }
 
   async createSession(sessionName: string, workdir: string): Promise<void> {
@@ -58,6 +66,7 @@ class TaskWorkerBackend implements MultiplexerBackendCore {
   }
 
   async getSessionWorkdir(sessionName: string): Promise<string | undefined> {
+    this.metadataProbeCounts.workdir += 1;
     return this.workdirs.get(sessionName);
   }
 
@@ -66,6 +75,7 @@ class TaskWorkerBackend implements MultiplexerBackendCore {
   }
 
   async getSessionRole(sessionName: string): Promise<HydraRole | undefined> {
+    this.metadataProbeCounts.role += 1;
     return this.roles.get(sessionName);
   }
 
@@ -74,6 +84,7 @@ class TaskWorkerBackend implements MultiplexerBackendCore {
   }
 
   async getSessionAgent(sessionName: string): Promise<string | undefined> {
+    this.metadataProbeCounts.agent += 1;
     return this.agents.get(sessionName);
   }
 
@@ -119,6 +130,12 @@ class TaskWorkerBackend implements MultiplexerBackendCore {
 
   sanitizeSessionName(name: string): string {
     return name.trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  resetMetadataProbeCounts(): void {
+    this.metadataProbeCounts.workdir = 0;
+    this.metadataProbeCounts.role = 0;
+    this.metadataProbeCounts.agent = 0;
   }
 }
 
@@ -168,6 +185,25 @@ async function main(): Promise<void> {
   assert.equal(unmanaged.workerInfo.managedWorkdir, false);
   assert.equal(unmanaged.workerInfo.workdir, userDir);
   assert.equal(backend.messages.at(-1)?.message, 'summarize the notes');
+
+  backend.resetMetadataProbeCounts();
+  await sm.listWorkers();
+  assert.deepEqual(
+    backend.metadataProbeCounts,
+    { workdir: 0, role: 0, agent: 0 },
+    'sync should reuse metadata returned by listSessions',
+  );
+
+  backend.omitListMetadataFor = unmanaged.workerInfo.sessionName;
+  backend.resetMetadataProbeCounts();
+  await sm.listWorkers();
+  assert.deepEqual(
+    backend.metadataProbeCounts,
+    { workdir: 1, role: 1, agent: 1 },
+    'sync should probe individual options when listSessions metadata is missing',
+  );
+  backend.omitListMetadataFor = undefined;
+
   const unmanagedCreatedEvent = readEvents(process.env.HYDRA_HOME!)
     .find(event => event.type === 'worker.created' && event.session === unmanaged.workerInfo.sessionName);
   assert.ok(unmanagedCreatedEvent, 'task worker creation should emit worker.created');

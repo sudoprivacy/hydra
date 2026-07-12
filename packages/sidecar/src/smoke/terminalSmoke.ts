@@ -9,6 +9,7 @@
  * It boots the loopback server, spins up a throwaway `tmux new-session` on an
  * ISOLATED tmux socket (never touches the user's real tmux), and checks the
  * terminal behaviors plus auth:
+ *   0. rejection semantics  — unknown ownership exits non-transiently;
  *   1. bidirectional I/O    — a keystroke reaches the shell and its echo returns;
  *   2. mouse scrollback     — wheel input enters tmux copy-mode, not the pane;
  *   3. resize propagation   — `pty.resize` → tmux → the shell's `stty size`;
@@ -142,6 +143,17 @@ class Term {
     return null;
   }
 
+  async waitForExit(ms = 5000): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (this.exited) {
+        return true;
+      }
+      await sleep(25);
+    }
+    return this.exited;
+  }
+
   /** Run `stty size` in the attached shell → { rows, cols } or null. */
   async sttySize(ms = 5000): Promise<{ rows: number; cols: number } | null> {
     this.clear();
@@ -262,12 +274,24 @@ async function main(): Promise<void> {
     const foreign = new Term(client, 'ordinary-user-tmux');
     const foreignError = await foreign.waitFor(/Refusing to control unknown Hydra session/, 5000);
     check('foreign tmux session is rejected before attach', foreignError !== null);
+    const foreignExited = await foreign.waitForExit();
+    check(
+      'terminal hard error is a non-transient exit',
+      foreignExited && foreign.exitCode !== null,
+      `exited=${foreignExited} code=${String(foreign.exitCode)}`,
+    );
     foreign.close();
 
     backend.workerIds.set(SESSION, 2);
     const mismatched = new Term(client, SESSION);
     const mismatchError = await mismatched.waitFor(/worker identity does not match session state/, 5000);
     check('mismatched Hydra worker identity is rejected before attach', mismatchError !== null);
+    const mismatchedExited = await mismatched.waitForExit();
+    check(
+      'identity mismatch is a non-transient exit',
+      mismatchedExited && mismatched.exitCode !== null,
+      `exited=${mismatchedExited} code=${String(mismatched.exitCode)}`,
+    );
     mismatched.close();
     backend.workerIds.set(SESSION, 1);
 

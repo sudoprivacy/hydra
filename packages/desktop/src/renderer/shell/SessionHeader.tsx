@@ -29,7 +29,7 @@ export function SessionHeader({ tab, row }: { tab: Tab; row: SessionControlRow }
         </div>
       </div>
 
-      {isCodeWorker ? (
+      {isCodeWorker && row.lifecycle !== 'stopped' ? (
         <div className="hydra-seg-toggle" role="tablist" aria-label="Worker view">
           <HeaderToggle label="Terminal" active={view === 'terminal'} onClick={() => tabs.setView(tab.id, 'terminal')} />
           <HeaderToggle label="Diff" active={view === 'diff'} onClick={() => tabs.setView(tab.id, 'diff')} />
@@ -88,8 +88,25 @@ function HeaderToggle({
       type="button"
       role="tab"
       aria-selected={active}
+      tabIndex={active ? 0 : -1}
       className={`hydra-seg-toggle__btn${active ? ' hydra-seg-toggle__btn--active' : ''}`}
       onClick={onClick}
+      onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const buttons = Array.from(
+          event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+        );
+        const currentIndex = buttons.indexOf(event.currentTarget);
+        if (currentIndex < 0 || buttons.length === 0) return;
+        let nextIndex = currentIndex;
+        if (event.key === 'ArrowLeft') nextIndex = Math.max(0, currentIndex - 1);
+        else if (event.key === 'ArrowRight') nextIndex = Math.min(buttons.length - 1, currentIndex + 1);
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = buttons.length - 1;
+        event.preventDefault();
+        buttons[nextIndex].click();
+        buttons[nextIndex].focus();
+      }}
     >
       {label}
     </button>

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import * as path from 'path';
 import { TmuxBackendCore } from '@hydra/core/tmux';
 import { isDirectoryWorker, SessionManager, type WorkerInfo } from '@hydra/core/sessionManager';
-import { getRepoRootFromPath, localBranchExists } from '@hydra/core/git';
+import { getPrimaryRepoRootFromPath, localBranchExists } from '@hydra/core/git';
 import { expandAndResolvePath, resolveAgentSessionFile } from '@hydra/core/path';
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { outputResult, outputError, type OutputOpts } from '../output';
@@ -30,7 +30,7 @@ function getDirectoryName(inputPath: string): string {
 
 async function tryGetCurrentRepoRoot(): Promise<string | null> {
   try {
-    return await getRepoRootFromPath(process.cwd());
+    return await getPrimaryRepoRootFromPath(process.cwd());
   } catch {
     return null;
   }
@@ -174,7 +174,7 @@ export function registerWorkerCommands(program: Command): void {
           // realpath flip in `git rev-parse --show-toplevel` doesn't defeat the
           // comparison against ~/.hydra/repos/.
           const { path: repoPath, isManaged: isManagedRepo } = resolveRepoInput(mode.repo);
-          const repoRoot = await getRepoRootFromPath(repoPath);
+          const repoRoot = await getPrimaryRepoRootFromPath(repoPath);
           const branchExisted = await localBranchExists(repoRoot, mode.branch);
 
           const result = await lifecycle.createWorker({

@@ -431,12 +431,16 @@ export class SessionManager {
     }>();
 
     await Promise.all(liveSessions.map(async (session) => {
-      const role = await this.backend.getSessionRole(session.name);
+      const role = session.role ?? await this.backend.getSessionRole(session.name);
       if (role !== 'worker' && role !== 'copilot') return;
 
       const [agent, workdir] = await Promise.all([
-        this.backend.getSessionAgent(session.name),
-        this.backend.getSessionWorkdir(session.name),
+        session.agent !== undefined
+          ? Promise.resolve(session.agent)
+          : this.backend.getSessionAgent(session.name),
+        session.workdir !== undefined
+          ? Promise.resolve(session.workdir)
+          : this.backend.getSessionWorkdir(session.name),
       ]);
 
       discoveredSessions.set(session.name, {

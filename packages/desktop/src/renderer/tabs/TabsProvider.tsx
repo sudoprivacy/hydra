@@ -26,6 +26,14 @@ export type { OpenTabOptions, Tab, TabSessionKind, TabsState, TabView } from './
 
 const LAST_COPILOT_STORAGE_KEY = 'hydra.lastCopilotSession.v2';
 
+export function tabElementId(id: string): string {
+  return `hydra-tab-${encodeURIComponent(id)}`;
+}
+
+export function tabPanelId(id: string): string {
+  return `hydra-tabpanel-${encodeURIComponent(id)}`;
+}
+
 export interface TabsApi extends TabsState {
   readonly activeTab: Tab | null;
   readonly activeSession: string | null;
