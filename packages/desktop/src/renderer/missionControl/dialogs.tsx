@@ -9,6 +9,7 @@ import { Modal } from './Modal';
 
 interface PromptModalProps {
   title: string;
+  description?: string;
   label: string;
   submitLabel: string;
   placeholder?: string;
@@ -25,6 +26,7 @@ interface PromptModalProps {
 /** A single text/textarea prompt — the Electron-safe replacement for window.prompt. */
 export function PromptModal({
   title,
+  description,
   label,
   submitLabel,
   placeholder,
@@ -50,6 +52,7 @@ export function PromptModal({
   return (
     <Modal title={title} onClose={onClose}>
       <form className="hydra-form" onSubmit={submit}>
+        {description ? <p className="hydra-form__hint">{description}</p> : null}
         <label className="hydra-field">
           <span className="hydra-field__label">{label}</span>
           {multiline ? (
@@ -88,6 +91,7 @@ export function PromptModal({
 
 interface ConfirmDeleteModalProps {
   name: string;
+  description?: string;
   /** Code/task workers can also drop their worktree/folder; copilots cannot. */
   canDeleteFiles: boolean;
   busy?: boolean;
@@ -99,6 +103,7 @@ interface ConfirmDeleteModalProps {
 /** Delete confirmation with the destructive deleteFiles opt-in. */
 export function ConfirmDeleteModal({
   name,
+  description,
   canDeleteFiles,
   busy = false,
   error,
@@ -113,6 +118,7 @@ export function ConfirmDeleteModal({
         <p>
           Delete <strong>{name}</strong>? This archives the session and stops its tmux pane.
         </p>
+        {description ? <p className="hydra-form__hint">{description}</p> : null}
         {canDeleteFiles ? (
           <label className="hydra-checkbox">
             <input

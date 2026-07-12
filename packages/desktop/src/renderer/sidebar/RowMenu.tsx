@@ -23,12 +23,16 @@ export function RowMenu({ row }: { row: SessionControlRow }): JSX.Element {
       view,
     });
   };
-  const items: MenuItem[] = [{
-    key: 'terminal',
-    label: 'Open Terminal',
-    icon: <Terminal size={14} />,
-    onSelect: () => openRow('terminal'),
-  }];
+  const items: MenuItem[] = [];
+
+  if (row.lifecycle === 'running') {
+    items.push({
+      key: 'terminal',
+      label: 'Open Terminal',
+      icon: <Terminal size={14} />,
+      onSelect: () => openRow('terminal'),
+    });
+  }
 
   if (row.kind === 'worker' && row.type === 'code') {
     items.push({
@@ -39,10 +43,10 @@ export function RowMenu({ row }: { row: SessionControlRow }): JSX.Element {
     });
   }
 
-  items.push(
-    { key: 'send', label: 'Send message…', icon: <Send size={14} />, onSelect: () => actions.send(row) },
-    { key: 'rename', label: 'Rename…', icon: <Pencil size={14} />, onSelect: () => actions.rename(row) },
-  );
+  if (row.lifecycle === 'running') {
+    items.push({ key: 'send', label: 'Send message…', icon: <Send size={14} />, onSelect: () => actions.send(row) });
+  }
+  items.push({ key: 'rename', label: 'Rename…', icon: <Pencil size={14} />, onSelect: () => actions.rename(row) });
 
   if (row.lifecycle === 'running' && row.kind === 'worker') {
     items.push({ key: 'stop', label: 'Stop', icon: <Square size={14} />, onSelect: () => actions.stop(row) });

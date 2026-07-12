@@ -217,7 +217,7 @@ export function resolveRepoRootFromWorktreePath(worktreePath: string): string | 
   return undefined;
 }
 
-async function getMainWorktreePath(repoRoot: string): Promise<string> {
+export async function getMainWorktreePath(repoRoot: string): Promise<string> {
   try {
     const commonDirRaw = await exec('git rev-parse --git-common-dir', { cwd: repoRoot });
     const commonDir = commonDirRaw.trim();
@@ -419,4 +419,18 @@ export async function getBaseBranchFromRepo(repoRoot: string, override?: string)
 /** Get repo root from a path by running git rev-parse */
 export async function getRepoRootFromPath(dirPath: string): Promise<string> {
   return exec('git rev-parse --show-toplevel', { cwd: dirPath });
+}
+
+/**
+ * Resolve the primary worktree for a repository path.
+ *
+ * `git rev-parse --show-toplevel` returns the linked worktree itself. That is
+ * useful for commands operating on the current checkout, but it is unsafe as a
+ * code-worker source: Hydra would otherwise create another managed worktree
+ * whose repo root is already a worktree. Follow `--git-common-dir` back to the
+ * primary checkout before creating code workers.
+ */
+export async function getPrimaryRepoRootFromPath(dirPath: string): Promise<string> {
+  const repoRoot = await getRepoRootFromPath(dirPath);
+  return getMainWorktreePath(repoRoot);
 }

@@ -530,6 +530,10 @@ body.hydra-resizing .hydra-resizer {
   background: transparent;
   border-right-color: var(--hy-border-strong);
 }
+.hydra-resizer:focus-visible {
+  outline: 2px solid var(--hy-accent);
+  outline-offset: -2px;
+}
 body.hydra-resizing {
   cursor: col-resize;
   user-select: none;
@@ -1433,6 +1437,13 @@ body.hydra-resizing .hydra-resizer::after {
 .hydra-tab--attention {
   box-shadow: inset 0 2px 0 var(--hy-accent);
 }
+.hydra-tab__kind {
+  flex: none;
+  color: var(--hy-faint);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+}
 .hydra-tab__close {
   width: 18px;
   height: 18px;
@@ -2156,6 +2167,26 @@ body.hydra-resizing .hydra-resizer::after {
   border-radius: 0;
   box-shadow: none;
   padding: 7px 9px 9px;
+}
+
+.hydra-terminal__surface .xterm-viewport {
+  color-scheme: dark;
+  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+}
+
+.hydra-terminal__surface .xterm-viewport::-webkit-scrollbar {
+  width: 9px;
+}
+
+.hydra-terminal__surface .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hydra-terminal__surface .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+  background-clip: padding-box;
 }
 
 @media (max-width: 980px) {

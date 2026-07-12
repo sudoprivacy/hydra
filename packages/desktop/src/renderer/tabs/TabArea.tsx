@@ -1,7 +1,7 @@
 import { FirstRun } from '../shell/FirstRun';
 import { SessionPane } from './SessionPane';
 import { TabBar } from './TabBar';
-import { useTabs } from './TabsProvider';
+import { tabElementId, tabPanelId, useTabs } from './TabsProvider';
 
 export function TabArea(): JSX.Element {
   const { tabs, activeId } = useTabs();
@@ -14,7 +14,14 @@ export function TabArea(): JSX.Element {
         {tabs.map(tab => {
           const active = tab.id === activeId;
           return (
-            <div key={tab.id} className="hydra-pane" hidden={!active}>
+            <div
+              key={tab.id}
+              id={tabPanelId(tab.id)}
+              className="hydra-pane"
+              role={tabs.length > 1 ? 'tabpanel' : undefined}
+              aria-labelledby={tabs.length > 1 ? tabElementId(tab.id) : undefined}
+              hidden={!active}
+            >
               <SessionPane tab={tab} active={active} />
             </div>
           );

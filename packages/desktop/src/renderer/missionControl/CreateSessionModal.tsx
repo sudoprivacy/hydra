@@ -208,7 +208,10 @@ function validate(kind: CreateKind, workerType: WorkerType, fields: ValidateFiel
     if (!fields.repo.trim() || !fields.branch.trim()) {
       return { error: true, hint: 'Repo and branch are required for a code worker.' };
     }
-    return { error: false, hint: null };
+    return {
+      error: false,
+      hint: 'Linked worktree paths resolve to their primary repository before the worker is created.',
+    };
   }
   if (fields.temp) {
     if (!fields.name.trim()) {

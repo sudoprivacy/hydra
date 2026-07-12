@@ -7,11 +7,17 @@ export interface MultiplexerSession {
   name: string;
   windows: number;
   attached: boolean;
+  /** Number of clients currently attached to the session, when reported by the backend. */
+  attachedClients?: number;
   workdir?: string;
+  role?: HydraRole;
+  agent?: string;
 }
 
 export interface SessionStatusInfo {
   attached: boolean;
+  /** Number of clients currently attached to the session, when reported by the backend. */
+  attachedClients?: number;
   lastActive: number;
 }
 

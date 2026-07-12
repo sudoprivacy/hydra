@@ -234,10 +234,11 @@
     "keybindings": [
       {
         "command": "tmux.terminalPaste",
-        "key": "cmd+v",
-        "when": "terminalFocus",
-        "mac": "cmd+v",
-        "linux": "ctrl+shift+v"
+        "key": "cmd+alt+v",
+        "when": "terminalFocus && hydra.activeTerminal",
+        "mac": "cmd+alt+v",
+        "linux": "ctrl+alt+v",
+        "win": "ctrl+alt+v"
       }
     ],
     "configuration": {
@@ -273,6 +274,11 @@
           ],
           "default": "claude",
           "markdownDescription": "Default AI agent to launch in new copilot/worker sessions. Hydra syncs this setting to the CLI default agent config."
+        },
+        "hydra.autoAttachOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Eagerly open every detached Hydra session for the current repository when VS Code starts. Disabled by default to avoid creating background terminal clients; open sessions from the Hydra sidebar instead."
         },
         "hydra.agentCommands": {
           "type": "object",

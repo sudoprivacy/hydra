@@ -2,7 +2,14 @@
 // the terminal-first session workspace. The sidebar width is
 // clamped (~228–320px) and persisted in localStorage so it survives relaunch.
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import { Sidebar } from './sidebar/Sidebar';
 import { TabArea } from './tabs/TabArea';
@@ -37,6 +44,9 @@ export function AppLayout(): JSX.Element {
   const shell = useShellUi();
   const [width, setWidth] = useState(loadWidth);
   const dragStart = useRef<DragState | null>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const pendingWidth = useRef(width);
+  const resizeFrame = useRef<number | null>(null);
 
   // Persist width whenever it settles (cheap; the app writes one small number).
   useEffect(() => {
@@ -47,13 +57,22 @@ export function AppLayout(): JSX.Element {
     }
   }, [width]);
 
+  const previewWidth = useCallback((nextWidth: number) => {
+    pendingWidth.current = nextWidth;
+    if (resizeFrame.current !== null) return;
+    resizeFrame.current = requestAnimationFrame(() => {
+      resizeFrame.current = null;
+      if (sidebarRef.current) sidebarRef.current.style.width = `${pendingWidth.current}px`;
+    });
+  }, []);
+
   const onPointerMove = useCallback((event: PointerEvent) => {
     const start = dragStart.current;
     if (!start) {
       return;
     }
-    setWidth(clampWidth(start.width + (event.clientX - start.x)));
-  }, []);
+    previewWidth(clampWidth(start.width + (event.clientX - start.x)));
+  }, [previewWidth]);
 
   const stopDrag = useCallback(() => {
     const start = dragStart.current;
@@ -61,6 +80,15 @@ export function AppLayout(): JSX.Element {
       return;
     }
     dragStart.current = null;
+    if (resizeFrame.current !== null) {
+      cancelAnimationFrame(resizeFrame.current);
+      resizeFrame.current = null;
+    }
+    const finalWidth = pendingWidth.current;
+    if (sidebarRef.current) sidebarRef.current.style.width = `${finalWidth}px`;
+    // Commit once at pointerup so React, storage, and terminal fitting do not
+    // churn on every pointermove.
+    setWidth(finalWidth);
     try {
       if (start.handle.hasPointerCapture(start.pointerId)) {
         start.handle.releasePointerCapture(start.pointerId);
@@ -83,6 +111,7 @@ export function AppLayout(): JSX.Element {
         pointerId: event.pointerId,
         handle: event.currentTarget,
       };
+      pendingWidth.current = width;
       event.currentTarget.setPointerCapture(event.pointerId);
       document.body.classList.add('hydra-resizing');
       window.addEventListener('pointermove', onPointerMove);
@@ -101,12 +130,24 @@ export function AppLayout(): JSX.Element {
     setWidth(current => current <= MIN_WIDTH + 4 ? DEFAULT_WIDTH : MIN_WIDTH);
   }, []);
 
+  const onResizerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | undefined;
+    if (event.key === 'ArrowLeft') nextWidth = clampWidth(width - 8);
+    else if (event.key === 'ArrowRight') nextWidth = clampWidth(width + 8);
+    else if (event.key === 'Home') nextWidth = MIN_WIDTH;
+    else if (event.key === 'End') nextWidth = MAX_WIDTH;
+    if (nextWidth === undefined) return;
+    event.preventDefault();
+    pendingWidth.current = nextWidth;
+    setWidth(nextWidth);
+  }, [width]);
+
   return (
     <div className={`hydra-app${shell.terminalMaximized ? ' hydra-app--terminal-maximized' : ''}`}>
       <div className="hydra-app__main">
         {!shell.terminalMaximized ? (
           <>
-            <div className="hydra-app__sidebar" style={{ width }}>
+            <div ref={sidebarRef} className="hydra-app__sidebar" style={{ width }}>
               <Sidebar onToggleCompact={toggleCompactSidebar} />
             </div>
             <div
@@ -114,7 +155,12 @@ export function AppLayout(): JSX.Element {
               role="separator"
               aria-orientation="vertical"
               aria-label="Resize sidebar"
+              aria-valuemin={MIN_WIDTH}
+              aria-valuemax={MAX_WIDTH}
+              aria-valuenow={width}
+              tabIndex={0}
               onPointerDown={startDrag}
+              onKeyDown={onResizerKeyDown}
             />
           </>
         ) : null}

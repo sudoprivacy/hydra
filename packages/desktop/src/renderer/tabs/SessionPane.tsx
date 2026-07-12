@@ -5,19 +5,27 @@ import { WorkerDiff } from '../routes/WorkerDiff';
 import { WorkerTerminal } from '../routes/WorkerTerminal';
 import { SessionHeader } from '../shell/SessionHeader';
 import { useSessions } from '../sessions/SessionsProvider';
-import type { Tab } from './TabsProvider';
+import { useTabs, type Tab } from './TabsProvider';
 import { selectTabSession } from './tabSelectors';
 
 export function SessionPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
+  const tabs = useTabs();
   const { control, actions } = useSessions();
   const row = useMemo(() => selectTabSession(control.view, tab), [control.view, tab]);
   const isCodeWorker = row?.kind === 'worker' && row.type === 'code';
-  const view = isCodeWorker ? tab.view : 'terminal';
+  const terminalAvailable = Boolean(row && row.lifecycle !== 'stopped');
+  const view = isCodeWorker && !terminalAvailable ? 'diff' : isCodeWorker ? tab.view : 'terminal';
   const [diffMounted, setDiffMounted] = useState(view === 'diff');
 
   useEffect(() => {
     if (view === 'diff') setDiffMounted(true);
   }, [view]);
+
+  useEffect(() => {
+    if (isCodeWorker && !terminalAvailable && tab.view !== 'diff') {
+      tabs.setView(tab.id, 'diff');
+    }
+  }, [isCodeWorker, tab.id, tab.view, tabs, terminalAvailable]);
 
   if (!row) {
     return (
@@ -28,7 +36,8 @@ export function SessionPane({ tab, active }: { tab: Tab; active: boolean }): JSX
     );
   }
 
-  const stopped = row.lifecycle === 'stopped';
+  const stopped = !terminalAvailable;
+  const terminalIdentity = buildTerminalIdentity(row);
   return (
     <div className="hydra-pane__inner">
       <SessionHeader tab={tab} row={row} />
@@ -37,7 +46,12 @@ export function SessionPane({ tab, active }: { tab: Tab; active: boolean }): JSX
           {stopped ? (
             <StoppedSession row={row} onStart={() => actions.start(row)} />
           ) : (
-            <WorkerTerminal session={row.session} active={active && view === 'terminal'} />
+            <WorkerTerminal
+              session={row.session}
+              active={active && view === 'terminal'}
+              identity={terminalIdentity.label}
+              identityTitle={terminalIdentity.title}
+            />
           )}
         </div>
         {isCodeWorker && diffMounted ? (
@@ -48,6 +62,20 @@ export function SessionPane({ tab, active }: { tab: Tab; active: boolean }): JSX
       </div>
     </div>
   );
+}
+
+function buildTerminalIdentity(row: SessionControlRow): { label: string; title: string } {
+  if (row.kind === 'copilot') {
+    const label = ['COPILOT', row.workdir || 'home folder'].join(' · ');
+    return { label, title: `${label}\n${row.session}` };
+  }
+  if (row.type === 'task') {
+    const folderType = row.raw.managedWorkdir ? 'managed folder' : 'folder';
+    const label = ['TASK', folderType, row.workdir || row.name].join(' · ');
+    return { label, title: `${label}\n${row.session}` };
+  }
+  const label = ['CODE', row.repoLabel, row.branch, row.workdir].filter(Boolean).join(' · ');
+  return { label, title: `${label}\n${row.session}` };
 }
 
 function StoppedSession({

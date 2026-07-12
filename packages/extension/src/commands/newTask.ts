@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SessionManager } from '@hydra/core/sessionManager';
-import { getRepoRootFromPath } from '@hydra/core/git';
+import { getPrimaryRepoRootFromPath } from '@hydra/core/git';
 import { TmuxBackendCore } from '@hydra/core/tmux';
 import { validateBranchName, localBranchExists, getRepoRoot } from '../utils/git';
 import { pickAgentType } from '../utils/agentConfig';
@@ -23,7 +23,7 @@ function getBaseBranchOverride(): string | undefined {
 
 async function tryGetWorkspaceGitRoot(workspacePath: string): Promise<string | null> {
   try {
-    return await getRepoRootFromPath(workspacePath);
+    return await getPrimaryRepoRootFromPath(workspacePath);
   } catch {
     return null;
   }

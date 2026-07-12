@@ -49,7 +49,7 @@ export function buildSanitizedTmuxCommand(command: string): string {
 // wrapped in literal '…' — silently breaking listSessions / getSessionInfo /
 // getSessionPanePids parsers. See issue #225 §1.
 export function buildListSessionsCommand(): string {
-  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}"`;
+  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}|||#{@hydra-role}|||#{@hydra-agent}|||#{@workdir}"`;
 }
 
 export function buildSessionInfoCommand(sessionName: string): string {
@@ -58,6 +58,43 @@ export function buildSessionInfoCommand(sessionName: string): string {
 
 export function buildSessionPanePidsCommand(sessionName: string): string {
   return `${getTmuxCommand()} list-panes -t ${shellQuote(sessionName)} -F "#{pane_pid}"`;
+}
+
+function parseNonNegativeInteger(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+export function parseListSessionsOutput(output: string): MultiplexerSession[] {
+  return output.split('\n').filter(line => line.trim()).map(line => {
+    const [name, windowsValue, attachedValue, roleValue, agentValue, ...workdirParts] = line.split('|||');
+    const attachedClients = parseNonNegativeInteger(attachedValue);
+    const role = roleValue?.trim();
+    const agent = agentValue?.trim();
+    const rawWorkdir = workdirParts.join('|||').trim();
+    const workdir = rawWorkdir ? (toCanonicalPath(rawWorkdir) || rawWorkdir) : undefined;
+    const session: MultiplexerSession = {
+      name,
+      windows: parseNonNegativeInteger(windowsValue) || 1,
+      attached: attachedClients > 0,
+      attachedClients,
+    };
+
+    if (role === 'worker' || role === 'copilot') session.role = role;
+    if (agent) session.agent = agent;
+    if (workdir) session.workdir = workdir;
+    return session;
+  });
+}
+
+export function parseSessionInfoOutput(output: string): SessionStatusInfo {
+  const [attachedValue, activityValue] = output.split('|||');
+  const attachedClients = parseNonNegativeInteger(attachedValue);
+  return {
+    attached: attachedClients > 0,
+    attachedClients,
+    lastActive: parseNonNegativeInteger(activityValue),
+  };
 }
 
 function buildStoredTmuxEnvScrubCommandPowerShell(sessionName?: string): string {
@@ -212,14 +249,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async listSessions(): Promise<MultiplexerSession[]> {
     try {
       const output = await exec(buildListSessionsCommand());
-      const sessions = output.split('\n').filter(l => l.trim()).map(line => {
-        const [name, windows, attached] = line.split('|||');
-        return {
-          name,
-          windows: parseInt(windows, 10) || 1,
-          attached: attached === '1'
-        };
-      });
+      const sessions = parseListSessionsOutput(output);
       logger.debug('tmux.listSessions', 'Listed multiplexer sessions', { count: sessions.length });
       return sessions;
     } catch (error) {
@@ -291,13 +321,11 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async getSessionWorkdir(sessionName: string): Promise<string | undefined> {
     try {
       const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} show-options -t ${shellQuote(sessionName)} @workdir`);
-      const parts = output.split(' ');
-      if (parts.length >= 2) {
-        const rawPath = parts.slice(1).join(' ').trim();
-        return toCanonicalPath(rawPath) || rawPath;
-      }
-      return undefined;
+      const rawPath = await exec(
+        `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -qv @workdir`,
+        { logFailure: false },
+      );
+      return rawPath ? (toCanonicalPath(rawPath) || rawPath) : undefined;
     } catch {
       return undefined;
     }
@@ -311,12 +339,11 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async getSessionRole(sessionName: string): Promise<HydraRole | undefined> {
     try {
       const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} show-options -t ${shellQuote(sessionName)} @hydra-role`);
-      const parts = output.split(' ');
-      if (parts.length >= 2) {
-        const value = parts.slice(1).join(' ').trim() as HydraRole;
-        if (value === 'copilot' || value === 'worker') return value;
-      }
+      const value = await exec(
+        `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -qv @hydra-role`,
+        { logFailure: false },
+      );
+      if (value === 'copilot' || value === 'worker') return value;
       return undefined;
     } catch {
       return undefined;
@@ -360,13 +387,11 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async getSessionAgent(sessionName: string): Promise<string | undefined> {
     try {
       const tmuxCommand = getTmuxCommand();
-      const output = await exec(`${tmuxCommand} show-options -t ${shellQuote(sessionName)} @hydra-agent`);
-      const parts = output.split(' ');
-      if (parts.length >= 2) {
-        const value = parts.slice(1).join(' ').trim();
-        return value || undefined;
-      }
-      return undefined;
+      const value = await exec(
+        `${tmuxCommand} show-options -t ${shellQuote(sessionName)} -qv @hydra-agent`,
+        { logFailure: false },
+      );
+      return value || undefined;
     } catch {
       return undefined;
     }
@@ -422,13 +447,9 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async getSessionInfo(sessionName: string): Promise<SessionStatusInfo> {
     try {
       const output = await exec(buildSessionInfoCommand(sessionName));
-      const [attachedStr, activityStr] = output.split('|||');
-      return {
-        attached: attachedStr === '1',
-        lastActive: parseInt(activityStr, 10) || 0,
-      };
+      return parseSessionInfoOutput(output);
     } catch {
-      return { attached: false, lastActive: 0 };
+      return { attached: false, attachedClients: 0, lastActive: 0 };
     }
   }
 

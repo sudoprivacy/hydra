@@ -4,6 +4,8 @@ import {
   buildSanitizedTmuxCommand,
   buildStoredTmuxEnvScrubCommand,
   getTmuxSanitizedEnvKeys,
+  parseListSessionsOutput,
+  parseSessionInfoOutput,
 } from '../core/tmux';
 import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
 
@@ -49,6 +51,42 @@ function main(): void {
     assert.match(
       buildStoredTmuxEnvScrubCommand('worker'),
       new RegExp(HYDRA_COPILOT_SESSION_ENV),
+    );
+
+    const sessions = parseListSessionsOutput([
+      'detached|||1|||0|||worker|||codex|||/tmp/hydra worker',
+      'one-client|||2|||1|||copilot|||claude|||/tmp/copilot',
+      'two-clients|||1|||2|||||||||',
+      'three-clients|||1|||3|||worker|||custom|||/tmp/with|||delimiter',
+    ].join('\n'));
+    assert.deepEqual(
+      sessions.map(session => ({
+        name: session.name,
+        attached: session.attached,
+        attachedClients: session.attachedClients,
+      })),
+      [
+        { name: 'detached', attached: false, attachedClients: 0 },
+        { name: 'one-client', attached: true, attachedClients: 1 },
+        { name: 'two-clients', attached: true, attachedClients: 2 },
+        { name: 'three-clients', attached: true, attachedClients: 3 },
+      ],
+    );
+    assert.equal(sessions[0].role, 'worker');
+    assert.equal(sessions[0].agent, 'codex');
+    assert.equal(sessions[0].workdir, '/tmp/hydra worker');
+    assert.equal(sessions[1].role, 'copilot');
+    assert.equal(sessions[2].role, undefined);
+    assert.equal(sessions[2].agent, undefined);
+    assert.equal(sessions[2].workdir, undefined);
+    assert.equal(sessions[3].workdir, '/tmp/with|||delimiter');
+    assert.deepEqual(
+      parseSessionInfoOutput('3|||1710000000'),
+      { attached: true, attachedClients: 3, lastActive: 1710000000 },
+    );
+    assert.deepEqual(
+      parseSessionInfoOutput('0|||invalid'),
+      { attached: false, attachedClients: 0, lastActive: 0 },
     );
   } finally {
     if (previousSocket === undefined) {
