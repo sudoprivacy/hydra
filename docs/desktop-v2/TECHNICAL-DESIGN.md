@@ -1,7 +1,8 @@
 # Hydra Desktop v2 — Terminal-First Technical Design
 
-**Status:** Implementation contract<br>
+**Status:** Implementation contract with production-density amendment<br>
 **Decision date:** 2026-07-11<br>
+**Density amendment:** 2026-07-12<br>
 **Integration branch:** `feat/desktop-v2-terminal-first`<br>
 **Base:** `origin/main` at `3dbb2c49390615797f1382e93ff7a4a1fdbb6bb0`
 
@@ -432,6 +433,12 @@ their subject.
 - Render the drawer in the main workspace stacking context, not as a grid
   column.
 - Use fixed workspace insets and `position: absolute`.
+- Use a 320 px drawer at default width and 304 px below 1200 px.
+- Offset the drawer to y = 114 px when the 42 px multi-session TabBar exists;
+  a one-tab session uses y = 72 px. This keeps Context below SessionHeader in
+  both layouts.
+- Use intrinsic height with a viewport-clamped `max-height`; the body becomes
+  the scroll owner only when content reaches that cap.
 - Do not change the terminal container's client width when opening/closing.
 - Drawer scroll is independent from terminal scrollback.
 - No click-away close from terminal interaction.
@@ -492,7 +499,24 @@ Use `lucide-react` as the single line-icon system unless dependency review
 identifies a repository-standard alternative before Phase 5 starts. Tree
 shaking must keep the renderer bundle impact bounded.
 
-### 10.3 Supporting states
+### 10.3 Production density regression contract
+
+- `AppLayout.tsx` owns a 296 px default Sidebar clamped to 228–320 px. The
+  localStorage key is `hydra.sidebarWidth.v3`; changing the key is intentional
+  so installs do not retain the superseded 310–340 px concept-mock width.
+- `Tree.tsx` owns section and Local Tasks collapse state. Search forces matching
+  groups open without changing their saved local disclosure state.
+- `sidebar/disclosure.ts` is the pure slice policy: five Copilots and four Local
+  Tasks by default, all matches during filtering, and a toggle only on overflow.
+- Sidebar, Context, and footer geometry live in their component stylesheets;
+  sampled surface colors stay in `tokens.css`.
+- Runtime `unknown` remains the domain value. Context presentation uses an em
+  dash only visually and keeps `Unknown` in `title` and `aria-label`.
+- `supportingFlowsSmoke.mjs` must cover collapsed, expanded, and filtered row
+  disclosure. Real packaged-app QA must cover the clickable Local Tasks caret
+  and Show more / Show less controls.
+
+### 10.4 Supporting states
 
 Implement and smoke-test first run, no Workers, stopped session, no Diff,
 sidecar reconnecting, terminal exited/replaced, notification failure, and
@@ -601,11 +625,13 @@ packaged macOS app and real interactive checks for:
 8. stopped/deleted/renamed/restored session behavior;
 9. light and dark appearance at 980 × 640 and 1440-class sizes.
 
-Pixel-fidelity validation is a blocking Phase 5 gate. Capture the renderer at
-1487 × 1058 with a selected Copilot and Context open, place it beside
-`docs/desktop-v2/assets/terminal-first-main.png` in one comparison image, and
-repeat after every P0/P1/P2 fix. Store the final full-view and focused-region
-evidence under `docs/desktop-v2/qa/`; `design-qa.md` must end with exactly
+Pixel-fidelity validation is a blocking Phase 5 gate. Capture the packaged app
+at the default 1280 × 800 viewport with a selected Copilot and Context open,
+plus the 980 × 640 dark minimum viewport. Compare the same-state implementation
+against the composition anchor and focused production references in
+`docs/desktop-v2/assets/` on one canvas, then repeat after every P0/P1/P2 fix.
+Store the final full-view and focused-region evidence under
+`docs/desktop-v2/qa/`; `design-qa.md` must end with exactly
 `final result: passed` before packaging or handoff is considered complete.
 
 ## 13. Commit and review sequence

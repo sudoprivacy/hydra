@@ -10,6 +10,7 @@ import {
   CopyValue,
   formatObservedAt,
   occurrenceKindLabel,
+  runtimeDisplayLabel,
   runtimeLabel,
   StateDot,
 } from './ContextPrimitives';
@@ -27,12 +28,15 @@ export function WorkerContext({
   const { actions } = useSessions();
   const { worker, parentCopilot } = context;
   const activeOccurrences = context.occurrences.filter(isAttentionOccurrence);
+  const fullRuntimeState = runtimeLabel(worker.runtimeState);
   return (
     <>
       <ContextSection title="Runtime">
         <div className="hydra-context__runtime-title">
           <StateDot state={worker.runtimeState} />
-          <strong>{runtimeLabel(worker.runtimeState)}</strong>
+          <strong aria-label={fullRuntimeState} title={fullRuntimeState}>
+            {runtimeDisplayLabel(worker.runtimeState)}
+          </strong>
         </div>
         <ContextFacts facts={[
           { label: 'Reason', value: worker.runtimeReason || 'No runtime reason' },

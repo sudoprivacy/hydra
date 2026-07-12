@@ -6,6 +6,7 @@ import {
   ContextFacts,
   ContextSection,
   CopyValue,
+  runtimeDisplayLabel,
   runtimeLabel,
   StateDot,
 } from './ContextPrimitives';
@@ -52,6 +53,7 @@ export function CopilotContext({
           <div className="hydra-context__worker-list">
             {workers.map(worker => {
               const view = worker.completed && worker.type === 'code' ? 'diff' : 'terminal';
+              const fullState = runtimeLabel(worker.runtimeState);
               return (
                 <button
                   key={worker.workerId}
@@ -61,7 +63,13 @@ export function CopilotContext({
                 >
                   <StateDot state={worker.runtimeState} />
                   <span className="hydra-context__worker-name">{worker.name}</span>
-                  <span className="hydra-context__worker-state">{runtimeLabel(worker.runtimeState)}</span>
+                  <span
+                    className="hydra-context__worker-state"
+                    aria-label={fullState}
+                    title={fullState}
+                  >
+                    {runtimeDisplayLabel(worker.runtimeState)}
+                  </span>
                   <ChevronRight className="hydra-context__open-label" size={13} aria-hidden="true" />
                 </button>
               );

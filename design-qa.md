@@ -1,96 +1,116 @@
-# Hydra Desktop v2 Design QA
+# Hydra Desktop v2 Design QA — Production Density Amendment
 
-**Source visual truth:** `docs/desktop-v2/assets/terminal-first-main.png`
+**Source visual truth:**
 
-**Implementation screenshot:** `docs/desktop-v2/qa/implementation-light-1487x1058.png`
+- `docs/desktop-v2/assets/terminal-first-main.png` — product composition and Terminal-first hierarchy
+- `docs/desktop-v2/assets/codex-production-sidebar.png` — production Sidebar palette, row density, disclosure, and footer
+- `docs/desktop-v2/assets/codex-production-context.png` — production floating-inspector density
 
-**Viewport:** 1487 × 1058 renderer pixels, device scale factor 1
+**Implementation screenshots:**
 
-**State:** light appearance, selected Copilot, connected Terminal, Copilot Context open
+- `docs/desktop-v2/qa/implementation-density-light-1280x800.png`
+- `docs/desktop-v2/qa/implementation-density-tabs-light-1280x800.png`
+- `docs/desktop-v2/qa/implementation-density-light-1487x1058.png`
+- `docs/desktop-v2/qa/implementation-density-dark-980x640.png`
 
-**Dynamic-data rule:** live session names, counts, terminal bytes, runtime states, and workdirs may differ from the illustrative source; their component geometry and presentation may not.
+**Measured evidence:** `docs/desktop-v2/qa/density-geometry.json`
+
+**State:** freshly packaged macOS app; light selected Copilot with Context open, multi-tab Copilot Context with 10 managed Workers, Worker Context with unknown runtime, and dark minimum viewport
+
+**Dynamic-data rule:** live session names, counts, terminal bytes, runtime states, and workdirs may differ from illustrative sources. Component geometry, hierarchy, density, accessible state treatment, and fixed copy may not drift.
 
 ## Findings
 
-No actionable P0, P1, or P2 visual differences remain in the reference state.
+No actionable P0, P1, or P2 differences remain after the production-density amendment.
 
-The remaining P3 differences are intentional:
+The focused comparisons show the intended result:
 
-- Native macOS traffic lights are absent from the renderer-only capture. The Electron window continues to use `titleBarStyle: hiddenInset` and the approved traffic-light position; native chrome is verified separately in the packaged app.
-- The renderer uses Hydra's existing vector product mark from `packages/extension/resources/hydra-activitybar.svg`, copied into the Desktop package, rather than treating the image-generated approximation as a new logo.
-- Live Hydra data does not reproduce the mock's illustrative names, worker count, terminal transcript, or attention values.
+- Sidebar compositing is `(216, 223, 222)` against the production reference's dominant `(216, 224, 222)`, a one-channel delta.
+- Sidebar and production reference are both 296 px wide in the focused comparison.
+- Copilot rows are 44 px and Worker rows are 34 px; the prior 56/42 px rhythm is gone.
+- The footer is 44 px in both the production reference crop and implementation.
+- Context is 320 px rather than the prior 352 px, uses 11 px facts, 40 px managed-Worker rows, and intrinsic height for short content.
+- Multi-tab Context begins at y = 114 px, below the TabBar and SessionHeader rather than overlapping them.
+- Unknown runtime stays truthful: the visible value is a quiet em dash, while `title` and `aria-label` remain `Unknown`.
+
+The remaining P3 difference is intentional: Hydra retains Search, New Copilot, Worker grouping, and its own product mark instead of copying Codex product navigation or branding.
 
 ## Full-view comparison evidence
 
-- Combined source and implementation: `docs/desktop-v2/qa/comparison-light-1487x1058.png`
-- Iteration contact sheet: `docs/desktop-v2/qa/comparison-history.png`
-- Final light implementation: `docs/desktop-v2/qa/implementation-light-1487x1058.png`
-- Final dark minimum-viewport implementation: `docs/desktop-v2/qa/implementation-dark-980x640.png`
-- Fresh packaged-app renderer: `docs/desktop-v2/qa/packaged-light-1280x800.png`
+- Same-size composition comparison, source left and implementation right: `docs/desktop-v2/qa/comparison-density-full.png`
+- Final 1487 × 1058 implementation: `docs/desktop-v2/qa/implementation-density-light-1487x1058.png`
+- Final default packaged-app state: `docs/desktop-v2/qa/implementation-density-light-1280x800.png`
+- Final dark minimum viewport: `docs/desktop-v2/qa/implementation-density-dark-980x640.png`
+
+The full comparison is used for Terminal prominence, shell hierarchy, floating behavior, and overall density. Runtime content is live and therefore intentionally differs.
 
 ## Focused-region comparison evidence
 
-- Sidebar, creation controls, hierarchy, and footer: `docs/desktop-v2/qa/comparison-sidebar.png`
-- Session header and Terminal utility line: `docs/desktop-v2/qa/comparison-chrome.png`
-- Copilot Context geometry and information hierarchy: `docs/desktop-v2/qa/comparison-context.png`
+- Sidebar production reference vs implementation: `docs/desktop-v2/qa/comparison-density-sidebar.png`
+- Context production reference vs implementation: `docs/desktop-v2/qa/comparison-density-context.png`
+- Footer production reference vs implementation: `docs/desktop-v2/qa/comparison-density-footer.png`
+- Disclosure-restored interaction state: `docs/desktop-v2/qa/interaction-density-disclosure.png`
 
-Focused comparisons are required because the full 2976-pixel-wide comparison cannot show small typography, icon, border, and spacing differences at readable scale.
+Focused comparisons are required because small type, the selected tint, footer height, and Context fact tracks are not readable in the full 2974-pixel-wide image.
 
-## Reference geometry
+## Frozen geometry
 
-| Surface | Source | Implementation | Delta |
+| Surface | Contract | Packaged implementation | Delta |
 |---|---:|---:|---:|
-| Sidebar / main boundary | x = 310 | x = 310 | 0 px |
-| Session header | 310, 0, 1177 × 54 | 310, 0, 1177 × 54 | 0 px |
-| Terminal | 319, 64, 1156 × 978 | 319, 64, 1156 × 978 | 0 px |
-| Terminal utility line | 45 px | 45 px | 0 px |
-| Context | 1107, 84, 352 × 805 | 1107, 84, 352 × 805 | 0 px |
-| Context radius | 12 px | 12 px | 0 px |
-| Sidebar footer | 96 px | 96 px | 0 px |
+| Sidebar default | 296 px | 296 px | 0 px |
+| Sidebar bounds | 228–320 px | 228–320 px | 0 px |
+| Copilot row | 44 px | 44 px | 0 px |
+| Worker row | 34 px | 34 px | 0 px |
+| Sidebar footer | 44 px | 44 px | 0 px |
+| Context, default | 320 px | 320 px | 0 px |
+| Context, 980 px viewport | 304 px | 304 px | 0 px |
+| Context managed-Worker row | 40 px | 40 px | 0 px |
+| Multi-tab Context top | 114 px | 114 px | 0 px |
 
 ## Required fidelity surfaces
 
-- **Fonts and typography:** the shell uses the macOS system stack with compact optical weights; title, utility, row, and fact sizes match the reference hierarchy. Terminal uses Menlo/Monaco with CJK fallbacks at 13 px and 1.2 line height. Long live values truncate or wrap only in the surfaces designed for them.
-- **Spacing and layout rhythm:** all major reference rectangles match exactly. Sidebar rows, search/create controls, Terminal padding, 45 px utility line, Context sections, 45 px managed-worker rows, radii, borders, and elevation were checked in focused comparisons.
-- **Colors and tokens:** sampled reference/implementation values are sidebar `(228,234,233)` / `(227,234,234)`, header `(252,253,253)` / `(252,253,253)`, and Terminal `(21,26,27)` / `(21,25,28)`. These one-channel deltas are antialiasing/color-compositing variance, not a semantic token mismatch.
-- **Image quality and asset fidelity:** no placeholder imagery, CSS art, inline SVG art, emoji, or text-glyph icons remain. UI icons come from one Lucide family. The only product mark is Hydra's existing vector asset.
-- **Copy and content:** fixed UI copy matches the visual target where applicable (`New copilot`, `Copilot context`, `Create worker`, `Attention history`) while runtime-derived values stay truthful.
-- **Icons:** search, split-create, attention, branch/folder, header utilities, copy, row chevrons, Context actions, and footer settings were checked for family, stroke, alignment, and state behavior.
-- **Responsiveness and accessibility:** the 980 × 640 viewport has `bodyScrollWidth = 980` and `bodyScrollHeight = 640`; Context is 320 × 540 at `(632,84)` and the Terminal remains underneath it. Controls use semantic buttons, accessible labels, keyboard focus, and reduced-motion handling.
+- **Fonts and typography:** Hydra and the production references use the macOS system text stack. Sidebar names are 12 px with 10 px summaries; Context titles are 14 px, facts and rows are 11 px, with system antialiasing and restrained optical weights. Long names truncate; full runtime meaning remains accessible.
+- **Spacing and layout rhythm:** Sidebar is 296 px, Copilot/Worker rows are 44/34 px, the footer is 44 px, Context is 320 px with 58 px fact labels and an 8 px track gap, and Worker rows are 40 px. Short Context content uses intrinsic height; long content scrolls inside the viewport cap.
+- **Colors and visual tokens:** the final Sidebar composite is `(216, 223, 222)` versus the reference's dominant `(216, 224, 222)`. Selection becomes `(208, 215, 214)`, matching the production neutral tint. Semantic orange, red, green, and neutral runtime colors retain their meaning.
+- **Image quality and asset fidelity:** the runtime UI uses Hydra's existing vector mark and the established Lucide line-icon family. No placeholder asset, emoji, CSS art, handcrafted SVG, or text-glyph icon was introduced. The Codex crops are documentation references only.
+- **Copy and content:** Hydra-specific labels remain truthful (`New copilot`, `Managed workers`, `Local Tasks`, `Attention history`). `Unknown` is not replaced at the data layer and remains available through tooltip and accessibility text.
+- **Responsiveness and accessibility:** the 980 × 640 dark viewport has body scroll size exactly 980 × 640. All disclosure controls are semantic buttons with `aria-expanded`; Search reveals all matches; the runtime dash retains an accessible name.
 
 ## Comparison history
 
-1. **Iteration 0 — blocked by P1:** Sidebar was 340 px, the header was two-line, the Terminal utility line was 34 px, and Context was 372 px wide and full-height. Fixed the application grid, header composition, Terminal padding, and Context frame.
-2. **Iteration 1 — blocked by P2:** navigation counts and runtime tokens were visually noisy; header utilities, sidebar footer, split creation, and target row hierarchy were incomplete. Rebuilt those surfaces with direct v2 data and the approved line-icon language.
-3. **Iteration 2 — blocked by P2:** search shortcut treatment, Context overflow scrollbar, copy treatment, Context header menu, worker chevrons, and several row offsets still drifted. Fixed the controls and removed visible scrollbar width from measured content.
-4. **Iteration 3 — blocked by P2:** Environment facts and scope-summary text were vertically misaligned despite the correct outer rectangle. Rebalanced section margins and asymmetric summary padding.
-5. **Final pass:** repeated the full-view and three focused comparisons. No actionable P0/P1/P2 findings remained.
+1. **Original concept pass — superseded:** the implementation matched the image-generated anchor at 310 px Sidebar, 352 px Context, 56 px Copilot rows, and 96 px footer.
+2. **Production review — blocked by P1/P2:** user comparison against Codex revealed a Sidebar that was too blue-green, oversized navigation/Context typography, non-collapsible Local Tasks, repeated wide `Unknown` labels, and a footer over twice the production height.
+3. **Density iteration — blocked by P2:** initial tightening fixed width and rows, but the first sampled Sidebar composite was `(210, 219, 218)`, too dark, and short Copilot Context still filled the window with empty space.
+4. **Final iteration — passed:** adjusted the token to composite at `(216, 223, 222)`, made Context content-height with a viewport max, added multi-tab top offset, and repeated full plus focused comparisons. No actionable P0/P1/P2 differences remain.
 
 ## Interaction checks
 
-- Context close and reopen preserved the Terminal rectangle exactly at `319,64,1156 × 978` in all three states.
-- `Cmd+K` focused Search; filtering for `codex` preserved `COPILOTS`, `WORKERS`, `REPOSITORIES`, and `LOCAL TASKS` grouping.
-- The split-create menu exposed Code Worker and Local Task. Opening Local Task preserved Worker/Task selection and preset the active Copilot as parent.
-- New Copilot exposed Workdir, Agent, Name, Plan mode, and optional Initial task.
-- A code Worker opened on Terminal, switched to Diff, loaded 14 changed files, and switched back without losing the mounted Terminal.
-- Maximize hid Sidebar and Context; Restore returned both and preserved the active Terminal.
-- Context, session, and footer overflow menus opened with their expected actions.
-- Search and split-create evidence: `docs/desktop-v2/qa/interaction-search.png` and `docs/desktop-v2/qa/interaction-create-menu.png`.
-- A reload-time Chromium `Runtime.exceptionThrown` and `Log.entryAdded` monitor returned an empty list: no exceptions or console error entries.
-- The fresh `dist/mac-arm64/Hydra.app` launched successfully, loaded the packaged Hydra mark, preserved the 310 px Sidebar default, and opened Context without changing its `319,64,949 × 720` Terminal rectangle. A packaged-app reload monitor also returned no exception or error entries.
+- Context open, closed, and reopened preserved the active Terminal rectangle exactly at `305,64,963 × 720`.
+- Copilot disclosure rendered 5 of 7 sessions, expanded to 7 with `Show less`, then returned to 5.
+- Local Tasks changed from 2 rows to 0 when collapsed and restored to 2 when reopened.
+- Search uses the pure disclosure policy to show all matching rows without a redundant Show more control.
+- Opening a second tab moved Context from y = 72 to y = 114; it did not cover SessionHeader.
+- Ten unknown managed-Worker states rendered ten quiet dashes. Worker Context exposed `text = —`, `title = Unknown`, and `aria-label = Unknown`.
+- Long Worker Context used a 630 px client body over 788 px content and scrolled inside the drawer.
+- At 980 × 640 dark, Context measured `660,114,304 × 510`, footer remained 44 px, and the document had no horizontal or vertical overflow.
+- Chromium monitoring across the final interactions reported zero `Runtime.exceptionThrown` events and zero error-level `Log.entryAdded` events.
 
 ## Implementation checklist
 
-- [x] Exact reference-state geometry
-- [x] Required typography, color, icon, content, and asset passes
-- [x] Light 1487 × 1058 comparison
-- [x] Dark 980 × 640 and overflow check
-- [x] Search, creation, Context, Terminal/Diff, maximize/restore interactions
-- [x] Console error check
-- [x] P0/P1/P2 iteration loop complete
+- [x] Production Sidebar palette sampled and matched
+- [x] Copilot, Worker, Context, and footer density tightened
+- [x] Copilot Show more / Show less implemented
+- [x] Local Tasks independent collapse implemented
+- [x] Search/disclosure behavior regression-tested
+- [x] Unknown runtime compacted without losing semantics
+- [x] Short and long Context height behavior verified
+- [x] Multi-tab Context offset verified
+- [x] Light 1280 × 800 and 1487 × 1058 comparisons completed
+- [x] Dark 980 × 640 overflow and scroll ownership verified
+- [x] Fresh packaged macOS app and console verified
 
 ## Follow-up polish
 
-- P3 only: capture a native-window screenshot on a machine/process with macOS Screen Recording permission if future QA needs the OS-rendered traffic lights inside the same bitmap.
+- P3 only: replace the generic Electron application icon during a separate brand-packaging pass; it is unrelated to this density correction.
 
 final result: passed

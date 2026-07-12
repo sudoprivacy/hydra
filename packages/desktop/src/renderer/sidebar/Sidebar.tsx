@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { useSessions } from '../sessions/SessionsProvider';
-import { Bell, ChevronDown, Megaphone, RefreshCw, RotateCw, Settings } from '../ui/icons';
+import { Bell, Megaphone, RefreshCw, RotateCw, Settings } from '../ui/icons';
 import { SidebarHeader } from './SidebarHeader';
 import { Tree } from './Tree';
 import { useContextUi } from '../context/ContextState';
@@ -44,7 +44,6 @@ export function Sidebar({ onToggleCompact }: { onToggleCompact: () => void }): J
         <div className="hydra-sidebar__local-user" aria-label="Local Hydra profile">
           <span className="hydra-sidebar__avatar" aria-hidden="true">H</span>
           <span className="hydra-sidebar__local-label">Hydra local</span>
-          <ChevronDown size={13} strokeWidth={1.7} aria-hidden="true" />
         </div>
         <Menu
           label="Hydra settings and utilities"

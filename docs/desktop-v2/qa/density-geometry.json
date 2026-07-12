@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-07-12T13:07:00+08:00",
+  "artifact": "packages/desktop/dist/mac-arm64/Hydra.app",
+  "defaultLight": {
+    "viewport": [1280, 800],
+    "deviceScaleFactor": 1,
+    "bodyScrollSize": [1280, 800],
+    "sidebar": { "x": 0, "y": 0, "width": 296, "height": 800 },
+    "footer": { "x": 0, "y": 756, "width": 295, "height": 44 },
+    "copilotRowHeight": 44,
+    "context": { "x": 940, "y": 72, "width": 320, "height": 457.734375 },
+    "sidebarCompositeRgb": [216, 223, 222]
+  },
+  "contextTerminalGeometry": {
+    "open": { "x": 305, "y": 64, "width": 963, "height": 720 },
+    "closed": { "x": 305, "y": 64, "width": 963, "height": 720 },
+    "reopened": { "x": 305, "y": 64, "width": 963, "height": 720 }
+  },
+  "disclosure": {
+    "copilotsCollapsed": 5,
+    "copilotsExpanded": 7,
+    "localTasksExpanded": 2,
+    "localTasksCollapsed": 0,
+    "localTasksRestored": 2
+  },
+  "multiTab": {
+    "tabCount": 2,
+    "context": { "x": 940, "y": 114, "width": 320, "height": 670 },
+    "managedWorkers": 10,
+    "unknownRuntimeDashes": 10
+  },
+  "workerContext": {
+    "runtimeDisplay": "—",
+    "runtimeTitle": "Unknown",
+    "runtimeAriaLabel": "Unknown",
+    "bodyClientHeight": 630,
+    "bodyScrollHeight": 788
+  },
+  "minimumDark": {
+    "viewport": [980, 640],
+    "bodyScrollSize": [980, 640],
+    "context": { "x": 660, "y": 114, "width": 304, "height": 510 },
+    "footerHeight": 44
+  },
+  "runtimeExceptions": 0,
+  "consoleErrorEntries": 0
+}

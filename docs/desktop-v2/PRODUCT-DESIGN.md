@@ -1,7 +1,8 @@
 # Hydra Desktop v2 — Terminal-First Product Design
 
-**Status:** Approved and frozen for implementation<br>
+**Status:** Approved; production-density amendment frozen for implementation<br>
 **Decision date:** 2026-07-11<br>
+**Density amendment:** 2026-07-12<br>
 **Integration branch:** `feat/desktop-v2-terminal-first`<br>
 **Applies to:** `packages/desktop` renderer UX and the protocol fields required by it
 
@@ -16,13 +17,27 @@ It supplements the process and transport architecture in
 notification contracts in
 [`docs/worker-attention-control-plane-plan.md`](../worker-attention-control-plane-plan.md).
 
-## 1. Approved visual anchor
+## 1. Approved visual anchors
 
 ![Approved Hydra Desktop v2 terminal-first main screen](./assets/terminal-first-main.png)
 
-The image above freezes the composition, hierarchy, density, and visual
-direction. Its terminal content is illustrative. Production UI must use live
-Hydra and agent data and must not fabricate unsupported metrics or activity.
+The image above freezes the product composition and hierarchy. Its terminal
+content is illustrative. Production UI must use live Hydra and agent data and
+must not fabricate unsupported metrics or activity.
+
+The initial image-generated anchor was intentionally superseded for density,
+palette, and disclosure behavior after comparison with the production Codex
+desktop surfaces below:
+
+| Production density reference | Use |
+|---|---|
+| ![Codex production sidebar density](./assets/codex-production-sidebar.png) | Sidebar neutral palette, compact rows, `Show more`, and 40–44 px footer |
+| ![Codex production floating context density](./assets/codex-production-context.png) | Compact floating-inspector typography, separators, and action rhythm |
+
+Red outlines in the supplied Sidebar capture are reviewer annotations, not UI.
+Hydra keeps its own product hierarchy, controls, and brand; these captures
+override the generated anchor only where the earlier mock was visibly too
+large or too blue-green.
 
 ### Visual direction
 
@@ -30,7 +45,7 @@ Hydra follows the calm, precise desktop language established by Codex without
 copying Codex branding or product hierarchy:
 
 - warm off-white application canvas;
-- pale gray-green translucent sidebar;
+- neutral cool-gray translucent sidebar sampled near `#d8dfde` after compositing;
 - compact native typography and monochrome line icons;
 - hierarchy from spacing, alignment, and hairline separators before cards;
 - sparse orange for attention, not for decoration;
@@ -41,19 +56,22 @@ copying Codex branding or product hierarchy:
 
 ### Pixel-fidelity contract
 
-The approved image is the visual truth, not a loose mood board. At the reference
-capture size, live business values may differ, but shell geometry, spacing,
-typography, icon placement, surface colors, radii, borders, and shadows must
-match. The canonical renderer state is a selected Copilot with Context open:
+The approved sources are visual truth, not loose mood boards. Live business
+values may differ, but shell geometry, spacing, typography, icon placement,
+surface colors, radii, borders, and shadows must match. The canonical renderer
+state is a 1280 × 800 default window with a selected Copilot and Context open:
 
-| Surface | Reference geometry at 1487 × 1058 |
+| Surface | Frozen geometry |
 |---|---:|
-| Sidebar / main boundary | x = 310 px |
-| Session header | x = 310 px, y = 0 px, w = 1177 px, h = 54 px |
-| Terminal | x = 319 px, y = 64 px, w = 1156 px, h = 978 px |
+| Sidebar / main boundary | x = 296 px; resizable 228–320 px |
+| Session header | x = 296 px, h = 54 px |
+| Terminal workspace inset | 9 / 10 / 12 / 16 px left / top / right / bottom |
 | Terminal utility line | 45 px high |
-| Context | x = 1107 px, y = 84 px, w = 352 px, h = 805 px |
-| Sidebar footer | 96 px high |
+| Context, one tab | x = 940 px, y = 72 px, w = 320 px, max-h = 712 px |
+| Context, tab bar visible | x = 940 px, y = 114 px, w = 320 px, max-h = 670 px |
+| Copilot / Worker row | 44 / 34 px minimum height |
+| Context managed-Worker row | 40 px minimum height |
+| Sidebar footer | 44 px high |
 
 Native macOS traffic lights remain OS-rendered through Electron
 `hiddenInset`; renderer-only screenshots normalize that native chrome out of
@@ -114,10 +132,11 @@ The window uses two persistent layout regions plus one optional overlay:
 
 | Region | Default | Bounds | Behavior |
 |---|---:|---:|---|
-| Sidebar | 310 px | 236–340 px | Resizable and persisted; collapsible at narrow widths |
+| Sidebar | 296 px | 228–320 px | Resizable and persisted; compact-width toggle at narrow widths |
 | Main workspace | Remaining width | Minimum 640 px | Session header plus Terminal or Worker Diff |
-| Context drawer | 352 × 805 px | 320 px wide and height-clamped at minimum viewport | Floating overlay, no layout reflow |
+| Context drawer | 320 px wide, content height | 304 px wide at the minimum viewport; max-height leaves 16 px bottom inset | Floating overlay, no layout reflow |
 | Session header | 54 px | Fixed | Identity, live state, context toggle, utility menu |
+| Sidebar footer | 44 px | Fixed | Local profile identity and utilities |
 | Workspace inset | 9 / 10 / 12 / 16 px | Fixed at reference size | Left / top / right / bottom terminal separation |
 
 The current Electron minimum size of 980 × 640 remains supported. The approved
@@ -184,10 +203,18 @@ Clicking a Copilot opens or focuses its session and activates its Terminal.
 Copilot rows do not expand into a second copy of their Workers. Managed Workers
 are summarized in the floating Context drawer.
 
+Only the first five Copilots render by default when the list is long. A compact
+`Show more` / `Show less` disclosure follows the production Codex pattern.
+Search always reveals all matching rows and temporarily suppresses that
+disclosure control.
+
 ### 5.3 Worker groups and rows
 
 Code Workers appear under their repository. Directory Workers appear under
 Local Tasks. Repository and Local Tasks groups are independently collapsible.
+Local Tasks exposes its own visible caret instead of relying only on the parent
+Workers section. A long Local Tasks list initially shows four rows and uses the
+same `Show more` / `Show less` behavior as Copilots.
 
 A Worker row contains:
 
@@ -303,9 +330,17 @@ flowchart LR
 ## 8. Floating Context drawer
 
 Context is a non-modal floating surface inspired by Codex's environment panel.
-At the reference viewport it is positioned at x = 1107 px, y = 84 px with a
-352 × 805 px frame, 12 px radius, fine border, and one restrained shadow. At
-shorter viewports its height clamps so the bottom inset remains 16 px.
+At the default viewport it is 320 px wide, positioned 20 px from the right and
+72 px from the top, with a 12 px radius, fine border, and one restrained shadow.
+When the session tab bar is visible, Context moves to y = 114 px so it never
+overlaps the session header. At shorter viewports its width becomes 304 px and
+its maximum height clamps so the bottom inset remains 16 px. Short content uses
+its intrinsic height rather than creating an empty white column to the bottom.
+
+Facts use 11 px text with a 58 px label track and 8 px gap. Managed-Worker rows
+are 40 px high. Unknown runtime remains truthful but is rendered as a quiet em
+dash with `Unknown` retained in the title and accessibility label, preventing
+repeated low-information words from consuming the status column.
 
 ### 8.1 Open and close behavior
 
@@ -471,8 +506,8 @@ do not replace the entire window with an error page.
 
 | Window width | Sidebar | Context | Main workspace |
 |---|---|---|---|
-| ≥ 1200 px | User width, default 310 px | 352 px floating drawer | Full terminal beneath drawer |
-| 980–1199 px | Clamp toward 236 px | 320 px floating drawer | Full terminal beneath drawer |
+| ≥ 1200 px | User width, default 296 px | 320 px floating drawer | Full terminal beneath drawer |
+| 980–1199 px | Clamp toward 228 px | 304 px floating drawer | Full terminal beneath drawer |
 | < 980 px if later supported | Collapsible rail | Near-full-height sheet | Terminal remains primary |
 
 At all supported sizes:
@@ -515,7 +550,7 @@ introducing component-local color literals.
 | Token role | Direction |
 |---|---|
 | App canvas | Warm off-white |
-| Sidebar | Cool translucent gray-green |
+| Sidebar | Neutral cool translucent gray; final composite near `#d8dfde` |
 | Primary text | Near-black warm neutral |
 | Secondary text | 60–68% neutral |
 | Border | 8–12% neutral |
@@ -603,6 +638,7 @@ The Desktop v2 frontend is conformant when:
 - the first useful interaction after launch is a real Copilot Terminal;
 - Copilots and Workers use the approved independent hierarchy;
 - code Workers are grouped by repo and directory Workers under Local Tasks;
+- Copilots and Local Tasks support compact disclosure, and Local Tasks can collapse independently;
 - Context opens and closes without changing terminal columns or rows;
 - Copilot Context shows live managed-Worker states from v2;
 - Worker Context shows runtime, source, changes, parent, and attention data;
@@ -613,7 +649,7 @@ The Desktop v2 frontend is conformant when:
   intentionally rendered;
 - no Conversation UI, transcript parser, or unsupported field is introduced as
   part of frontend implementation;
-- visual comparison against the approved anchor confirms hierarchy, density,
+- visual comparison against both approved anchors confirms hierarchy, density,
   spacing, drawer geometry, and terminal prominence;
 - project-root `design-qa.md` records same-viewport combined comparisons and
   ends with exactly `final result: passed`.

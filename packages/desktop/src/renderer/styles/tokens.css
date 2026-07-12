@@ -3,13 +3,13 @@
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   --hy-bg: #fcfdfd;
   --hy-canvas: #fcfdfd;
-  --hy-sidebar: rgba(226, 233, 233, 0.82);
-  --hy-sidebar-solid: #e4eae9;
+  --hy-sidebar: rgba(214, 221, 220, 0.82);
+  --hy-sidebar-solid: #d8dfde;
   --hy-panel: #f4f4f2;
   --hy-panel-strong: #ededeb;
   --hy-tile: #ffffff;
-  --hy-hover: rgba(0, 0, 0, 0.045);
-  --hy-selected: rgba(0, 0, 0, 0.055);
+  --hy-hover: rgba(0, 0, 0, 0.03);
+  --hy-selected: rgba(0, 0, 0, 0.035);
   --hy-border: rgba(0, 0, 0, 0.085);
   --hy-border-strong: rgba(0, 0, 0, 0.16);
   --hy-text: #181817;

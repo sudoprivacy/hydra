@@ -109,6 +109,10 @@ export function runtimeLabel(state: string): string {
   return state.split('-').map(part => part ? `${part[0].toUpperCase()}${part.slice(1)}` : '').join(' ');
 }
 
+export function runtimeDisplayLabel(state: string): string {
+  return state === 'unknown' ? '—' : runtimeLabel(state);
+}
+
 export function occurrenceKindLabel(kind: string): string {
   switch (kind) {
     case 'needs-input': return 'Needs input';

@@ -130,7 +130,7 @@ export function ContextDrawer(): JSX.Element | null {
 
   return (
     <aside
-      className="hydra-context"
+      className={`hydra-context${tabs.tabs.length > 1 ? ' hydra-context--with-tabs' : ''}`}
       aria-label={title}
       onKeyDown={event => {
         if (event.key !== 'Escape') return;

@@ -9,17 +9,8 @@ import * as path from 'node:path';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktop = path.join(here, '..');
 const renderer = path.join(desktop, 'src', 'renderer');
-const filterPath = path.join(renderer, 'sidebar', 'sidebarFilter.ts');
-const bundled = await build({
-  entryPoints: [filterPath],
-  bundle: true,
-  format: 'esm',
-  platform: 'neutral',
-  write: false,
-  logLevel: 'silent',
-});
-const moduleUrl = `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`;
-const { filterSidebarView } = await import(moduleUrl);
+const { filterSidebarView } = await loadRendererModule(path.join(renderer, 'sidebar', 'sidebarFilter.ts'));
+const { discloseRows } = await loadRendererModule(path.join(renderer, 'sidebar', 'disclosure.ts'));
 
 const copilot = {
   kind: 'copilot',
@@ -74,6 +65,23 @@ const byFolder = filterSidebarView(view, '/notes');
 assert.equal(byFolder.workerGroups[0].kind, 'local-tasks', 'folder search preserves Local Tasks');
 assert.equal(filterSidebarView(view, 'missing').noMatches, true);
 
+const sessions = ['a', 'b', 'c', 'd', 'e', 'f'];
+assert.deepEqual(discloseRows(sessions, 4, false, false), {
+  visible: ['a', 'b', 'c', 'd'],
+  hiddenCount: 2,
+  canToggle: true,
+});
+assert.deepEqual(discloseRows(sessions, 4, true, false), {
+  visible: sessions,
+  hiddenCount: 0,
+  canToggle: true,
+});
+assert.deepEqual(discloseRows(sessions, 4, false, true), {
+  visible: sessions,
+  hiddenCount: 0,
+  canToggle: false,
+}, 'search reveals every matching session without a redundant disclosure control');
+
 const indexHtml = fs.readFileSync(path.join(desktop, 'index.html'), 'utf8');
 assert.equal(indexHtml.includes('<style>'), false, 'index.html has no renderer CSS block');
 assert.equal(fs.existsSync(path.join(renderer, 'missionControl', 'boardModel.ts')), false, 'legacy board model removed');
@@ -92,6 +100,19 @@ for (const file of collectSourceFiles(renderer)) {
 }
 
 console.log('supportingFlowsSmoke: ok');
+
+async function loadRendererModule(entryPoint) {
+  const bundled = await build({
+    entryPoints: [entryPoint],
+    bundle: true,
+    format: 'esm',
+    platform: 'neutral',
+    write: false,
+    logLevel: 'silent',
+  });
+  const source = Buffer.from(bundled.outputFiles[0].text).toString('base64');
+  return import(`data:text/javascript;base64,${source}`);
+}
 
 function collectSourceFiles(directory) {
   const files = [];

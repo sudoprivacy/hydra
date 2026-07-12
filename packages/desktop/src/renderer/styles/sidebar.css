@@ -1,10 +1,10 @@
 /* Desktop v2 sidebar refinements. */
 .hydra-sidebar__header {
-  min-height: 197px;
-  padding: 54px 18px 9px 16px;
+  min-height: 171px;
+  padding: 50px 14px 8px;
   flex-direction: column;
   align-items: stretch;
-  gap: 18px;
+  gap: 12px;
 }
 
 .hydra-sidebar__title-row,
@@ -15,21 +15,21 @@
 }
 
 .hydra-sidebar__title-row {
-  min-height: 30px;
+  min-height: 27px;
 }
 
 .hydra-sidebar__brand {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  font-size: 15px;
+  gap: 8px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.015em;
 }
 
 .hydra-sidebar__brand img {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   flex: none;
 }
 
@@ -41,20 +41,20 @@
 }
 
 .hydra-sidebar__search {
-  height: 34px;
+  height: 32px;
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 0 9px;
+  gap: 10px;
+  padding: 0 8px;
   border: 1px solid var(--hy-border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--hy-canvas) 54%, transparent);
   color: var(--hy-faint);
 }
 
 .hydra-sidebar__search,
 .hydra-sidebar__create-row {
-  transform: translateY(-2px);
+  transform: none;
 }
 
 .hydra-sidebar__search:focus-within {
@@ -72,7 +72,7 @@
   background: transparent;
   color: var(--hy-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .hydra-sidebar__search input::-webkit-search-cancel-button {
@@ -93,24 +93,24 @@
 }
 
 .hydra-sidebar__create-row {
-  gap: 9px;
+  gap: 8px;
 }
 
 .hydra-sidebar__new-copilot {
   min-width: 0;
-  height: 34px;
+  height: 32px;
   flex: 1;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px;
+  gap: 7px;
+  padding: 0 10px;
   appearance: none;
   border: 1px solid var(--hy-border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--hy-canvas) 86%, transparent);
   color: var(--hy-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 550;
   box-shadow: var(--hy-soft-shadow);
   cursor: pointer;
@@ -122,20 +122,23 @@
 }
 
 .hydra-sidebar__create-menu .hydra-iconbtn {
-  width: 54px;
-  height: 34px;
+  width: 46px;
+  height: 32px;
   border: 1px solid var(--hy-border);
   background: color-mix(in srgb, var(--hy-canvas) 72%, transparent);
   box-shadow: var(--hy-soft-shadow);
 }
 
 .hydra-sidebar__attention {
-  width: calc(100% - 32px);
-  margin: 10px 16px 3px;
+  width: calc(100% - 24px);
+  min-height: 34px;
+  margin: 6px 12px 2px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 .hydra-sidebar__attention-label {
-  gap: 8px;
+  gap: 7px;
 }
 
 .hydra-menu__item {
@@ -160,7 +163,7 @@
 }
 
 .hydra-sidebar__scroll {
-  padding: 12px 8px 16px;
+  padding: 8px 6px 10px;
   scrollbar-width: none;
 }
 
@@ -169,16 +172,16 @@
 }
 
 .hydra-tree {
-  gap: 13px;
+  gap: 10px;
 }
 
 .hydra-tree__head {
-  min-height: 25px;
-  padding: 4px 15px;
+  min-height: 22px;
+  padding: 3px 9px;
 }
 
 .hydra-tree__section:first-child .hydra-tree__body {
-  gap: 6px;
+  gap: 2px;
 }
 
 .hydra-tree__section + .hydra-tree__section .hydra-tree__body,
@@ -188,26 +191,50 @@
 
 .hydra-tree__title,
 .hydra-tree__subtitle {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0;
 }
 
 .hydra-tree__subtitle {
-  padding: 4px 15px 3px;
+  padding: 3px 9px 2px;
+}
+
+.hydra-tree__subhead {
+  width: 100%;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hy-faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hydra-tree__subhead:hover {
+  background: var(--hy-hover);
+}
+
+.hydra-tree__subhead .hydra-tree__subtitle {
+  padding: 0;
 }
 
 .hydra-repo {
-  margin-left: 7px;
+  margin-left: 5px;
 }
 
 .hydra-repo__head {
-  min-height: 32px;
-  padding: 4px 8px;
+  min-height: 28px;
+  padding: 3px 7px;
 }
 
 .hydra-repo__body {
-  margin-left: 36px;
+  margin-left: 30px;
 }
 
 .hydra-repo__body--local {
@@ -217,23 +244,23 @@
 .hydra-row {
   position: relative;
   width: auto;
-  min-height: 42px;
-  margin-inline: 7px;
-  gap: 9px;
-  padding: 6px 8px;
+  min-height: 34px;
+  margin-inline: 3px;
+  gap: 7px;
+  padding: 4px 7px;
 }
 
 .hydra-row--copilot {
-  gap: 17px;
+  gap: 10px;
 }
 
 .hydra-row--copilot {
-  min-height: 56px;
+  min-height: 44px;
 }
 
 .hydra-row__icon {
-  width: 17px;
-  height: 18px;
+  width: 15px;
+  height: 16px;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -242,14 +269,14 @@
 }
 
 .hydra-row__name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .hydra-row__summary,
 .hydra-row__changes {
   color: var(--hy-faint);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .hydra-row__changes {
@@ -257,9 +284,29 @@
 }
 
 .hydra-row > .hydra-sdot {
-  width: 7px;
-  height: 7px;
-  margin-right: 3px;
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+}
+
+.hydra-tree__disclosure {
+  min-height: 25px;
+  margin: 0 3px;
+  padding: 3px 7px 3px 32px;
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hy-muted);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hydra-tree__disclosure:hover {
+  background: var(--hy-hover);
+  color: var(--hy-text);
 }
 
 .hydra-row__menu {
@@ -281,11 +328,11 @@
 .hydra-sidebar__footer {
   position: relative;
   flex: none;
-  min-height: 96px;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 16px 16px 22px;
+  gap: 8px;
+  padding: 4px 10px;
   border-top: 0;
 }
 
@@ -293,8 +340,8 @@
   content: '';
   position: absolute;
   top: 0;
-  left: 16px;
-  right: 16px;
+  left: 10px;
+  right: 10px;
   height: 1px;
   background: var(--hy-border);
 }
@@ -304,22 +351,21 @@
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 14px;
-  transform: translateY(-4px);
+  gap: 8px;
   color: var(--hy-muted);
   font-size: 11px;
 }
 
 .hydra-sidebar__avatar {
-  width: 32px;
-  height: 32px;
+  width: 20px;
+  height: 20px;
   flex: none;
   display: inline-grid;
   place-items: center;
   border-radius: 50%;
   background: #8b8d8b;
   color: #fff;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 650;
 }
 
@@ -337,7 +383,12 @@
 }
 
 .hydra-sidebar__settings {
-  transform: translateY(-4px);
+  transform: none;
+}
+
+.hydra-sidebar__settings .hydra-iconbtn {
+  width: 28px;
+  height: 28px;
 }
 
 @media (prefers-color-scheme: dark) {
