@@ -90,6 +90,13 @@ for (const name of ['tokens', 'base', 'shell', 'sidebar', 'workspace', 'context'
   assert.equal(fs.existsSync(path.join(renderer, 'styles', `${name}.css`)), true, `${name}.css exists`);
 }
 
+const sidebarCss = fs.readFileSync(path.join(renderer, 'styles', 'sidebar.css'), 'utf8');
+assert.match(
+  sidebarCss,
+  /\.hydra-row__menu\.hydra-menu--open\s*\{[^}]*z-index:\s*[1-9]\d*;/s,
+  'an open row menu raises its transformed stacking context above following tree rows',
+);
+
 const desktopPackage = JSON.parse(fs.readFileSync(path.join(desktop, 'package.json'), 'utf8'));
 assert.equal(typeof desktopPackage.dependencies['lucide-react'], 'string', 'coherent icon dependency declared');
 
