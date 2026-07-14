@@ -38,8 +38,16 @@
 //                             is handled by TerminalBridge after ownership auth
 
 import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { TmuxBackendCore } from '@hydra/core/tmux';
+import {
+  AGENT_LABELS,
+  agentSupportsCopilotMode,
+  extractAgentCommandExecutable,
+  getAgentDefaultCommand,
+} from '@hydra/core/agentConfig';
+import { resolveCommandPath } from '@hydra/core/exec';
 import {
   isDirectoryWorker,
   SessionManager,
@@ -55,9 +63,17 @@ import { EventLog, type HydraEventSource } from '@hydra/core/events';
 import { EventHub } from '@hydra/core/eventHub';
 import { AsyncPushIterator } from '@hydra/core/asyncPushIterator';
 import { resolveAgentSessionFile, expandAndResolvePath } from '@hydra/core/path';
-import { getPrimaryRepoRootFromPath, localBranchExists, fetchOriginRequired } from '@hydra/core/git';
-import { resolveRepoInput } from '@hydra/core/repoRegistry';
-import { getHydraGlobalDefaultAgent } from '@hydra/core/hydraGlobalConfig';
+import {
+  fetchOriginRequired,
+  getBaseBranchFromRepo,
+  getPrimaryRepoRootFromPath,
+  localBranchExists,
+} from '@hydra/core/git';
+import { listRegisteredRepos, resolveRepoInput } from '@hydra/core/repoRegistry';
+import {
+  getHydraGlobalDefaultAgent,
+  readHydraGlobalConfig,
+} from '@hydra/core/hydraGlobalConfig';
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
@@ -72,6 +88,9 @@ import {
   type BroadcastResult,
   type CreateCopilotInput,
   type CreateCopilotResult,
+  type CreationAgentOption,
+  type CreationOptionsResult,
+  type CreationRepositoryOption,
   type CreateWorkerInput,
   type CreateWorkerResult,
   type DeleteSessionPayload,
@@ -255,6 +274,8 @@ export class HydraAppService implements HydraAppServiceApi {
     switch (op) {
       case Op.listSessions:
         return this.listSessions();
+      case Op.getCreationOptions:
+        return this.getCreationOptions();
       case Op.listWorkerRuntimeV2:
         return this.listWorkerRuntimeV2();
       case Op.createWorker:
@@ -341,6 +362,101 @@ export class HydraAppService implements HydraAppServiceApi {
     }));
 
     return { copilots, workers, count: copilots.length + workers.length };
+  }
+
+  /** Local defaults and recent sources used to make Desktop create forms concrete. */
+  private async getCreationOptions(): Promise<CreationOptionsResult> {
+    const [state, agents] = await Promise.all([
+      this.sessionManager.sync(),
+      this.collectCreationAgents(),
+    ]);
+    const defaultAgent = getHydraGlobalDefaultAgent().agent;
+    const existingCopilotNames = new Set(
+      Object.values(state.copilots).flatMap(copilot => [
+        copilot.displayName,
+        copilot.sessionName,
+        copilot.tmuxSession,
+      ].filter((value): value is string => Boolean(value))),
+    );
+
+    const agentOptions = agents.map(agent => ({
+      ...agent,
+      isDefault: agent.id === defaultAgent,
+      suggestedCopilotName: uniqueSessionName(`hydra-copilot-${agent.id}`, existingCopilotNames),
+      suggestedPlanName: uniqueSessionName(`hydra-plan-${agent.id}`, existingCopilotNames),
+    }));
+
+    return {
+      defaultAgent,
+      homeDir: os.homedir(),
+      agents: agentOptions,
+      repositories: await this.collectCreationRepositories(Object.values(state.workers)),
+    };
+  }
+
+  private async collectCreationAgents(): Promise<Array<Omit<
+    CreationAgentOption,
+    'isDefault' | 'suggestedCopilotName' | 'suggestedPlanName'
+  >>> {
+    const config = readHydraGlobalConfig();
+    const configuredCommands = config.agentCommands ?? {};
+    const defaultAgent = getHydraGlobalDefaultAgent().agent;
+    const agentIds = [
+      ...Object.keys(AGENT_LABELS),
+      ...Object.keys(configuredCommands).filter(id => !(id in AGENT_LABELS)),
+      ...(defaultAgent in AGENT_LABELS || defaultAgent in configuredCommands ? [] : [defaultAgent]),
+    ];
+
+    return Promise.all(agentIds.map(async (id) => {
+      const command = configuredCommands[id] || getAgentDefaultCommand(id) || '';
+      const executable = extractAgentCommandExecutable(command);
+      return {
+        id,
+        label: AGENT_LABELS[id as keyof typeof AGENT_LABELS] || humanizeAgentId(id),
+        available: Boolean(executable && await resolveCommandPath(executable)),
+        supportsPlanMode: agentSupportsCopilotMode(id, 'plan'),
+      };
+    }));
+  }
+
+  private async collectCreationRepositories(
+    workers: WorkerInfo[],
+  ): Promise<CreationRepositoryOption[]> {
+    const repositories = new Map<string, Omit<CreationRepositoryOption, 'defaultBranch'>>();
+    const codeWorkers = workers
+      .filter(worker => !isDirectoryWorker(worker) && Boolean(worker.workdir))
+      .sort((left, right) => right.workerId - left.workerId);
+
+    for (const worker of codeWorkers) {
+      try {
+        const repoPath = path.resolve(await getPrimaryRepoRootFromPath(worker.workdir));
+        mergeCreationRepository(repositories, {
+          value: repoPath,
+          label: worker.repo || path.basename(repoPath),
+          path: repoPath,
+          aliases: [worker.workdir],
+          sources: ['recent'],
+        });
+      } catch {
+        // A removed or inaccessible historical worktree should not block the dialog.
+      }
+    }
+
+    for (const repo of listRegisteredRepos()) {
+      const repoPath = path.resolve(repo.path);
+      mergeCreationRepository(repositories, {
+        value: repoPath,
+        label: repo.canonical,
+        path: repoPath,
+        aliases: [],
+        sources: ['registered'],
+      });
+    }
+
+    return Promise.all([...repositories.values()].map(async (repo) => ({
+      ...repo,
+      defaultBranch: await getBaseBranchFromRepo(repo.path).catch(() => null),
+    })));
   }
 
   /** Capture the event cursor before the store read so a concurrent change cannot be skipped. */
@@ -775,6 +891,38 @@ export class HydraAppService implements HydraAppServiceApi {
     throw new Error(`Session "${session}" not found`);
   }
 
+}
+
+function mergeCreationRepository(
+  repositories: Map<string, Omit<CreationRepositoryOption, 'defaultBranch'>>,
+  candidate: Omit<CreationRepositoryOption, 'defaultBranch'>,
+): void {
+  const key = path.resolve(candidate.path);
+  const existing = repositories.get(key);
+  if (!existing) {
+    repositories.set(key, candidate);
+    return;
+  }
+  repositories.set(key, {
+    ...existing,
+    aliases: [...new Set([...existing.aliases, ...candidate.aliases])],
+    sources: [...new Set([...existing.sources, ...candidate.sources])],
+  });
+}
+
+function uniqueSessionName(base: string, existing: ReadonlySet<string>): string {
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  while (existing.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+function humanizeAgentId(id: string): string {
+  return id
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ') || id;
 }
 
 function validateNotificationOccurrenceFilters(

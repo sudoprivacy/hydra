@@ -17,6 +17,7 @@ import type {
   BroadcastResult,
   CreateCopilotInput,
   CreateCopilotResult,
+  CreationOptionsResult,
   CreateWorkerInput,
   CreateWorkerResult,
   DeleteSessionOptions,
@@ -58,6 +59,7 @@ import type {
 export interface HydraControlClient {
   // Board + lifecycle
   listSessions(): Promise<HydraSessionList>;
+  getCreationOptions(): Promise<CreationOptionsResult>;
   listWorkerRuntimeV2(): Promise<WorkerRuntimeListV2Result>;
   createWorker(input: CreateWorkerInput): Promise<CreateWorkerResult>;
   createCopilot(input: CreateCopilotInput): Promise<CreateCopilotResult>;
@@ -110,6 +112,9 @@ export function createHydraControlClient(
   return {
     listSessions: () =>
       transport.request<undefined, HydraSessionList>(Op.listSessions, undefined, auth),
+
+    getCreationOptions: () =>
+      transport.request<undefined, CreationOptionsResult>(Op.getCreationOptions, undefined, auth),
 
     listWorkerRuntimeV2: () =>
       transport.request<undefined, WorkerRuntimeListV2Result>(

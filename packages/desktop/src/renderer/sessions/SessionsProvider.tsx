@@ -5,12 +5,17 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 
-import type { CreateCopilotInput, CreateWorkerInput } from '@hydra/protocol';
+import type {
+  CreateCopilotInput,
+  CreationOptionsResult,
+  CreateWorkerInput,
+} from '@hydra/protocol';
 
 import { useHydraClient } from '../HydraClientProvider';
 import { useDesktopControl, type DesktopControlState } from '../controlState/useDesktopControlState';
@@ -31,6 +36,7 @@ export interface WorkerActionTarget extends SessionActionTarget {
 
 export interface CreateSessionOptions {
   readonly copilotSession?: string;
+  readonly repo?: string;
   readonly workerType?: 'code' | 'task';
 }
 
@@ -58,6 +64,7 @@ type Dialog =
     type: 'create';
     kind: CreateKind;
     copilotSession?: string;
+    repo?: string;
     workerType?: 'code' | 'task';
   }
   | { type: 'rename'; target: SessionActionTarget }
@@ -75,13 +82,33 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [creationOptions, setCreationOptions] = useState<CreationOptionsResult | null>(null);
+  const [creationOptionsError, setCreationOptionsError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
     setDialogError(null);
+    setCreationOptions(null);
+    setCreationOptionsError(null);
     setBusy(false);
   }, []);
+
+  useEffect(() => {
+    if (dialog?.type !== 'create') return;
+    let active = true;
+    client.getCreationOptions().then((options) => {
+      if (!active) return;
+      setCreationOptions(options);
+      setCreationOptionsError(null);
+    }).catch((cause) => {
+      if (!active) return;
+      setCreationOptionsError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => {
+      active = false;
+    };
+  }, [client, dialog?.type]);
 
   // A mutation from within a dialog: keep the dialog open on failure (inline
   // error), close + resync on success.
@@ -119,12 +146,17 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
 
   const actions = useMemo<SessionActions>(
     () => ({
-      create: (kind, options) => setDialog({
-        type: 'create',
-        kind,
-        copilotSession: options?.copilotSession,
-        workerType: options?.workerType,
-      }),
+      create: (kind, options) => {
+        setCreationOptions(null);
+        setCreationOptionsError(null);
+        setDialog({
+          type: 'create',
+          kind,
+          copilotSession: options?.copilotSession,
+          repo: options?.repo,
+          workerType: options?.workerType,
+        });
+      },
       broadcast: () => setDialog({ type: 'broadcast' }),
       restore: () => setDialog({ type: 'restore' }),
       refresh: () => control.refresh(),
@@ -160,7 +192,11 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         <CreateSessionModal
           initialKind={dialog.kind}
           initialCopilot={dialog.copilotSession}
+          initialRepo={dialog.repo}
           initialWorkerType={dialog.workerType}
+          creationOptions={creationOptions}
+          optionsError={creationOptionsError}
+          optionsLoading={creationOptions === null && creationOptionsError === null}
           copilots={(control.view?.copilots ?? []).map(copilot => ({
             session: copilot.session,
             name: copilot.name,

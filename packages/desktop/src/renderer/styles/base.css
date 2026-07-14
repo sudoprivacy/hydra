@@ -348,7 +348,10 @@ body {
   z-index: 50;
 }
 .hydra-modal {
-  width: min(460px, 100%);
+  width: min(520px, 100%);
+  max-height: min(760px, calc(100vh - 10vh));
+  display: flex;
+  flex-direction: column;
   background: var(--hy-bg);
   color: var(--hy-text);
   border: 1px solid var(--hy-border-strong);
@@ -368,10 +371,22 @@ body {
 }
 .hydra-modal__body {
   padding: 1rem;
+  overflow: auto;
 }
 .hydra-form {
   display: flex;
   flex-direction: column;
+  gap: 0.75rem;
+}
+.hydra-form__intro {
+  margin: 0 0 0.1rem;
+  color: var(--hy-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.hydra-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.7rem;
 }
 .hydra-field {
@@ -400,6 +415,10 @@ body {
   outline: 2px solid var(--hy-accent);
   outline-offset: -1px;
 }
+.hydra-field__input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
 .hydra-checkbox {
   display: flex;
   gap: 0.5rem;
@@ -415,6 +434,37 @@ body {
   margin: 0;
   color: var(--hy-muted);
   font-size: 0.78rem;
+}
+.hydra-form__advanced {
+  border-top: 1px solid var(--hy-border);
+  padding-top: 0.65rem;
+}
+.hydra-form__advanced > summary {
+  width: max-content;
+  color: var(--hy-muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 600;
+  user-select: none;
+}
+.hydra-form__advanced > summary:hover,
+.hydra-form__advanced > summary:focus-visible {
+  color: var(--hy-text);
+}
+.hydra-form__advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-top: 0.7rem;
+}
+.hydra-field__meta {
+  margin: 0;
+  color: var(--hy-muted);
+  font-size: 0.76rem;
+}
+.hydra-field__meta strong {
+  color: var(--hy-text);
+  font-weight: 550;
 }
 .hydra-form__actions {
   display: flex;
@@ -449,6 +499,17 @@ body {
   background: var(--hy-tile);
   border-color: var(--hy-border-strong);
   font-weight: 600;
+}
+@media (max-width: 560px) {
+  .hydra-modal__backdrop {
+    padding-top: 1rem;
+  }
+  .hydra-modal {
+    max-height: calc(100vh - 2rem);
+  }
+  .hydra-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 /* Terminal view — fills its tab pane (the pane owns the height now). */
 .hydra-terminal {

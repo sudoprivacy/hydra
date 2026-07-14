@@ -11,6 +11,11 @@ const desktop = path.join(here, '..');
 const renderer = path.join(desktop, 'src', 'renderer');
 const { filterSidebarView } = await loadRendererModule(path.join(renderer, 'sidebar', 'sidebarFilter.ts'));
 const { discloseRows } = await loadRendererModule(path.join(renderer, 'sidebar', 'disclosure.ts'));
+const {
+  chooseInitialRepository,
+  MANUAL_REPOSITORY,
+  suggestBranchFromTask,
+} = await loadRendererModule(path.join(renderer, 'missionControl', 'creationFormModel.ts'));
 
 const copilot = {
   kind: 'copilot',
@@ -64,6 +69,43 @@ assert.equal(byRepo.workerGroups[0].workers[0].workerId, 7);
 const byFolder = filterSidebarView(view, '/notes');
 assert.equal(byFolder.workerGroups[0].kind, 'local-tasks', 'folder search preserves Local Tasks');
 assert.equal(filterSidebarView(view, 'missing').noMatches, true);
+
+const repositoryOptions = [
+  {
+    value: '/repos/registered',
+    label: 'acme/registered',
+    path: '/repos/registered',
+    aliases: [],
+    sources: ['registered'],
+    defaultBranch: 'main',
+  },
+  {
+    value: '/repos/recent',
+    label: 'recent',
+    path: '/repos/recent',
+    aliases: ['/worktrees/recent-task'],
+    sources: ['recent'],
+    defaultBranch: 'main',
+  },
+];
+assert.equal(
+  chooseInitialRepository(repositoryOptions, '/worktrees/recent-task/'),
+  '/repos/recent',
+  'active linked-worktree context resolves to its primary repository option',
+);
+assert.equal(
+  chooseInitialRepository(repositoryOptions),
+  '/repos/recent',
+  'recent repository wins when no sidebar context is available',
+);
+assert.equal(
+  chooseInitialRepository(repositoryOptions, '/repos/another'),
+  MANUAL_REPOSITORY,
+  'unknown explicit context stays available as manual repository input',
+);
+assert.equal(suggestBranchFromTask('Fix create dialog defaults'), 'feat/fix-create-dialog-defaults');
+assert.equal(suggestBranchFromTask('优化 创建弹窗'), 'feat/优化-创建弹窗');
+assert.equal(suggestBranchFromTask(''), 'feat/new-worker');
 
 const sessions = ['a', 'b', 'c', 'd', 'e', 'f'];
 assert.deepEqual(discloseRows(sessions, 4, false, false), {

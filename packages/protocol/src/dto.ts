@@ -105,6 +105,37 @@ export interface HydraSessionList {
   count: number;
 }
 
+// ── Desktop creation metadata ──
+
+/** A launchable agent surfaced by the desktop creation forms. */
+export interface CreationAgentOption {
+  id: string;
+  label: string;
+  available: boolean;
+  isDefault: boolean;
+  supportsPlanMode: boolean;
+  suggestedCopilotName: string;
+  suggestedPlanName: string;
+}
+
+/** A repository Hydra can use as a code-worker source. */
+export interface CreationRepositoryOption {
+  value: string;
+  label: string;
+  path: string;
+  aliases: string[];
+  sources: Array<'recent' | 'registered'>;
+  defaultBranch: string | null;
+}
+
+/** Resolved defaults and choices needed before a create request is submitted. */
+export interface CreationOptionsResult {
+  defaultAgent: string;
+  homeDir: string;
+  agents: CreationAgentOption[];
+  repositories: CreationRepositoryOption[];
+}
+
 // ── Desktop v2 control-plane snapshots ──
 //
 // These are additive app/control-plane operations. They intentionally do not
