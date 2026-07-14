@@ -21,12 +21,21 @@ export function SidebarHeader({
   onQueryChange: (value: string) => void;
   onToggleCompact: () => void;
 }): JSX.Element {
-  const { actions } = useSessions();
+  const { actions, control } = useSessions();
   const tabs = useTabs();
   const searchRef = useRef<HTMLInputElement>(null);
-  const selectedCopilot = tabs.activeTab?.sessionKind === 'copilot'
-    ? tabs.activeTab.session
+  const activeWorker = tabs.activeTab?.sessionKind === 'worker'
+    ? control.view?.workers.find(worker => worker.session === tabs.activeTab?.session)
     : undefined;
+  const activeCopilot = tabs.activeTab?.sessionKind === 'copilot'
+    ? control.view?.copilots.find(copilot => copilot.session === tabs.activeTab?.session)
+    : undefined;
+  const selectedCopilot = activeCopilot?.session ?? activeWorker?.parentCopilotSession ?? undefined;
+  const selectedRepo = activeWorker?.type === 'code'
+    ? activeWorker.workdir ?? undefined
+    : [...(activeCopilot?.workers ?? [])]
+      .filter(worker => worker.type === 'code' && Boolean(worker.workdir))
+      .sort((left, right) => right.workerId - left.workerId)[0]?.workdir ?? undefined;
   const shortcutLabel = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
     ? '⌘K'
     : 'Ctrl K';
@@ -101,6 +110,7 @@ export function SidebarHeader({
               onSelect: () => actions.create('worker', {
                 workerType: 'code',
                 copilotSession: selectedCopilot,
+                repo: selectedRepo,
               }),
             },
             {

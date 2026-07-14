@@ -10,6 +10,7 @@
 /** Request/response operations, carried by `HydraTransport.request`. */
 export const Op = {
   listSessions: 'sessions.list',
+  getCreationOptions: 'creation.options',
   listWorkerRuntimeV2: 'workerRuntime.v2.list',
   createWorker: 'worker.create',
   createCopilot: 'copilot.create',
