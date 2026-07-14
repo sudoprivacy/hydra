@@ -316,6 +316,10 @@
   transform: translateY(-50%);
 }
 
+.hydra-row__menu.hydra-menu--open {
+  z-index: 1;
+}
+
 .hydra-row:hover > .hydra-sdot,
 .hydra-row:focus-within > .hydra-sdot {
   opacity: 0;
