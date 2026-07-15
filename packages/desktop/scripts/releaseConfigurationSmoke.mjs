@@ -20,8 +20,14 @@ assert.match(updateConfig, /^repo: hydra$/m);
 assert.match(releaseScript, /APPLE_APP_SPECIFIC_PASSWORD/);
 assert.match(releaseScript, /latest-mac\.yml/);
 assert.match(releaseScript, /zipBlockmapPath/);
-assert.match(releaseScript, /'--prepackaged', appPath/);
-assert.match(releaseScript, /'--publish', 'never'/);
+assert.match(
+  releaseScript,
+  /\['--mac', 'dmg', '--prepackaged', appOutDir, '--publish', 'never'\]/,
+);
+assert.match(
+  releaseScript,
+  /\['--mac', 'zip', '--prepackaged', appPath, '--arm64', '--publish', 'never'\]/,
+);
 
 for (const requiredWorkflowFragment of [
   'build-desktop:',

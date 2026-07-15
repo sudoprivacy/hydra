@@ -282,7 +282,11 @@ async function buildDistributables() {
   console.log('hydra-desktop release: building DMG from notarized app');
   await rm(dmgPath, { force: true });
   await rm(`${dmgPath}.blockmap`, { force: true });
-  await run(builderPath, ['--mac', 'dmg', '--prepackaged', appOutDir], { env: releaseEnvironment() });
+  await run(
+    builderPath,
+    ['--mac', 'dmg', '--prepackaged', appOutDir, '--publish', 'never'],
+    { env: releaseEnvironment() },
+  );
 
   console.log('hydra-desktop release: building ZIP with Hydra.app at archive root');
   await rm(zipPath, { force: true });
