@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import { useSessions } from '../sessions/SessionsProvider';
+import { selectTabSession } from './tabSelectors';
 import {
   chooseInitialSession,
   INITIAL_TABS_STATE,
@@ -50,7 +51,7 @@ export interface TabsApi extends TabsState {
 const TabsContext = createContext<TabsApi | null>(null);
 
 export function TabsProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { control } = useSessions();
+  const { control, actions } = useSessions();
   const [state, dispatch] = useReducer(tabsReducer, INITIAL_TABS_STATE);
   const bootstrapped = useRef(false);
 
@@ -92,6 +93,17 @@ export function TabsProvider({ children }: { children: ReactNode }): JSX.Element
       // Local preferences are best effort.
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!activeTab || activeTab.sessionKind !== 'worker') return;
+    const row = selectTabSession(control.view, activeTab);
+    if (!row || row.kind !== 'worker' || !row.completed) return;
+    for (const occurrence of row.occurrences) {
+      if (occurrence.kind === 'complete' && occurrence.readAt === null) {
+        actions.markNotificationRead(occurrence.id);
+      }
+    }
+  }, [activeTab, control.view, actions]);
 
   const openTab = useCallback((
     session: string,

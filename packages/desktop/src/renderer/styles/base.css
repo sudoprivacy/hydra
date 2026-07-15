@@ -921,7 +921,12 @@ body.hydra-resizing {
   display: inline-block;
   position: relative;
 }
-.hydra-sdot--running { background: var(--hy-run-running); }
+.hydra-sdot--running {
+  background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--hy-run-idle) 32%, transparent);
+  border-top-color: var(--hy-run-idle);
+}
+.hydra-sdot--completed { background: var(--hy-ok); }
 .hydra-sdot--idle {
   background: transparent;
   border: 1.5px solid var(--hy-run-idle);
@@ -935,32 +940,18 @@ body.hydra-resizing {
 .hydra-sdot--unknown { background: var(--hy-run-unknown); }
 
 /* ── live activity motion ─────────────────────────────────────────────
-   Only genuinely-active states move: running (a worker actively churning,
-   or a live copilot) breathes + emits a soft radar ping; needs-input pulses
-   an amber halo because it's waiting on you. idle/stopped/error stay still
-   so the board doesn't shimmer. Honours the OS reduced-motion setting.
-   The same dot class is used in the sidebar and the tab strip. */
-@keyframes hy-breathe {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.22); opacity: 0.65; }
-}
-@keyframes hy-ping {
-  0% { box-shadow: 0 0 0 0 var(--hy-run-running); opacity: 0.45; }
-  100% { box-shadow: 0 0 0 5px var(--hy-run-running); opacity: 0; }
+   Running uses a familiar progress spinner. Completed/idle/stopped/error
+   stay still so the board only moves while work is actually in progress.
+   Honours the OS reduced-motion setting. */
+@keyframes hy-spin {
+  to { transform: rotate(360deg); }
 }
 @keyframes hy-attention {
   0%, 100% { box-shadow: 0 0 0 2px rgba(185, 118, 27, 0.28); }
   50% { box-shadow: 0 0 0 5px rgba(185, 118, 27, 0.0); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .hydra-sdot--running { animation: hy-breathe 1.6s ease-in-out infinite; }
-  .hydra-sdot--running::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    animation: hy-ping 1.8s ease-out infinite;
-  }
+  .hydra-sdot--running { animation: hy-spin 720ms linear infinite; }
   .hydra-sdot--needs-input { animation: hy-attention 1.1s ease-in-out infinite; }
 }
 
@@ -1426,13 +1417,9 @@ body.hydra-resizing .hydra-resizer::after {
   width: 9px;
   height: 9px;
 }
-.hydra-sdot--running,
 .hydra-sdot--needs-input {
   animation: none;
   box-shadow: none;
-}
-.hydra-sdot--running::after {
-  display: none;
 }
 .hydra-sdot--idle {
   border-width: 1.4px;

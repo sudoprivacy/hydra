@@ -289,6 +289,12 @@
   margin-right: 2px;
 }
 
+.hydra-row > .hydra-sdot--running {
+  width: 10px;
+  height: 10px;
+  margin-right: 0;
+}
+
 .hydra-tree__disclosure {
   min-height: 25px;
   margin: 0 3px;
