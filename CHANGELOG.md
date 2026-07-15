@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026071503] - 2026-07-15
+
+### Fixed
+- Make Desktop Copilot creation return promptly, keep CJK session names stable without duplicate rows, and prevent onboarding prompts from being sent into shell or update screens
+
 ## [0.3.2026071502] - 2026-07-15
 
 ### Fixed

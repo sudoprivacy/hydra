@@ -1,6 +1,6 @@
 {
   "name": "@hydra/protocol",
-  "version": "0.3.2026071502",
+  "version": "0.3.2026071503",
   "description": "Hydra control-plane seam — HydraControlClient over a swappable HydraTransport (engine-free, transport-agnostic)",
   "license": "MIT",
   "private": true,
