@@ -2,7 +2,7 @@ import type { SessionControlRow } from '../controlState/selectors';
 import { useContextUi } from '../context/ContextState';
 import { controlRowStatus, STATUS_LABELS } from '../status';
 import { useTabs, type Tab, type TabView } from '../tabs/TabsProvider';
-import { ListFilter, SquarePen } from '../ui/icons';
+import { ListFilter, ListTree } from '../ui/icons';
 import { useSessions } from '../sessions/SessionsProvider';
 import { useShellUi } from './shellState';
 import { RowMenu } from '../sidebar/RowMenu';
@@ -58,7 +58,7 @@ export function SessionHeader({ tab, row }: { tab: Tab; row: SessionControlRow }
             aria-pressed={contextUi.isOpenFor(tab.sessionKind, row.session)}
             onClick={() => contextUi.toggleForSession(tab.sessionKind, row.session)}
           >
-            <SquarePen size={15} strokeWidth={1.65} aria-hidden="true" />
+            <ListTree size={15} strokeWidth={1.65} aria-hidden="true" />
             {row.activeAttentionCount > 0 ? <span className="hydra-session-header__attention-dot" /> : null}
           </button>
           <div className="hydra-session-header__more"><RowMenu row={row} /></div>
