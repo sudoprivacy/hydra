@@ -8,7 +8,8 @@ export type WorkerNeedsInputReason =
   | 'permission-request'
   | 'ask-user-question'
   | 'exit-plan'
-  | 'request-user-input';
+  | 'request-user-input'
+  | 'approval-required';
 
 export interface WorkerNeedsInputSignal {
   source: WorkerNeedsInputSignalSource;
@@ -21,6 +22,7 @@ export interface WorkerNeedsInputSignal {
 export type CodexRuntimeSignalReason =
   | 'task-started'
   | 'request-user-input'
+  | 'approval-required'
   | 'input-resolved'
   | 'turn-complete'
   | 'turn-aborted';
@@ -155,13 +157,18 @@ export function classifyAgentHookEvent(
 }
 
 export function classifyCodexNeedsInputTranscriptText(text: string): WorkerNeedsInputSignal | undefined {
-  let candidate: { callId: string; question?: string } | undefined;
+  let candidate: {
+    callId: string;
+    question?: string;
+    reason: Extract<WorkerNeedsInputReason, 'request-user-input' | 'approval-required'>;
+  } | undefined;
   const parsed = parseCodexTranscriptLines(text.split(/\r?\n/));
   for (const event of parsed.events) {
     if (event.kind === 'needs-input') {
       candidate = {
         callId: event.callId ?? event.nativeId,
         question: event.question,
+        reason: event.needsInputReason ?? 'request-user-input',
       };
     } else if (event.kind === 'input-resolved'
       || event.kind === 'turn-complete'
@@ -170,11 +177,13 @@ export function classifyCodexNeedsInputTranscriptText(text: string): WorkerNeeds
     }
   }
   if (!candidate || parsed.state.pendingCallId !== candidate.callId) return undefined;
-  const question = candidate.question ?? 'Codex is waiting for input.';
+  const question = candidate.question ?? (candidate.reason === 'approval-required'
+    ? 'Codex is waiting for command approval.'
+    : 'Codex is waiting for input.');
   return {
     source: 'codex-transcript',
-    reason: 'request-user-input',
-    title: 'Codex needs input',
+    reason: candidate.reason,
+    title: candidate.reason === 'approval-required' ? 'Codex needs approval' : 'Codex needs input',
     body: truncateBody(question),
     fingerprint: `codex:${hashText(candidate.callId)}`,
   };
@@ -194,15 +203,19 @@ export function classifyCodexRuntimeTranscriptText(text: string): CodexRuntimeSi
           fingerprint: `codex-runtime:${hashText(event.nativeId)}`,
         };
         break;
-      case 'needs-input':
+      case 'needs-input': {
+        const reason = event.needsInputReason ?? 'request-user-input';
         latest = {
           state: 'needs-input',
-          reason: 'request-user-input',
-          title: 'Codex needs input',
-          body: truncateBody(event.question ?? 'Codex is waiting for input.'),
+          reason,
+          title: reason === 'approval-required' ? 'Codex needs approval' : 'Codex needs input',
+          body: truncateBody(event.question ?? (reason === 'approval-required'
+            ? 'Codex is waiting for command approval.'
+            : 'Codex is waiting for input.')),
           fingerprint: `codex-runtime:${hashText(event.callId ?? event.nativeId)}`,
         };
         break;
+      }
       case 'input-resolved':
         latest = {
           state: 'running',

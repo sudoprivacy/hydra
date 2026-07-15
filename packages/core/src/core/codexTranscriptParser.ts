@@ -7,17 +7,23 @@ export type CodexTranscriptEventKind =
   | 'turn-complete'
   | 'turn-aborted';
 
+export type CodexTranscriptNeedsInputReason =
+  | 'request-user-input'
+  | 'approval-required';
+
 export interface CodexTranscriptEvent {
   kind: CodexTranscriptEventKind;
   nativeId: string;
   turnId?: string;
   callId?: string;
   question?: string;
+  needsInputReason?: CodexTranscriptNeedsInputReason;
   observedAt?: string;
   sourceSequence?: number;
 }
 
 export interface CodexTranscriptParserState {
+  parserVersion?: number;
   currentTurnId?: string;
   pendingCallId?: string;
   lastCallId?: string;
@@ -30,16 +36,20 @@ export interface CodexTranscriptParseResult {
 }
 
 const MAX_NATIVE_ID_LENGTH = 500;
+export const CODEX_TRANSCRIPT_PARSER_VERSION = 2;
 
 export function createCodexTranscriptParserState(): CodexTranscriptParserState {
-  return {};
+  return { parserVersion: CODEX_TRANSCRIPT_PARSER_VERSION };
 }
 
 export function parseCodexTranscriptLines(
   lines: readonly string[],
   initialState: CodexTranscriptParserState = createCodexTranscriptParserState(),
 ): CodexTranscriptParseResult {
-  const state: CodexTranscriptParserState = { ...initialState };
+  const state: CodexTranscriptParserState = {
+    ...initialState,
+    parserVersion: CODEX_TRANSCRIPT_PARSER_VERSION,
+  };
   const events: CodexTranscriptEvent[] = [];
 
   for (const line of lines) {
@@ -82,13 +92,33 @@ export function parseCodexTranscriptLines(
           turnId: state.currentTurnId,
           callId: resolvedCallId,
           question,
+          needsInputReason: 'request-user-input',
           observedAt,
           sourceSequence,
         });
         continue;
       }
 
-      if (payloadType === 'function_call_output'
+      const approvalRequest = parseCodexExecApprovalRequest(payload);
+      if (approvalRequest) {
+        const resolvedCallId = callId
+          ?? `approval:${hashText(`${state.currentTurnId ?? 'turn'}:${approvalRequest.question}`)}`;
+        state.pendingCallId = resolvedCallId;
+        state.lastCallId = resolvedCallId;
+        events.push({
+          kind: 'needs-input',
+          nativeId: resolvedCallId,
+          turnId: state.currentTurnId,
+          callId: resolvedCallId,
+          question: approvalRequest.question,
+          needsInputReason: 'approval-required',
+          observedAt,
+          sourceSequence,
+        });
+        continue;
+      }
+
+      if ((payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output')
         && callId
         && callId === state.pendingCallId) {
         events.push({
@@ -135,6 +165,7 @@ export function parseCodexTranscriptLines(
           turnId,
           callId,
           question,
+          needsInputReason: 'request-user-input',
           observedAt,
           sourceSequence,
         });
@@ -216,6 +247,47 @@ function firstQuestionText(payload: Record<string, unknown> | undefined): string
   }
   const direct = getString(payload, ['question', 'prompt', 'message', 'header']);
   return direct ? normalizeSingleLine(direct) : undefined;
+}
+
+function parseCodexExecApprovalRequest(
+  payload: Record<string, unknown>,
+): { question: string } | undefined {
+  if (getString(payload, ['type']) !== 'custom_tool_call') return undefined;
+  const toolName = getString(payload, ['name']);
+  if (toolName !== 'exec' && toolName !== 'exec_command') return undefined;
+
+  const inputObject = parseArgumentsObject(payload.input);
+  if (inputObject) {
+    const sandboxPermissions = getString(inputObject, ['sandbox_permissions', 'sandboxPermissions']);
+    if (sandboxPermissions !== 'require_escalated') return undefined;
+    return {
+      question: getString(inputObject, ['justification'])
+        ?? 'Codex is waiting for command approval.',
+    };
+  }
+
+  if (typeof payload.input !== 'string') return undefined;
+  const source = payload.input;
+  if (toolName === 'exec' && !/\btools\.exec_command\s*\(/.test(source)) return undefined;
+  if (!/["']?sandbox_permissions["']?\s*:\s*["']require_escalated["']/.test(source)) return undefined;
+  return {
+    question: extractDoubleQuotedProperty(source, 'justification')
+      ?? 'Codex is waiting for command approval.',
+  };
+}
+
+function extractDoubleQuotedProperty(source: string, property: string): string | undefined {
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(
+    `["']?${escapedProperty}["']?\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`,
+  ));
+  if (!match) return undefined;
+  try {
+    const value = JSON.parse(match[1]);
+    return typeof value === 'string' && value.trim() ? normalizeSingleLine(value) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseArgumentsObject(value: unknown): Record<string, unknown> | undefined {

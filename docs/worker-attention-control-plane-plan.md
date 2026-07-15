@@ -330,15 +330,21 @@ The incremental parser must understand at least:
 - `task_started` -> `running`;
 - `request_user_input` event -> `needs-input`;
 - `response_item` function call named `request_user_input` -> `needs-input`;
+- `response_item` escalated `custom_tool_call` for `exec` / `exec_command`
+  -> approval-flavored `needs-input`;
 - matching `function_call_output` -> resolve needs-input and return to
+  `running`;
+- matching `custom_tool_call_output` -> resolve command approval and return to
   `running`;
 - `task_complete` / `turn_complete` -> complete and `idle`;
 - `turn_aborted` -> resolve pending needs-input and move to `idle` with an
   aborted reason.
 
-Parser cursor state includes transcript identity, byte offset, and last native
-sequence/call identifier. It must not rescan the last fixed-size transcript
-window on every poll.
+Parser cursor state includes parser version, transcript identity, byte offset,
+and last native sequence/call identifier. A parser upgrade may perform one
+bounded recovery scan that restores only the latest unresolved attention; it
+must not replay historical completion. It must not rescan the last fixed-size
+transcript window on every poll.
 
 ### 9.2 Claude
 
