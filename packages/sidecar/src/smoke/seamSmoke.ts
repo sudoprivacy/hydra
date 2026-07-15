@@ -25,6 +25,19 @@ function runGit(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  label: string,
+  timeoutMs = 3000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
 /** Build a git repo with a `main` base and a `feature` branch that has changes. */
 function buildGitRepo(root: string): void {
   fs.mkdirSync(root, { recursive: true });
@@ -82,17 +95,29 @@ async function main(): Promise<void> {
     assert.deepEqual(empty.workers, [], 'no workers initially');
     assert.equal(empty.count, 0, 'count is 0 initially');
 
-    // Desktop-created copilots must receive the same Hydra onboarding prompt
-    // that the VS Code extension sends after creating a copilot.
-    const copilot = await client.createCopilot({ agent: 'claude', name: 'seam-copilot' });
+    // Creation returns once the durable session exists. Readiness, onboarding,
+    // and the optional first task continue in the background in that order.
+    const copilot = await client.createCopilot({
+      agent: 'claude',
+      name: 'seam-copilot',
+      task: 'start with this task',
+    });
     assert.equal(copilot.status, 'created', 'copilot created');
     assert.equal(copilot.workdir, tempHome, 'desktop seam defaults copilot workdir to HOME');
-    assert.ok(
-      backend.messages.some(m =>
-        m.sessionName === copilot.session && m.message.includes('You are a Hydra copilot'),
-      ),
-      'desktop seam sends copilot onboarding prompt',
+    assert.equal(
+      backend.messages.filter(message => message.sessionName === copilot.session).length,
+      0,
+      'create response is not blocked by agent readiness or prompt delivery',
     );
+    await waitFor(
+      () => backend.messages.filter(message => message.sessionName === copilot.session).length === 2,
+      'copilot background initialization',
+    );
+    const copilotMessages = backend.messages
+      .filter(message => message.sessionName === copilot.session)
+      .map(message => message.message);
+    assert.match(copilotMessages[0], /You are a Hydra copilot/);
+    assert.equal(copilotMessages[1], 'start with this task');
     const parentedWorker = await client.createWorker({
       temp: true,
       name: 'parented-worker',

@@ -267,6 +267,13 @@ function testPromptHandlers(): void {
   assert.equal(codexTrust.blocksReadiness, true);
   assert.deepEqual(codexTrust.handle('Do you trust the contents of this directory?'), { kind: 'sendKeys', keys: '' });
 
+  const codexUpdate = handlerById('codex', 'codex-update-picker');
+  assert.equal(codexUpdate.blocksReadiness, true);
+  assert.deepEqual(
+    codexUpdate.handle('Update available!\n1. Update now\n2. Skip\nPress enter to continue'),
+    { kind: 'sendKeys', keys: 'Down' },
+  );
+
   const codexHookReview = handlerById('codex', 'codex-hook-review');
   assert.equal(codexHookReview.blocksReadiness, true);
   assert.deepEqual(codexHookReview.handle('Hooks need review'), { kind: 'sendKeys', keys: 'Down' });

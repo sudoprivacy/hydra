@@ -41,7 +41,7 @@ interface CreateSessionModalProps {
   busy?: boolean;
   error?: string | null;
   onCreateWorker: (input: CreateWorkerInput) => void;
-  onCreateCopilot: (input: CreateCopilotInput, initialTask?: string) => void;
+  onCreateCopilot: (input: CreateCopilotInput) => void;
   onClose: () => void;
 }
 
@@ -83,6 +83,7 @@ export function CreateSessionModal({
   const [workdirTouched, setWorkdirTouched] = useState(false);
   const [copilotTask, setCopilotTask] = useState('');
   const [plan, setPlan] = useState(false);
+  const submittingRef = useRef(false);
 
   const selectedAgent = creationOptions?.agents.find(option => option.id === agent);
   const selectedRepository = creationOptions?.repositories.find(option => option.value === repoChoice);
@@ -110,6 +111,10 @@ export function CreateSessionModal({
   }, [plan, selectedAgent]);
 
   useEffect(() => {
+    if (!busy) submittingRef.current = false;
+  }, [busy]);
+
+  useEffect(() => {
     if (initialKind !== 'copilot' || nameTouched || !selectedAgent) return;
     setName(plan ? selectedAgent.suggestedPlanName : selectedAgent.suggestedCopilotName);
   }, [initialKind, nameTouched, plan, selectedAgent]);
@@ -125,7 +130,8 @@ export function CreateSessionModal({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (busy || optionsLoading || validity.error) return;
+    if (submittingRef.current || busy || optionsLoading || validity.error) return;
+    submittingRef.current = true;
 
     if (initialKind === 'copilot') {
       onCreateCopilot(trimObject<CreateCopilotInput>({
@@ -133,7 +139,8 @@ export function CreateSessionModal({
         agent,
         name,
         plan: plan || undefined,
-      }), copilotTask.trim() || undefined);
+        task: copilotTask.trim() || undefined,
+      }));
       return;
     }
 
@@ -167,7 +174,7 @@ export function CreateSessionModal({
     : initialWorkerType === 'code' ? 'Create Worker' : 'Create Local Task';
 
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} closeDisabled={busy}>
       <form className="hydra-form" onSubmit={submit}>
         {initialKind === 'copilot' ? (
           <CopilotFields
@@ -249,7 +256,7 @@ export function CreateSessionModal({
         {error ? <p className="hydra-form__error" role="alert">{error}</p> : null}
         {validity.hint ? <p className="hydra-form__hint">{validity.hint}</p> : null}
         <div className="hydra-form__actions">
-          <button type="button" className="hydra-btn" onClick={onClose}>
+          <button type="button" className="hydra-btn" disabled={busy} onClick={onClose}>
             Cancel
           </button>
           <button
