@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026071502] - 2026-07-15
+
+### Fixed
+- Prevent tagged Desktop builds from attempting an early GitHub upload before the combined release gate completes
+
 ## [0.3.2026071501] - 2026-07-15
 
 ### Added
