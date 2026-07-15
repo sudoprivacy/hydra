@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.2026071500] - 2026-07-15
+
+### Added
+- Introduce the Hydra Desktop beta with a terminal-first workspace, multi-session navigation, worker creation, attention inbox, diff review, and polished supporting flows
+- Add signed and Apple-notarized macOS distribution for Apple Silicon through verified DMG and ZIP artifacts
+- Add durable worker runtime v2 coordination, lifecycle identity, completion jobs, events, and notification occurrences shared across CLI, VS Code, and Desktop
+
+### Changed
+- Unify worker lifecycle and notification actions across Hydra surfaces and improve Desktop terminal responsiveness, sidebar density, and session creation
+- Govern monorepo version consistency, release packaging, and compatibility validation with fail-closed smoke coverage
+
+### Fixed
+- Harden archive concurrency, diff and tmux ownership safety, packaged-app PATH handling, terminal environment isolation, Unicode rendering, link opening, scrollback, and stale runtime cleanup
+
 ## [0.3.2026062800] - 2026-06-28
 
 ### Added
