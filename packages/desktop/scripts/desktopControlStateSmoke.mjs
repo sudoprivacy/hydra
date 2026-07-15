@@ -14,6 +14,7 @@ const bundled = await build({
   stdin: {
     contents: `
       export * from './controlState/index.ts';
+      export * from './status.ts';
     `,
     resolveDir: renderer,
     sourcefile: 'desktop-control-state-smoke-entry.ts',
@@ -38,6 +39,7 @@ const {
   applyNotificationOccurrenceSnapshot,
   applyRuntimeSnapshot,
   applySessionsSnapshot,
+  controlRowStatus,
   selectCopilotContext,
   selectDesktopControlView,
   selectSessionHeader,
@@ -205,6 +207,8 @@ assert.equal(view.workerGroups[0].label, 'repo-a');
 assert.equal(view.copilots[0].workerCount, 2);
 assert.equal(view.copilots[0].repoCount, 1);
 assert.equal(view.workers[0].runtimeState, 'running');
+assert.equal(controlRowStatus(view.workers[0]), 'running');
+assert.equal(controlRowStatus(view.workers[1]), 'idle');
 
 const divergentSessions = {
   ...sessions,
@@ -278,9 +282,20 @@ assert.equal(selectDesktopControlView(model).workers[0].runtimeState, 'needs-inp
 model = applyRuntimeSnapshot(model, {
   ...runtimeList,
   lastEventSeq: 20,
-  runtimes: [runtime(1, { revision: 4, state: 'idle', observedAt: '2026-07-11T01:00:20.000Z' }), runtime(2)],
+  runtimes: [
+    runtime(1, {
+      revision: 4,
+      state: 'idle',
+      reason: 'complete',
+      observedAt: '2026-07-11T01:00:20.000Z',
+    }),
+    runtime(2),
+  ],
 });
-assert.equal(selectDesktopControlView(model).workers[0].runtimeState, 'idle');
+const completedWorker = selectDesktopControlView(model).workers[0];
+assert.equal(completedWorker.runtimeState, 'idle');
+assert.equal(completedWorker.runtimeReason, 'complete');
+assert.equal(controlRowStatus(completedWorker), 'idle', 'completion is not shown before its unread notification arrives');
 assert.equal(model.lastEventSeq, 16, 'runtime refresh cursor does not advance the applied event cursor');
 model = applyRuntimeSnapshot(model, {
   ...runtimeList,
@@ -322,6 +337,8 @@ assert.equal(result.sessionRefreshRequired, true, 'event at the notification cur
 model = result.model;
 view = selectDesktopControlView(model);
 assert.deepEqual(view.attention.map(row => row.occurrence.kind), ['error', 'needs-input', 'complete']);
+assert.equal(view.workers[0].completed, true);
+assert.equal(controlRowStatus(view.workers[0]), 'completed');
 assert.equal(view.unreadTotal, 3);
 assert.equal(view.workers[0].unreadCount, 2, 'worker counts join by stable workerId');
 assert.equal(view.copilots[0].activeAttentionCount, 3, 'copilot aggregates its managed Workers');
@@ -333,10 +350,29 @@ assert.deepEqual(
 assert.equal(selectWorkerContext(model, 1).occurrences.length, 2);
 assert.equal(selectSessionHeader(model, 'repo-a_feat-one').activeAttentionCount, 2);
 
+model = applyNotificationOccurrenceSnapshot(model, {
+  version: 2,
+  loadedAt: '2026-07-11T02:04:30.000Z',
+  lastEventSeq: 23,
+  occurrences: [
+    { ...complete, readAt: '2026-07-11T02:04:30.000Z' },
+    needsInput,
+    error,
+  ],
+  count: 3,
+  totalCount: 3,
+  activeCount: 3,
+  unreadCount: 2,
+});
+view = selectDesktopControlView(model);
+assert.equal(view.workers[0].completed, false);
+assert.equal(controlRowStatus(view.workers[0]), 'idle', 'opening the Worker clears its green completion dot');
+assert.deepEqual(view.attention.map(row => row.occurrence.kind), ['error', 'needs-input']);
+
 const newerEmpty = {
   version: 2,
   loadedAt: '2026-07-11T02:05:00.000Z',
-  lastEventSeq: 23,
+  lastEventSeq: 24,
   occurrences: [],
   count: 0,
   totalCount: 0,
@@ -347,7 +383,7 @@ model = applyNotificationOccurrenceSnapshot(model, newerEmpty);
 assert.equal(selectDesktopControlView(model).attention.length, 0, 'new snapshot removes stale occurrences');
 model = applyNotificationOccurrenceSnapshot(model, {
   ...newerEmpty,
-  lastEventSeq: 22,
+  lastEventSeq: 23,
   occurrences: [error],
   count: 1,
   totalCount: 1,

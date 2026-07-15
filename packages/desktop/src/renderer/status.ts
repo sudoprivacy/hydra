@@ -2,12 +2,13 @@
 // looks the same wherever it appears. A session's status folds its lifecycle
 // (running / stopped) and — for workers — its live runtime projection into a
 // single glanceable token:
-//   running, idle, stopped, needs-input, error, or unknown.
+//   running, completed, idle, stopped, needs-input, error, or unknown.
 
 import type { SessionControlRow } from './controlState/selectors';
 
 export type SessionStatus =
   | 'running'
+  | 'completed'
   | 'idle'
   | 'stopped'
   | 'needs-input'
@@ -16,6 +17,7 @@ export type SessionStatus =
 
 export const STATUS_LABELS: Record<SessionStatus, string> = {
   running: 'Running',
+  completed: 'Completed',
   idle: 'Idle',
   stopped: 'Stopped',
   'needs-input': 'Needs input',
@@ -31,15 +33,20 @@ export function controlRowStatus(row: SessionControlRow): SessionStatus {
   if (row.kind === 'copilot') {
     return 'running';
   }
+  if (row.runtimeState === 'needs-input') {
+    return 'needs-input';
+  }
+  if (row.runtimeState === 'error') {
+    return 'error';
+  }
+  if (row.completed) {
+    return 'completed';
+  }
   switch (row.runtimeState) {
     case 'running':
       return 'running';
     case 'idle':
       return 'idle';
-    case 'needs-input':
-      return 'needs-input';
-    case 'error':
-      return 'error';
     default:
       return 'unknown';
   }
