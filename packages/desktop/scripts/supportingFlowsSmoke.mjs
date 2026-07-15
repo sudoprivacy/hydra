@@ -11,6 +11,7 @@ const desktop = path.join(here, '..');
 const renderer = path.join(desktop, 'src', 'renderer');
 const { filterSidebarView } = await loadRendererModule(path.join(renderer, 'sidebar', 'sidebarFilter.ts'));
 const { discloseRows } = await loadRendererModule(path.join(renderer, 'sidebar', 'disclosure.ts'));
+const { treeRowIconName } = await loadRendererModule(path.join(renderer, 'sidebar', 'rowIcon.ts'));
 const {
   chooseInitialRepository,
   MANUAL_REPOSITORY,
@@ -26,6 +27,7 @@ const copilot = {
 };
 const codeWorker = {
   kind: 'worker',
+  type: 'code',
   workerId: 7,
   session: 'hydra_feat-search',
   name: 'desktop-search',
@@ -37,6 +39,7 @@ const codeWorker = {
 };
 const taskWorker = {
   ...codeWorker,
+  type: 'task',
   workerId: 8,
   session: 'task_docs',
   name: 'docs-cleanup',
@@ -69,6 +72,9 @@ assert.equal(byRepo.workerGroups[0].workers[0].workerId, 7);
 const byFolder = filterSidebarView(view, '/notes');
 assert.equal(byFolder.workerGroups[0].kind, 'local-tasks', 'folder search preserves Local Tasks');
 assert.equal(filterSidebarView(view, 'missing').noMatches, true);
+assert.equal(treeRowIconName(codeWorker), 'git-branch', 'code workers keep the branch icon');
+assert.equal(treeRowIconName(taskWorker), null, 'task workers omit the row icon');
+assert.equal(treeRowIconName(copilot), 'git-branch', 'copilots keep their existing icon');
 
 const repositoryOptions = [
   {
@@ -138,6 +144,10 @@ assert.match(
   /\.hydra-row__menu\.hydra-menu--open\s*\{[^}]*z-index:\s*[1-9]\d*;/s,
   'an open row menu raises its transformed stacking context above following tree rows',
 );
+
+const sessionHeaderSource = fs.readFileSync(path.join(renderer, 'shell', 'SessionHeader.tsx'), 'utf8');
+assert.match(sessionHeaderSource, /<ListTree\b/, 'context toggle uses the list-tree icon');
+assert.equal(sessionHeaderSource.includes('SquarePen'), false, 'context toggle does not use the edit icon');
 
 const desktopPackage = JSON.parse(fs.readFileSync(path.join(desktop, 'package.json'), 'utf8'));
 assert.equal(typeof desktopPackage.dependencies['lucide-react'], 'string', 'coherent icon dependency declared');

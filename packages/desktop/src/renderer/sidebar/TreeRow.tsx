@@ -7,10 +7,12 @@ import { controlRowStatus, STATUS_LABELS } from '../status';
 import { useTabs } from '../tabs/TabsProvider';
 import { GitBranch } from '../ui/icons';
 import { RowMenu } from './RowMenu';
+import { treeRowIconName } from './rowIcon';
 
 export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
   const tabs = useTabs();
   const status = controlRowStatus(row);
+  const rowIcon = treeRowIconName(row);
   const selected = tabs.activeSession === row.session;
   const summary = row.kind === 'copilot'
     ? copilotSummaryLabel(row.workerCount, row.repoCount)
@@ -48,9 +50,11 @@ export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
         }
       }}
     >
-      <span className="hydra-row__icon" aria-hidden="true">
-        <GitBranch size={row.kind === 'copilot' ? 17 : 15} strokeWidth={1.55} />
-      </span>
+      {rowIcon ? (
+        <span className="hydra-row__icon" aria-hidden="true">
+          <GitBranch size={row.kind === 'copilot' ? 17 : 15} strokeWidth={1.55} />
+        </span>
+      ) : null}
       <div className="hydra-row__main">
         <div className="hydra-row__line">
           <span className="hydra-row__name">{row.name}</span>
