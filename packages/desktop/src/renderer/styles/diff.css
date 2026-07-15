@@ -138,6 +138,7 @@
 .hydra-diff__filehead {
   position: sticky;
   top: 0;
+  z-index: 2;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -149,35 +150,76 @@
 }
 .hydra-diff__stat-add { color: var(--hy-ok); font-weight: 600; }
 .hydra-diff__stat-del { color: var(--hy-danger); font-weight: 600; }
+.hydra-diff__side-note {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--hy-border);
+  background: var(--hy-panel);
+  color: var(--hy-muted);
+  font-size: 11px;
+}
 .hydra-diff__code {
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  line-height: 1.55;
 }
 .hydra-diff__code td {
   padding: 0 8px;
   vertical-align: top;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+}
+.hydra-diff__code--split .hydra-diff__cell {
+  min-width: 28rem;
 }
 .hydra-diff__ln {
   width: 46px;
+  min-width: 46px;
   text-align: right;
   color: var(--hy-faint);
   user-select: none;
   background: var(--hy-panel);
   white-space: nowrap;
 }
-.hydra-diff__row--add td { background: rgba(47, 163, 106, 0.12); }
-.hydra-diff__row--del td { background: rgba(200, 63, 47, 0.12); }
+.hydra-diff__ln--right {
+  border-left: 1px solid var(--hy-border);
+}
+.hydra-diff__row--add > td { background: rgba(47, 163, 106, 0.12); }
+.hydra-diff__row--del > td { background: rgba(200, 63, 47, 0.12); }
+.hydra-diff__cell--add {
+  background: rgba(47, 163, 106, 0.12);
+  box-shadow: inset 3px 0 var(--hy-ok);
+}
+.hydra-diff__cell--del {
+  background: rgba(200, 63, 47, 0.12);
+  box-shadow: inset 3px 0 var(--hy-danger);
+}
 .hydra-diff__cell--empty { background: var(--hy-panel); }
 .hydra-diff__sign {
   width: 18px;
   text-align: center;
   color: var(--hy-muted);
   user-select: none;
+}
+.hydra-diff__gap td {
+  padding: 0;
+  border-top: 1px solid var(--hy-border);
+  border-bottom: 1px solid var(--hy-border);
+}
+.hydra-diff__gap-button {
+  width: 100%;
+  padding: 3px 10px;
+  border: 0;
+  background: var(--hy-panel);
+  color: var(--hy-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.hydra-diff__gap-button:hover {
+  background: var(--hy-hover);
 }
 .hydra-diff__ship {
   border: 1px solid var(--hy-border);

@@ -26,6 +26,7 @@ import {
   basePathFor,
   buildShipCommands,
   classifyStatus,
+  collapseUnchangedRows,
   computeLineDiff,
   currentPathFor,
   splitLines,
@@ -143,6 +144,28 @@ async function main(): Promise<void> {
     assert.equal(split[1].right.type, 'add');
     assert.equal(split[3].left.type, 'empty', 'the extra trailing add pads the base column');
     assert.equal(split[3].right.text, 'line4');
+
+    // ── unchanged-context compaction ──
+    const longContext = computeLineDiff(
+      `${Array.from({ length: 10 }, (_, index) => `before-${index + 1}`).join('\n')}\nold\n${Array.from({ length: 10 }, (_, index) => `after-${index + 1}`).join('\n')}\n`,
+      `${Array.from({ length: 10 }, (_, index) => `before-${index + 1}`).join('\n')}\nnew\n${Array.from({ length: 10 }, (_, index) => `after-${index + 1}`).join('\n')}\n`,
+    );
+    const compact = collapseUnchangedRows(
+      longContext.rows,
+      (row) => row.type === 'context',
+      2,
+      3,
+    );
+    assert.equal(compact[0].kind, 'gap', 'leading context is collapsed');
+    assert.equal(compact[0].kind === 'gap' ? compact[0].count : 0, 8);
+    const lastCompactItem = compact.at(-1);
+    assert.equal(lastCompactItem?.kind, 'gap', 'trailing context is collapsed');
+    assert.equal(lastCompactItem?.kind === 'gap' ? lastCompactItem.count : 0, 8);
+    assert.equal(
+      compact.filter((item) => item.kind === 'row').length,
+      6,
+      'two context lines remain on either side of the paired change',
+    );
 
     // ── ship handoff commands ──
     const commands = buildShipCommands({ branch: summary.branch, workdir: summary.workdir });
