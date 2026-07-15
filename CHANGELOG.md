@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2026071501] - 2026-07-15
+
+### Added
+- Add automated signed and Apple-notarized macOS Desktop releases with in-app update prompts
+
+### Fixed
+- Prevent older extension activations from replacing a newer Hydra CLI installation
+- Clarify Desktop worker activity and completion status, and correct task and context icons
+- Normalize the macOS app icon size and transparency across system surfaces
+
 ## [0.3.2026071500] - 2026-07-15
 
 ### Added
