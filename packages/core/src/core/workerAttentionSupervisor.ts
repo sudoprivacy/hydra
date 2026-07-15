@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import {
+  CODEX_TRANSCRIPT_PARSER_VERSION,
   createCodexTranscriptParserState,
   parseCodexTranscriptLines,
   type CodexTranscriptEvent,
@@ -251,7 +252,18 @@ export class WorkerAttentionSupervisor implements Disposable {
       return 0;
     }
     const sameStoredTranscript = stored && sameTranscript(stored.transcript, transcript);
+    const parserUpgradeCursor = stored
+      && sameStoredTranscript
+      && stored.parserState.parserVersion !== CODEX_TRANSCRIPT_PARSER_VERSION
+      ? createCursor(
+        worker.workerId,
+        lifecycleEpoch,
+        transcript,
+        this.timestamp(),
+      )
+      : undefined;
     const epochResetCursor = stored
+      && !parserUpgradeCursor
       && stored.lifecycleEpoch !== lifecycleEpoch
       && sameStoredTranscript
       && stored.byteOffset <= stat.size
@@ -264,21 +276,25 @@ export class WorkerAttentionSupervisor implements Disposable {
       )
       : undefined;
     if (epochResetCursor) this.cursorStore.set(epochResetCursor);
-    const cursor = epochResetCursor
+    const cursor = parserUpgradeCursor
+      ?? epochResetCursor
       ?? (stored
         && stored.lifecycleEpoch === lifecycleEpoch
         && sameStoredTranscript
         && stored.byteOffset <= stat.size
         ? stored
         : createCursor(worker.workerId, lifecycleEpoch, transcript, this.timestamp()));
-    if (cursor.byteOffset === stat.size) return 0;
+    if (cursor.byteOffset === stat.size) {
+      if (parserUpgradeCursor) this.cursorStore.set(parserUpgradeCursor);
+      return 0;
+    }
 
     const delta = readFileRange(transcriptPath, cursor.byteOffset, stat.size);
     if (delta.length === 0) return 0;
     const pending = Buffer.from(cursor.pendingBytesBase64, 'base64');
     const split = splitJsonLines(Buffer.concat([pending, delta]));
     const parsed = parseCodexTranscriptLines(split.lines, cursor.parserState);
-    const events = stored
+    const events = stored && !parserUpgradeCursor
       ? parsed.events
       : this.selectInitialRecoveryEvents(worker, parsed.events, parsed.state.pendingCallId);
     let activeLease = lease;
@@ -343,12 +359,13 @@ export class WorkerAttentionSupervisor implements Disposable {
     const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
     const runId = this.ensureActiveRun(worker, event);
     const signalId = this.signalId(worker, event);
+    const reason = event.needsInputReason ?? 'request-user-input';
     const occurrenceId = `codex-occurrence:${hashText(`${lifecycleEpoch}:${event.callId ?? event.nativeId}`)}`;
     const result = this.applyRuntime(
       worker,
       event,
       'needs-input',
-      'request-user-input',
+      reason,
       runId,
       occurrenceId,
     );
@@ -362,9 +379,13 @@ export class WorkerAttentionSupervisor implements Disposable {
 
     this.notificationStore.create({
       kind: 'needs-input',
-      title: `Worker #${worker.workerId} needs input`,
+      title: reason === 'approval-required'
+        ? `Worker #${worker.workerId} needs approval`
+        : `Worker #${worker.workerId} needs input`,
       body: truncateText(
-        redactText(event.question ?? 'Codex is waiting for input.'),
+        redactText(event.question ?? (reason === 'approval-required'
+          ? 'Codex is waiting for command approval.'
+          : 'Codex is waiting for input.')),
         MAX_NOTIFICATION_BODY,
       ),
       targetSession: worker.copilotSessionName,

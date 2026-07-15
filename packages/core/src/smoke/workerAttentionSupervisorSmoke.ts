@@ -284,6 +284,94 @@ async function testTranscriptCompletionAndCursorRestart(): Promise<void> {
   }
 }
 
+async function testCodexExecApprovalLifecycle(): Promise<void> {
+  const ctx = createContext('hydra-attention-approval-', 45);
+  const supervisor = createSupervisor(ctx, 'sidecar', 'sidecar-approval-owner');
+  try {
+    const approvalCall = JSON.stringify({
+      type: 'response_item',
+      sequence: 2,
+      payload: {
+        type: 'custom_tool_call',
+        status: 'completed',
+        call_id: 'call-approval',
+        name: 'exec',
+        input: [
+          'const result = await tools.exec_command({',
+          '  cmd: "printf approved > /tmp/approval.txt",',
+          '  sandbox_permissions: "require_escalated",',
+          '  justification: "Allow writing the requested file outside the worker?",',
+          '});',
+          'text(result);',
+        ].join('\n'),
+      },
+    });
+    fs.writeFileSync(ctx.transcriptFile, [
+      '{"type":"event_msg","sequence":1,"payload":{"type":"task_started","turn_id":"turn-approval"}}',
+      approvalCall,
+    ].join('\n'), 'utf-8');
+    const transcriptStat = fs.statSync(ctx.transcriptFile);
+    ctx.cursorStore.set({
+      version: 1,
+      workerId: ctx.worker.workerId,
+      lifecycleEpoch: ctx.worker.lifecycleEpoch!,
+      transcript: {
+        path: ctx.transcriptFile,
+        device: transcriptStat.dev,
+        inode: transcriptStat.ino,
+      },
+      byteOffset: transcriptStat.size,
+      pendingBytesBase64: '',
+      parserState: {
+        currentTurnId: 'turn-approval',
+      },
+      updatedAt: new Date().toISOString(),
+    });
+
+    const waiting = await supervisor.scanOnce();
+    assert.equal(
+      waiting.eventsProcessed,
+      1,
+      'parser upgrade must recover an approval skipped by the old cursor',
+    );
+    const waitingRuntime = ctx.runtimeV2Store.get(ctx.worker.workerId);
+    assert.equal(waitingRuntime?.state, 'needs-input');
+    assert.equal(waitingRuntime?.reason, 'approval-required');
+    const activeApproval = ctx.notificationStore.listOccurrences('active')
+      .filter(item => item.kind === 'needs-input');
+    assert.equal(activeApproval.length, 1);
+    assert.equal(activeApproval[0].title, `Worker #${ctx.worker.workerId} needs approval`);
+    assert.match(activeApproval[0].body, /outside the worker/);
+
+    const approvalOutput = JSON.stringify({
+      type: 'response_item',
+      sequence: 3,
+      payload: {
+        type: 'custom_tool_call_output',
+        call_id: 'call-approval',
+        output: [{ type: 'input_text', text: 'Script completed' }],
+      },
+    });
+    fs.appendFileSync(ctx.transcriptFile, `\n${approvalOutput}`, 'utf-8');
+
+    const resumed = await supervisor.scanOnce();
+    assert.equal(resumed.eventsProcessed, 1);
+    assert.equal(ctx.runtimeV2Store.get(ctx.worker.workerId)?.state, 'running');
+    assert.equal(ctx.runtimeV2Store.get(ctx.worker.workerId)?.reason, 'input-resolved');
+    assert.equal(
+      ctx.notificationStore.listOccurrences('active').filter(item => item.kind === 'needs-input').length,
+      0,
+    );
+    assert.equal(
+      ctx.notificationStore.listOccurrences('resolved').filter(item => item.kind === 'needs-input').length,
+      1,
+    );
+  } finally {
+    supervisor.dispose();
+    removeTree(ctx.root);
+  }
+}
+
 async function testCursorWriteFailureReplaysIdempotently(): Promise<void> {
   const ctx = createContext('hydra-attention-replay-', 43);
   ctx.cursorStore = new FailOnceCursorStore(path.join(ctx.hydraHome, 'codex-transcript-cursors.json'));
@@ -406,6 +494,7 @@ function removeTree(root: string): void {
 async function main(): Promise<void> {
   await testIncrementalCursorResolutionAbortAndLease();
   await testTranscriptCompletionAndCursorRestart();
+  await testCodexExecApprovalLifecycle();
   await testCursorWriteFailureReplaysIdempotently();
   await testInitialRecoveryClosesMatchingAbort();
   testStoresFailClosed();

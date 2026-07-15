@@ -174,6 +174,9 @@ function validateTranscriptIdentity(value: unknown, label: string): asserts valu
 
 function validateParserState(value: unknown, label: string): asserts value is CodexTranscriptParserState {
   if (!isRecord(value)) throw new Error(`${label} parserState has invalid shape`);
+  if (value.parserVersion !== undefined) {
+    validateNonNegativeSafeInteger(value.parserVersion, `${label} parserVersion`);
+  }
   validateOptionalString(value.currentTurnId, `${label} currentTurnId`);
   validateOptionalString(value.pendingCallId, `${label} pendingCallId`);
   validateOptionalString(value.lastCallId, `${label} lastCallId`);

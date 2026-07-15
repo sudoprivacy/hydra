@@ -189,6 +189,77 @@ async function testClassifier(): Promise<void> {
   ].join('\n')), 'Codex response_item request_user_input');
   assert.match(codexFunctionCall.body, /Approve plan/);
 
+  const codexApprovalCall = JSON.stringify({
+    type: 'response_item',
+    payload: {
+      type: 'custom_tool_call',
+      status: 'completed',
+      call_id: 'call-approval',
+      name: 'exec',
+      input: [
+        'const result = await tools.exec_command({',
+        '  cmd: "printf approved > /tmp/approval.txt",',
+        '  sandbox_permissions: "require_escalated",',
+        '  justification: "Allow writing the requested file outside the worker?",',
+        '});',
+        'text(result);',
+      ].join('\n'),
+    },
+  });
+  const codexApproval = assertSignal(classifyCodexNeedsInputTranscriptText([
+    '{"type":"turn_context","payload":{"turn_id":"turn-approval"}}',
+    codexApprovalCall,
+  ].join('\n')), 'Codex exec approval request');
+  assert.equal(codexApproval.reason, 'approval-required');
+  assert.equal(codexApproval.title, 'Codex needs approval');
+  assert.match(codexApproval.body, /outside the worker/);
+  assert.equal(
+    classifyCodexRuntimeTranscriptText(codexApprovalCall)?.reason,
+    'approval-required',
+  );
+
+  const codexDefaultSandboxCall = JSON.stringify({
+    type: 'response_item',
+    payload: {
+      type: 'custom_tool_call',
+      call_id: 'call-default-sandbox',
+      name: 'exec',
+      input: [
+        'const result = await tools.exec_command({',
+        '  cmd: "pwd",',
+        '  sandbox_permissions: "use_default",',
+        '});',
+      ].join('\n'),
+    },
+  });
+  assert.equal(
+    classifyCodexNeedsInputTranscriptText(codexDefaultSandboxCall),
+    undefined,
+    'Codex exec calls without escalation must not become needs-input',
+  );
+
+  const resolvedApprovalTranscript = [
+    '{"type":"turn_context","payload":{"turn_id":"turn-approval"}}',
+    codexApprovalCall,
+    JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'custom_tool_call_output',
+        call_id: 'call-approval',
+        output: [{ type: 'input_text', text: 'Script completed' }],
+      },
+    }),
+  ].join('\n');
+  assert.equal(
+    classifyCodexNeedsInputTranscriptText(resolvedApprovalTranscript),
+    undefined,
+    'matching Codex custom_tool_call_output must resolve command approval',
+  );
+  assert.equal(
+    classifyCodexRuntimeTranscriptText(resolvedApprovalTranscript)?.reason,
+    'input-resolved',
+  );
+
   assert.equal(classifyCodexNeedsInputTranscriptText([
     '{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-3"}}',
     '{"type":"event_msg","payload":{"type":"request_user_input","call_id":"call-3","turn_id":"turn-3","questions":[{"question":"Pick?"}]}}',
