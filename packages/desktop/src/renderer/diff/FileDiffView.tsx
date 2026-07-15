@@ -2,23 +2,50 @@
 // file, either inline (single column, +/- signs) or side-by-side (two columns).
 // All the diffing already happened in diffModel / useFileDiff — this is layout.
 
-import { toSideBySide, type ChangedFileView, type DiffRow, type LineDiff } from './diffModel';
+import { useState } from 'react';
+
+import {
+  collapseUnchangedRows,
+  toSideBySide,
+  type ChangedFileView,
+  type DiffRow,
+  type LineDiff,
+} from './diffModel';
 import type { FileDiffState } from './useDiff';
 
 export type DiffViewMode = 'inline' | 'split';
 
 const SIGN: Record<DiffRow['type'], string> = { context: ' ', add: '+', del: '-' };
 
-function InlineDiff({ diff }: { diff: LineDiff }): JSX.Element {
+function UnchangedGap({ count, onExpand }: { count: number; onExpand: () => void }): JSX.Element {
   return (
-    <table className="hydra-diff__code">
+    <tr className="hydra-diff__gap">
+      <td colSpan={4}>
+        <button type="button" className="hydra-diff__gap-button" onClick={onExpand}>
+          {count} unchanged line{count === 1 ? '' : 's'} — show
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function InlineDiff({ diff }: { diff: LineDiff }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const items = expanded
+    ? diff.rows.map((row) => ({ kind: 'row' as const, row }))
+    : collapseUnchangedRows(diff.rows, (row) => row.type === 'context');
+
+  return (
+    <table className="hydra-diff__code hydra-diff__code--inline" aria-label="Inline file diff">
       <tbody>
-        {diff.rows.map((row, index) => (
-          <tr key={index} className={`hydra-diff__row--${row.type}`}>
-            <td className="hydra-diff__ln">{row.baseLine ?? ''}</td>
-            <td className="hydra-diff__ln">{row.currentLine ?? ''}</td>
-            <td className="hydra-diff__sign">{SIGN[row.type]}</td>
-            <td>{row.text}</td>
+        {items.map((item, index) => item.kind === 'gap' ? (
+          <UnchangedGap key={`gap-${index}`} count={item.count} onExpand={() => setExpanded(true)} />
+        ) : (
+          <tr key={`row-${index}`} className={`hydra-diff__row--${item.row.type}`}>
+            <td className="hydra-diff__ln">{item.row.baseLine ?? ''}</td>
+            <td className="hydra-diff__ln">{item.row.currentLine ?? ''}</td>
+            <td className="hydra-diff__sign">{SIGN[item.row.type]}</td>
+            <td className="hydra-diff__cell">{item.row.text}</td>
           </tr>
         ))}
       </tbody>
@@ -27,19 +54,35 @@ function InlineDiff({ diff }: { diff: LineDiff }): JSX.Element {
 }
 
 function SplitDiff({ diff }: { diff: LineDiff }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
   const rows = toSideBySide(diff.rows);
+  const items = expanded
+    ? rows.map((row) => ({ kind: 'row' as const, row }))
+    : collapseUnchangedRows(
+        rows,
+        (row) => row.left.type === 'context' && row.right.type === 'context',
+      );
+
   return (
-    <table className="hydra-diff__code">
+    <table className="hydra-diff__code hydra-diff__code--split" aria-label="Side-by-side file diff">
       <tbody>
-        {rows.map((row, index) => (
+        {items.map((item, index) => item.kind === 'gap' ? (
+          <UnchangedGap key={`gap-${index}`} count={item.count} onExpand={() => setExpanded(true)} />
+        ) : (
           <tr key={index}>
-            <td className="hydra-diff__ln">{row.left.lineNumber ?? ''}</td>
-            <td className={row.left.type === 'empty' ? 'hydra-diff__cell--empty' : `hydra-diff__row--${row.left.type}`}>
-              {row.left.text}
+            <td className="hydra-diff__ln">{item.row.left.lineNumber ?? ''}</td>
+            <td
+              className={`hydra-diff__cell hydra-diff__cell--${item.row.left.type}`}
+              aria-label={item.row.left.type === 'empty' ? 'No base content' : undefined}
+            >
+              {item.row.left.text}
             </td>
-            <td className="hydra-diff__ln">{row.right.lineNumber ?? ''}</td>
-            <td className={row.right.type === 'empty' ? 'hydra-diff__cell--empty' : `hydra-diff__row--${row.right.type}`}>
-              {row.right.text}
+            <td className="hydra-diff__ln hydra-diff__ln--right">{item.row.right.lineNumber ?? ''}</td>
+            <td
+              className={`hydra-diff__cell hydra-diff__cell--${item.row.right.type}`}
+              aria-label={item.row.right.type === 'empty' ? 'No current content' : undefined}
+            >
+              {item.row.right.text}
             </td>
           </tr>
         ))}
@@ -68,17 +111,27 @@ export function FileDiffView({ file, state, mode }: FileDiffViewProps): JSX.Elem
     body = <p className="hydra-diff__hint">Could not load {file.path}: {error}</p>;
   } else if (!lineDiff || lineDiff.truncated) {
     body = <p className="hydra-diff__hint">{file.path} is too large to diff inline.</p>;
-  } else if (lineDiff.rows.length === 0) {
+  } else if (lineDiff.added === 0 && lineDiff.removed === 0) {
     body = (
       <p className="hydra-diff__hint">
-        No line changes{file.kind === 'renamed' ? ' — renamed only.' : '.'}
+        {file.kind === 'added'
+          ? 'New empty file.'
+          : file.kind === 'deleted'
+            ? 'Deleted empty file.'
+            : `No line changes${file.kind === 'renamed' ? ' — renamed only.' : ' — metadata only.'}`}
       </p>
     );
   } else if (mode === 'split') {
-    body = <SplitDiff diff={lineDiff} />;
+    body = <SplitDiff key={file.path} diff={lineDiff} />;
   } else {
-    body = <InlineDiff diff={lineDiff} />;
+    body = <InlineDiff key={file.path} diff={lineDiff} />;
   }
+
+  const sideNotice = file.kind === 'added'
+    ? 'New file — the base side is empty.'
+    : file.kind === 'deleted'
+      ? 'Deleted file — the current side is empty.'
+      : null;
 
   return (
     <div className="hydra-diff__pane">
@@ -95,6 +148,9 @@ export function FileDiffView({ file, state, mode }: FileDiffViewProps): JSX.Elem
           </span>
         ) : null}
       </div>
+      {sideNotice && mode === 'split' ? (
+        <div className="hydra-diff__side-note">{sideNotice}</div>
+      ) : null}
       {body}
     </div>
   );
