@@ -7,6 +7,7 @@
   },
   "include": [
     "src/bootstrap.ts",
+    "src/autoUpdate.ts",
     "src/externalLinks.ts",
     "src/sidecarLauncher.ts",
     "src/main.ts",
@@ -17,6 +18,7 @@
     // and typechecked separately by tsconfig.renderer.json).
     "src/renderer/diff/diffModel.ts",
     "src/smoke/diffModelSmoke.ts",
+    "src/smoke/autoUpdateSmoke.ts",
     "src/smoke/externalLinksSmoke.ts"
   ],
   "references": [

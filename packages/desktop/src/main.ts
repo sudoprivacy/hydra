@@ -7,13 +7,15 @@
 //
 // It does NOT build Mission Control — the renderer is a thin React shell (M2).
 
-import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { normalizeExternalHttpUrl } from './externalLinks';
+import { startDesktopAutoUpdates, type DesktopUpdater } from './autoUpdate';
 import { launchSidecar, type SidecarHandle } from './sidecarLauncher';
 import { IPC_BOOTSTRAP_CHANNEL, IPC_OPEN_EXTERNAL_CHANNEL, type HydraBootstrap } from './bootstrap';
 
@@ -82,6 +84,45 @@ function installNavigationGuards(window: BrowserWindow, appUrl: string): void {
   });
 }
 
+function startAutoUpdates(): void {
+  const updater: DesktopUpdater = {
+    configure: (options) => {
+      autoUpdater.allowPrerelease = options.allowPrerelease;
+      autoUpdater.autoDownload = options.autoDownload;
+      autoUpdater.autoInstallOnAppQuit = options.autoInstallOnAppQuit;
+      autoUpdater.fullChangelog = options.fullChangelog;
+    },
+    onError: listener => autoUpdater.on('error', listener),
+    onUpdateAvailable: listener => autoUpdater.on('update-available', listener),
+    onUpdateDownloaded: listener => autoUpdater.on('update-downloaded', listener),
+    checkForUpdates: () => autoUpdater.checkForUpdates(),
+    downloadUpdate: () => autoUpdater.downloadUpdate(),
+    quitAndInstall: (isSilent, isForceRunAfter) => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+  };
+
+  startDesktopAutoUpdates({
+    disabled: process.env.HYDRA_DISABLE_AUTO_UPDATE === '1',
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    updater,
+    showMessageBox: async (options) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        return dialog.showMessageBox(mainWindow, options);
+      }
+      return dialog.showMessageBox(options);
+    },
+    scheduleOnce: (task, delayMs) => {
+      setTimeout(task, delayMs);
+    },
+    scheduleRecurring: (task, delayMs) => {
+      setInterval(task, delayMs);
+    },
+    log: (message, error) => {
+      process.stderr.write(`${message}${error === undefined ? '' : ` — ${String(error)}`}\n`);
+    },
+  });
+}
+
 async function start(): Promise<void> {
   const token = randomBytes(32).toString('hex');
   sidecar = await launchSidecar({ token, env: { PATH: resolveUserPath() } });
@@ -113,6 +154,7 @@ async function start(): Promise<void> {
   registerOpenExternalIpc();
 
   await mainWindow.loadFile(indexPath);
+  startAutoUpdates();
 }
 
 app.whenReady().then(start).catch((error: unknown) => {

@@ -1,0 +1,4 @@
+provider: github
+owner: sudoprivacy
+repo: hydra
+updaterCacheDirName: hydra-updater

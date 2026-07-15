@@ -1,21 +1,20 @@
-name: Publish Extension
+name: Publish Hydra
 
 on:
   push:
     tags: ['v*']
 
-  workflow_dispatch:
-
-# Cancel pending runs when new commits arrive
+# A release tag is immutable. Never let a later run cancel signing/notarization
+# for the same tag halfway through.
 concurrency:
   group: publish-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  publish:
+  publish-extension:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,28 +25,15 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Read version from package.json
+      - name: Verify tag matches package version
         id: version
         run: |
-          # Root package.json is the single source of truth for the release version.
-          # sync-version.js keeps every workspace manifest + the packaged .vsix in
-          # lockstep, and package-vsix.js fails closed if they diverge.
           VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Extract release notes from CHANGELOG
-        id: release_notes
-        run: |
-          # Extract the latest section from CHANGELOG.md (between first and second ## headers)
-          NOTES=$(awk '/^## \[/{if(found) exit; found=1; next} found{print}' CHANGELOG.md)
-          {
-            echo 'body<<RELEASE_NOTES_EOF'
-            echo "$NOTES"
-            echo 'RELEASE_NOTES_EOF'
-          } >> $GITHUB_OUTPUT
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Package VSIX
         run: npm run package:vsix
@@ -74,17 +60,158 @@ jobs:
             echo "Publish failed; retrying in ${sleep_seconds}s..."
             sleep "$sleep_seconds"
           done
-        continue-on-error: false
 
       - name: Publish to Open VSX
-        run: npx ovsx publish "hydra-${{ steps.version.outputs.version }}.vsix" -p ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish "hydra-${{ steps.version.outputs.version }}.vsix" -p "${{ secrets.OVSX_PAT }}"
         continue-on-error: true
+
+      - name: Stage VSIX release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-extension
+          path: hydra-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
+          retention-days: 3
+
+  build-desktop:
+    runs-on: macos-14
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Apple release secrets
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in \
+            MACOS_CERTIFICATE_P12 \
+            MACOS_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required GitHub Actions secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/hydra-developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/hydra-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" | openssl base64 -d -A -out "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          echo "HYDRA_SIGNING_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and notarize Desktop
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac:release -w @hydra/desktop
+
+      - name: Stage Desktop release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop
+          path: |
+            packages/desktop/dist/Hydra-${{ steps.version.outputs.version }}-arm64.dmg
+            packages/desktop/dist/Hydra-${{ steps.version.outputs.version }}-arm64-mac.zip
+            packages/desktop/dist/Hydra-${{ steps.version.outputs.version }}-arm64-mac.zip.blockmap
+            packages/desktop/dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${HYDRA_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$HYDRA_SIGNING_KEYCHAIN" || true
+          fi
+          rm -f "$RUNNER_TEMP/hydra-developer-id.p12"
+
+  create-github-release:
+    needs: [publish-extension, build-desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG
+        id: release_notes
+        run: |
+          NOTES=$(awk '/^## \[/{if(found) exit; found=1; next} found{print}' CHANGELOG.md)
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            echo "$NOTES"
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download staged release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
-          files: hydra-${{ steps.version.outputs.version }}.vsix
+          files: release-assets/*
+          fail_on_unmatched_files: true
           body: ${{ steps.release_notes.outputs.body }}
           generate_release_notes: ${{ steps.release_notes.outputs.body == '' }}

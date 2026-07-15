@@ -5,7 +5,7 @@ description: Use when releasing a new version of Hydra. Bumps version, generates
 
 # Skill: release-hydra
 
-Release a new version of the Hydra VS Code extension by creating a release PR.
+Release a new version of Hydra (VS Code extension and macOS Desktop) by creating a release PR.
 
 ## Prerequisites
 
@@ -83,9 +83,12 @@ Release a new version of the Hydra VS Code extension by creating a release PR.
 
    When the PR is merged, the `auto-tag-release.yml` workflow detects the version bump in `package.json` and automatically creates + pushes the `v<version>` tag, which in turn triggers the publish workflow.
 
+   The publish workflow releases the VSIX and builds, Developer ID signs, Apple notarizes, and uploads the Apple Silicon Desktop DMG/ZIP/update metadata. It creates the GitHub Release only after both release jobs succeed. Packaged Desktop clients then discover the release through their in-app updater.
+
 ## Notes
 
 - **Do NOT create or push tags manually.** The `auto-tag-release.yml` workflow handles tagging automatically when the version bump lands on `main`.
-- The publish workflow (`.github/workflows/publish.yml`) triggers on `v*` tags and handles: VSIX packaging, Marketplace/Open VSX publishing, and GitHub Release creation.
+- The publish workflow (`.github/workflows/publish.yml`) triggers on `v*` tags and handles: VSIX packaging, Marketplace/Open VSX publishing, macOS Desktop signing/notarization, update metadata, and GitHub Release creation.
+- The automated Desktop job requires the Apple signing/notarization secrets documented in `docs/desktop-app/RELEASE.md`.
 - Full release pipeline: PR merged → auto-tag detects version bump → creates `v<version>` tag → publish workflow runs.
 - Only run this skill from the repo root or a worktree of the hydra repo.
