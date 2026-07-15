@@ -273,6 +273,75 @@ export function toSideBySide(rows: DiffRow[]): SideBySideRow[] {
   return paired;
 }
 
+// ── unchanged-context compaction ────────────────────────────────────────────
+
+export type DiffDisplayItem<T> =
+  | { kind: 'row'; row: T }
+  | { kind: 'gap'; count: number };
+
+/**
+ * Keep a small amount of context around every changed row and replace longer
+ * unchanged runs with a single expandable gap. This mirrors the way editor
+ * diff views keep reviews focused without throwing the surrounding file away.
+ */
+export function collapseUnchangedRows<T>(
+  rows: T[],
+  isUnchanged: (row: T) => boolean,
+  contextLines = 3,
+  minimumGap = 4,
+): DiffDisplayItem<T>[] {
+  const changedIndexes = rows
+    .map((row, index) => (isUnchanged(row) ? -1 : index))
+    .filter((index) => index >= 0);
+
+  if (changedIndexes.length === 0) {
+    return rows.map((row) => ({ kind: 'row', row }));
+  }
+
+  const visible = new Array<boolean>(rows.length).fill(false);
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - contextLines);
+    const end = Math.min(rows.length - 1, index + contextLines);
+    for (let cursor = start; cursor <= end; cursor++) {
+      visible[cursor] = true;
+    }
+  }
+
+  // A one- or two-line placeholder is noisier than the context it replaces.
+  for (let start = 0; start < rows.length;) {
+    if (visible[start]) {
+      start++;
+      continue;
+    }
+    let end = start + 1;
+    while (end < rows.length && !visible[end]) {
+      end++;
+    }
+    if (end - start < minimumGap) {
+      for (let cursor = start; cursor < end; cursor++) {
+        visible[cursor] = true;
+      }
+    }
+    start = end;
+  }
+
+  const result: DiffDisplayItem<T>[] = [];
+  for (let index = 0; index < rows.length;) {
+    if (visible[index]) {
+      result.push({ kind: 'row', row: rows[index] });
+      index++;
+      continue;
+    }
+    let end = index + 1;
+    while (end < rows.length && !visible[end]) {
+      end++;
+    }
+    result.push({ kind: 'gap', count: end - index });
+    index = end;
+  }
+  return result;
+}
+
 // ── ship handoff (push & PR) ─────────────────────────────────────────────────
 
 export interface ShipCommand {
