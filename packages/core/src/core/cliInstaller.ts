@@ -10,6 +10,89 @@ function getWrapperPath(): string {
   return path.join(getHydraBinDir(), 'hydra');
 }
 
+function isUsableCliExtensionPath(extensionPath: string | undefined): boolean {
+  if (!extensionPath?.trim()) {
+    return false;
+  }
+
+  try {
+    const cliEntryPoint = path.join(extensionPath, 'out', 'cli', 'index.js');
+    if (!fs.statSync(cliEntryPoint).isFile()) {
+      return false;
+    }
+    fs.accessSync(cliEntryPoint, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isUsableWrapper(wrapperPath: string): boolean {
+  try {
+    const accessMode = process.platform === 'win32'
+      ? fs.constants.R_OK
+      : fs.constants.R_OK | fs.constants.X_OK;
+    if (!fs.statSync(wrapperPath).isFile()) {
+      return false;
+    }
+    fs.accessSync(wrapperPath, accessMode);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function compareExtensionVersions(left: string | undefined, right: string): number | undefined {
+  const parseVersion = (value: string | undefined): [bigint[], string[]] | undefined => {
+    const match = value?.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+    if (!match) {
+      return undefined;
+    }
+    return [match.slice(1, 4).map(part => BigInt(part)), match[4]?.split('.') ?? []];
+  };
+
+  const leftVersion = parseVersion(left);
+  const rightVersion = parseVersion(right);
+  if (!leftVersion || !rightVersion) {
+    return undefined;
+  }
+
+  for (let index = 0; index < leftVersion[0].length; index += 1) {
+    if (leftVersion[0][index] !== rightVersion[0][index]) {
+      return leftVersion[0][index] > rightVersion[0][index] ? 1 : -1;
+    }
+  }
+
+  const leftPrerelease = leftVersion[1];
+  const rightPrerelease = rightVersion[1];
+  if (leftPrerelease.length === 0 || rightPrerelease.length === 0) {
+    if (leftPrerelease.length === rightPrerelease.length) return 0;
+    return leftPrerelease.length === 0 ? 1 : -1;
+  }
+
+  const identifierCount = Math.max(leftPrerelease.length, rightPrerelease.length);
+  for (let index = 0; index < identifierCount; index += 1) {
+    const leftIdentifier = leftPrerelease[index];
+    const rightIdentifier = rightPrerelease[index];
+    if (leftIdentifier === undefined || rightIdentifier === undefined) {
+      return leftIdentifier === undefined ? -1 : 1;
+    }
+    if (leftIdentifier === rightIdentifier) continue;
+
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) {
+      return BigInt(leftIdentifier) > BigInt(rightIdentifier) ? 1 : -1;
+    }
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    }
+    return leftIdentifier > rightIdentifier ? 1 : -1;
+  }
+
+  return 0;
+}
+
 export function buildWrapperScriptWindows(): string {
   return `@echo off
 setlocal DisableDelayedExpansion
@@ -142,14 +225,26 @@ NODE
 
 export function installCli(extensionPath: string, version: string): { installed: boolean; updated: boolean } {
   const binDir = getHydraBinDir();
+  const wrapperPath = getWrapperPath();
+  const hydraConfig = getHydraConfig();
+  const previousVersion = hydraConfig.cli?.version?.trim();
+  const preserveNewerInstall = compareExtensionVersions(previousVersion, version) === 1
+    && isUsableCliExtensionPath(hydraConfig.cli?.extensionPath);
+
+  if (preserveNewerInstall) {
+    if (!isUsableWrapper(wrapperPath)) {
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(wrapperPath, buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
+    }
+    return { installed: false, updated: false };
+  }
+
   // Create Hydra CLI directory.
   fs.mkdirSync(binDir, { recursive: true });
 
   // Write wrapper script (mode is ignored on Windows)
-  fs.writeFileSync(getWrapperPath(), buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
+  fs.writeFileSync(wrapperPath, buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
 
-  const hydraConfig = getHydraConfig();
-  const previousVersion = hydraConfig.cli?.version?.trim();
   writeHydraConfig({
     ...hydraConfig,
     cli: {
