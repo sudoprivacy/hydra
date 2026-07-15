@@ -14,7 +14,9 @@
     "boot-check": "node out/bootCheck.js",
     "smoke:diff": "node out/smoke/diffModelSmoke.js",
     "pack:mac": "npm run build && electron-builder --mac --dir",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac:release": "node scripts/dist-mac-release.mjs",
+    "dist:mac:release:resume": "node scripts/dist-mac-release.mjs --resume"
   },
   "dependencies": {
     "@hydra/protocol": "*",
@@ -39,7 +41,7 @@
     "esbuild": "^0.28.0"
   },
   "build": {
-    "appId": "com.hydra.desktop",
+    "appId": "com.sudoprivacy.hydra",
     "productName": "Hydra",
     "directories": {
       "output": "dist",
@@ -66,7 +68,12 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "icon": "build/icon.icns",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": false
     }
   }
 }
