@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -19,6 +19,8 @@ const submissionArchive = path.join(distDir, `${productName}-notarization.zip`);
 const submissionStatePath = path.join(distDir, 'notary-submission.json');
 const dmgPath = path.join(distDir, `${productName}-${version}-${arch}.dmg`);
 const zipPath = path.join(distDir, `${productName}-${version}-${arch}-mac.zip`);
+const zipBlockmapPath = `${zipPath}.blockmap`;
+const updateMetadataPath = path.join(distDir, 'latest-mac.yml');
 const builderPath = path.join(repoRoot, 'node_modules', '.bin', 'electron-builder');
 const resume = process.argv.includes('--resume');
 const waitTimeout = process.env.HYDRA_NOTARY_WAIT_TIMEOUT ?? '2h';
@@ -34,6 +36,8 @@ function releaseEnvironment() {
     'APPLE_KEYCHAIN',
     'APPLE_KEYCHAIN_PROFILE',
     'APPLE_TEAM_ID',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
   ]) {
     delete env[name];
   }
@@ -51,6 +55,17 @@ function notaryAuthenticationArgs() {
       throw new Error('APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER must be provided together.');
     }
     return ['--key', apiKey, '--key-id', apiKeyId, '--issuer', apiIssuer];
+  }
+
+  const appleId = process.env.APPLE_ID;
+  const appSpecificPassword = process.env.APPLE_APP_SPECIFIC_PASSWORD;
+  const teamId = process.env.APPLE_TEAM_ID;
+  const appleIdCredentialCount = [appleId, appSpecificPassword, teamId].filter(Boolean).length;
+  if (appleIdCredentialCount > 0) {
+    if (appleIdCredentialCount !== 3) {
+      throw new Error('APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be provided together.');
+    }
+    return ['--apple-id', appleId, '--password', appSpecificPassword, '--team-id', teamId];
   }
 
   const keychainProfile = process.env.APPLE_KEYCHAIN_PROFILE ?? (process.env.CI ? undefined : 'hydra-notary');
@@ -225,14 +240,42 @@ async function validateZip() {
   }
 }
 
-async function sha256(filePath) {
+async function validateUpdateMetadata() {
+  const [metadata, zipInfo, blockmapInfo] = await Promise.all([
+    readFile(updateMetadataPath, 'utf8'),
+    stat(zipPath),
+    stat(zipBlockmapPath),
+  ]);
+  const zipName = path.basename(zipPath);
+  const zipSha512 = await hashFile(zipPath, 'sha512', 'base64');
+  for (const required of [
+    `version: ${version}`,
+    `url: ${zipName}`,
+    `path: ${zipName}`,
+    `sha512: ${zipSha512}`,
+  ]) {
+    if (!metadata.includes(required)) {
+      throw new Error(`${path.basename(updateMetadataPath)} is missing ${required}`);
+    }
+  }
+  if (zipInfo.size === 0 || blockmapInfo.size === 0) {
+    throw new Error('Update ZIP and blockmap must both be non-empty.');
+  }
+  console.log(`hydra-desktop release: updater metadata verified for ${zipName}`);
+}
+
+async function hashFile(filePath, algorithm, encoding) {
   return await new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
+    const hash = createHash(algorithm);
     const stream = createReadStream(filePath);
     stream.on('error', reject);
     stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('end', () => resolve(hash.digest(encoding)));
   });
+}
+
+async function sha256(filePath) {
+  return await hashFile(filePath, 'sha256', 'hex');
 }
 
 async function buildDistributables() {
@@ -243,11 +286,17 @@ async function buildDistributables() {
 
   console.log('hydra-desktop release: building ZIP with Hydra.app at archive root');
   await rm(zipPath, { force: true });
-  await rm(`${zipPath}.blockmap`, { force: true });
-  await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, zipPath]);
+  await rm(zipBlockmapPath, { force: true });
+  await rm(updateMetadataPath, { force: true });
+  await run(
+    builderPath,
+    ['--mac', 'zip', '--prepackaged', appPath, '--arm64', '--publish', 'never'],
+    { env: releaseEnvironment() },
+  );
 
   await validateDmg();
   await validateZip();
+  await validateUpdateMetadata();
   console.log(`hydra-desktop release: DMG sha256 ${(await sha256(dmgPath))}`);
   console.log(`hydra-desktop release: ZIP sha256 ${(await sha256(zipPath))}`);
   await rm(submissionArchive, { force: true });
