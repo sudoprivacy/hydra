@@ -1,6 +1,6 @@
 {
   "name": "@hydra/desktop",
-  "version": "0.3.2026071502",
+  "version": "0.3.2026071503",
   "description": "Hydra desktop — Electron shell (M1). Main forks the plain-Node sidecar, mints a per-launch bearer token, and hands { url, token } to a React renderer that talks to the sidecar over LoopbackHttpWsTransport.",
   "license": "MIT",
   "private": true,
