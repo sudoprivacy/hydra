@@ -216,6 +216,8 @@ export interface CreateCopilotInput {
   plan?: boolean;
   name?: string;
   session?: string;
+  /** Optional first user instruction, delivered after Hydra onboarding. */
+  task?: string;
 }
 
 export interface CreateCopilotResult {

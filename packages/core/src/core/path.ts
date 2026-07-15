@@ -449,9 +449,31 @@ export function getHydraTasksRoot(): string {
   return getHydraPaths().hydraTasksRoot;
 }
 
+/**
+ * GUI-launched processes on macOS/Linux often have no locale variables at all.
+ * tmux treats such clients as non-UTF-8 and renders CJK session names as `_`,
+ * which can make SessionManager discover a second, phantom session identity.
+ */
+export function withUtf8Locale(
+  source: Record<string, string | undefined>,
+  platform: typeof process.platform = process.platform,
+): Record<string, string | undefined> {
+  const env = { ...source };
+  if (platform === 'win32') return env;
+
+  const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || '';
+  if (/utf-?8/i.test(locale)) return env;
+
+  const fallback = platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8';
+  env.LC_ALL = fallback;
+  env.LC_CTYPE = fallback;
+  env.LANG = fallback;
+  return env;
+}
+
 export function getIsolatedEnv(): Record<string, string | undefined> {
   const { hydraHome, hydraConfigPath } = getHydraPaths();
-  const env: Record<string, string | undefined> = { ...process.env };
+  const env = withUtf8Locale(process.env);
   env.HYDRA_HOME = hydraHome;
   env.HYDRA_CONFIG_PATH = hydraConfigPath;
   if (process.env.HYDRA_TMUX_SOCKET) {

@@ -8,6 +8,7 @@ import {
   parseSessionInfoOutput,
 } from '../core/tmux';
 import { buildTmuxMouseScrollbackCommand } from '../core/tmuxAttach';
+import { withUtf8Locale } from '../core/path';
 
 function main(): void {
   const previousSocket = process.env.HYDRA_TMUX_SOCKET;
@@ -87,6 +88,19 @@ function main(): void {
     assert.deepEqual(
       parseSessionInfoOutput('0|||invalid'),
       { attached: false, attachedClients: 0, lastActive: 0 },
+    );
+
+    const guiEnv = withUtf8Locale({ PATH: '/usr/bin' }, 'darwin');
+    assert.equal(guiEnv.LC_ALL, 'en_US.UTF-8');
+    assert.equal(guiEnv.LC_CTYPE, 'en_US.UTF-8');
+    assert.equal(guiEnv.LANG, 'en_US.UTF-8');
+    assert.equal(
+      withUtf8Locale({ LANG: 'zh_CN.UTF-8' }, 'darwin').LANG,
+      'zh_CN.UTF-8',
+    );
+    assert.deepEqual(
+      withUtf8Locale({ PATH: 'C:\\Windows' }, 'win32'),
+      { PATH: 'C:\\Windows' },
     );
   } finally {
     if (previousSocket === undefined) {

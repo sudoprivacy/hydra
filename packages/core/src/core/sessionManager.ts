@@ -660,6 +660,30 @@ export class SessionManager {
     return copilots.filter(c => c.workdir && path.resolve(c.workdir).startsWith(canonical));
   }
 
+  /**
+   * Confirm that a post-create readiness wait ended on an actual agent prompt.
+   * waitForAgentReady remains best-effort for legacy callers, so Desktop uses
+   * this guard before pasting onboarding text into a pane that may have fallen
+   * back to the user's shell.
+   */
+  async isAgentReady(sessionName: string, agentType: string): Promise<boolean> {
+    const readyConfig = getAgentDefinition(agentType).ready;
+    if (!readyConfig?.pattern) return true;
+
+    try {
+      const output = await this.backend.capturePane(sessionName, 50);
+      const hasBlockingPrompt = getAgentReadyPromptHandlers(agentType)
+        .some(handler => handler.blocksReadiness && handler.pattern.test(output));
+      if (hasBlockingPrompt) return false;
+      if (readyConfig.additionalBlockingPatterns?.some(pattern => pattern.test(output))) {
+        return false;
+      }
+      return readyConfig.pattern.test(output);
+    } catch {
+      return false;
+    }
+  }
+
   async getWorker(sessionName: string): Promise<WorkerInfo | undefined> {
     const state = await this.sync();
     return Object.values(state.workers)

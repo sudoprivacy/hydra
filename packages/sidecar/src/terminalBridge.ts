@@ -24,7 +24,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { spawn as spawnPty, type IDisposable, type IPty } from 'node-pty';
 import type { RawData, WebSocket as WsWebSocket } from 'ws';
 
-import { getTmuxSocketArgs } from '@hydra/core/path';
+import { getTmuxSocketArgs, withUtf8Locale } from '@hydra/core/path';
 import { getTmuxSanitizedEnvKeys } from '@hydra/core/tmux';
 import type { TerminalMode } from '@hydra/protocol';
 import {
@@ -345,22 +345,14 @@ function buildPtyEnv(): { [key: string]: string | undefined } {
   // attach-session` would refuse to nest — the user sees a blank, uninteractive
   // pane with no history. Unsetting them lets the attach connect normally.
   const strip = new Set([...getTmuxSanitizedEnvKeys(), 'TMUX', 'TMUX_PANE']);
-  const env: { [key: string]: string | undefined } = {};
+  const inherited: { [key: string]: string | undefined } = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (!strip.has(key)) {
-      env[key] = value;
+      inherited[key] = value;
     }
   }
+  const env = withUtf8Locale(inherited);
   env.TERM = 'xterm-256color';
-  // tmux (and the programs inside the pane) detect the attaching client's UTF-8
-  // support from LC_ALL / LC_CTYPE / LANG. A GUI-launched sidecar frequently has
-  // none of them (or an empty LC_CTYPE), so `tmux attach` decides the client is
-  // not UTF-8 and renders every wide/CJK character as `_`. Guarantee a UTF-8
-  // locale so Chinese/Japanese/Korean (and box-drawing) come through intact.
-  if (!/utf-?8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) {
-    env.LC_CTYPE = 'UTF-8';
-    env.LANG = env.LANG || 'en_US.UTF-8';
-  }
   return env;
 }
 

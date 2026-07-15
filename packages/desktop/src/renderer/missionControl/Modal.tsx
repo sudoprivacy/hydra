@@ -8,10 +8,11 @@ import { X } from '../ui/icons';
 export interface ModalProps {
   title: string;
   onClose: () => void;
+  closeDisabled?: boolean;
   children: ReactNode;
 }
 
-export function Modal({ title, onClose, children }: ModalProps): JSX.Element {
+export function Modal({ title, onClose, closeDisabled = false, children }: ModalProps): JSX.Element {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
@@ -44,7 +45,7 @@ export function Modal({ title, onClose, children }: ModalProps): JSX.Element {
     });
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !closeDisabled) {
         event.preventDefault();
         onClose();
         return;
@@ -74,10 +75,15 @@ export function Modal({ title, onClose, children }: ModalProps): JSX.Element {
       window.removeEventListener('keydown', onKey);
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [onClose]);
+  }, [closeDisabled, onClose]);
 
   return (
-    <div className="hydra-modal__backdrop" onMouseDown={onClose}>
+    <div
+      className="hydra-modal__backdrop"
+      onMouseDown={() => {
+        if (!closeDisabled) onClose();
+      }}
+    >
       <div
         ref={dialogRef}
         className="hydra-modal"
@@ -89,7 +95,13 @@ export function Modal({ title, onClose, children }: ModalProps): JSX.Element {
       >
         <header className="hydra-modal__head">
           <h2 id={titleId} className="hydra-modal__title">{title}</h2>
-          <button type="button" className="hydra-modal__close" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="hydra-modal__close"
+            aria-label="Close"
+            disabled={closeDisabled}
+            onClick={onClose}
+          >
             <X size={15} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </header>

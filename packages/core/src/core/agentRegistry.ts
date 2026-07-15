@@ -114,6 +114,9 @@ export const CODEX_TRUST_PROMPT_PATTERN = /Do you trust the contents of this dir
 /** Codex requires review before newly injected hooks become active. */
 export const CODEX_HOOK_REVIEW_PROMPT_PATTERN = /Hooks need review|hook needs review before it can run|Trust all and continue/i;
 
+/** Codex may show a self-update picker before its normal input prompt. */
+export const CODEX_UPDATE_PROMPT_PATTERN = /Update available![\s\S]*Update now[\s\S]*Press enter to continue/i;
+
 /** Gemini asks before loading project-local settings/hooks from a new worktree. */
 export const GEMINI_TRUST_PROMPT_PATTERN = /Do you trust the files in this folder\?|Trust folder/i;
 
@@ -318,6 +321,15 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<AgentType, AgentDefinition> = {
       timeoutMs: AGENT_READY_TIMEOUT_MS,
       pollIntervalMs: AGENT_READY_POLL_INTERVAL_MS,
       promptHandlers: [
+        {
+          id: 'codex-update-picker',
+          pattern: CODEX_UPDATE_PROMPT_PATTERN,
+          once: true,
+          blocksReadiness: true,
+          // Never mutate the user's global Codex install as a side effect of
+          // creating a Hydra session. Select "Skip" and continue startup.
+          handle: () => ({ kind: 'sendKeys', keys: 'Down' }),
+        },
         {
           id: 'codex-trust-directory',
           pattern: CODEX_TRUST_PROMPT_PATTERN,

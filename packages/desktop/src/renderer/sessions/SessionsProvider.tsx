@@ -205,19 +205,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
           busy={busy}
           error={dialogError}
           onCreateWorker={(input: CreateWorkerInput) => runDialog(() => client.createWorker(input))}
-          onCreateCopilot={(input: CreateCopilotInput, initialTask?: string) => runDialog(async () => {
-            const result = await client.createCopilot(input);
-            if (initialTask) {
-              try {
-                await client.sendMessage(result.session, 'copilot', initialTask);
-              } catch (cause) {
-                setBanner(`Copilot created, but its initial task could not be sent: ${
-                  cause instanceof Error ? cause.message : String(cause)
-                }`);
-              }
-            }
-            return result;
-          })}
+          onCreateCopilot={(input: CreateCopilotInput) => runDialog(() => client.createCopilot(input))}
           onClose={closeDialog}
         />
       ) : null}

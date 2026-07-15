@@ -13,7 +13,7 @@
 //  Op.listSessions          SessionManager.sync + WorkerRuntimeStateStore.get   (list.ts)
 //  Op.listWorkerRuntimeV2   WorkerRuntimeStateStoreV2.list
 //  Op.createWorker          WorkerLifecycleService.create*                       (worker.ts)
-//  Op.createCopilot         SessionManager.createCopilotAndFinalize             (copilot.ts)
+//  Op.createCopilot         SessionManager.createCopilot + background finalize  (copilot.ts)
 //  Op.startSession          WorkerLifecycleService.startWorker / startCopilot
 //  Op.stopWorker            WorkerLifecycleService.stopWorker
 //  Op.deleteSession         WorkerLifecycleService.deleteWorker / deleteCopilot
@@ -48,6 +48,7 @@ import {
   getAgentDefaultCommand,
 } from '@hydra/core/agentConfig';
 import { resolveCommandPath } from '@hydra/core/exec';
+import { logger } from '@hydra/core/logger';
 import {
   isDirectoryWorker,
   SessionManager,
@@ -538,7 +539,11 @@ export class HydraAppService implements HydraAppServiceApi {
     );
   }
 
-  /** SessionManager.createCopilotAndFinalize — mirrors `hydra copilot create`. */
+  /**
+   * Persist the Copilot immediately, then finish agent readiness/onboarding in
+   * the background. Desktop can close its modal and open the terminal as soon
+   * as the durable session exists instead of blocking behind a 30s TUI probe.
+   */
   private async createCopilot(input: CreateCopilotInput): Promise<CreateCopilotResult> {
     const agentType = input.agent || getHydraGlobalDefaultAgent().agent;
     const copilotMode = resolveCopilotMode(input);
@@ -558,10 +563,15 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir = expandAndResolvePath(input.workdir ?? os.homedir());
     }
 
-    const copilot = await this.sessionManager.createCopilotAndFinalize({
+    const creation = await this.sessionManager.createCopilot({
       workdir, agentType, copilotMode, name: input.name, sessionName,
     });
-    await this.sendCopilotOnboarding(copilot.sessionName, copilot.copilotMode);
+    const copilot = creation.copilotInfo;
+    void this.finishCopilotInitialization(
+      copilot,
+      creation.postCreatePromise,
+      input.task?.trim() || undefined,
+    );
 
     return {
       status: 'created',
@@ -573,12 +583,35 @@ export class HydraAppService implements HydraAppServiceApi {
     };
   }
 
-  private async sendCopilotOnboarding(sessionName: string, copilotMode: CopilotMode): Promise<void> {
+  private async finishCopilotInitialization(
+    copilot: CopilotInfo,
+    postCreatePromise: Promise<void>,
+    initialTask?: string,
+  ): Promise<void> {
     try {
-      await this.backend.sendMessage(sessionName, getCopilotOnboardingPrompt(copilotMode));
-    } catch {
-      // Best effort: the copilot itself is already created and ready.
+      await postCreatePromise;
+      if (!await this.sessionManager.isAgentReady(copilot.sessionName, copilot.agent)) {
+        logger.warn('sidecar.createCopilot', 'Skipping Copilot prompts because the agent is not ready', {
+          sessionName: copilot.sessionName,
+          agent: copilot.agent,
+        });
+        return;
+      }
+      await this.sendCopilotOnboarding(copilot.sessionName, copilot.copilotMode);
+      if (initialTask) {
+        await this.backend.sendMessage(copilot.sessionName, initialTask);
+      }
+    } catch (error) {
+      logger.warn('sidecar.createCopilot', 'Copilot created but background initialization failed', {
+        sessionName: copilot.sessionName,
+        agent: copilot.agent,
+        error,
+      });
     }
+  }
+
+  private async sendCopilotOnboarding(sessionName: string, copilotMode: CopilotMode): Promise<void> {
+    await this.backend.sendMessage(sessionName, getCopilotOnboardingPrompt(copilotMode));
   }
 
   /** WorkerLifecycleService.startWorker / SessionManager.startCopilot. */
