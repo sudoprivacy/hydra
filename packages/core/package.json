@@ -1,6 +1,6 @@
 {
   "name": "@hydra/core",
-  "version": "0.3.2026071600",
+  "version": "0.3.2026071601",
   "description": "Hydra headless engine — worker lifecycle, tmux/git, sessions, telemetry (vscode-free)",
   "license": "MIT",
   "private": true,
