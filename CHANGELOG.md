@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2026071601] - 2026-07-16
+
+### Fixed
+- Build the bundled CLI before Desktop packaging so clean release builds always include the matching Hydra command
+
 ## [0.3.2026071600] - 2026-07-16
 
 ### Added
