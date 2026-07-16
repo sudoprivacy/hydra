@@ -94,7 +94,7 @@ See [`skills/release-hydra/SKILL.md`](./skills/release-hydra/SKILL.md) for the f
 
 **Option B — Manual setup:** Run `Hydra: Setup CLI` from the VS Code command palette.
 
-The CLI is a thin wrapper that delegates to the extension's bundled Node.js code — it always stays in sync with the extension version. When VS Code updates the extension, the CLI picks up the new code automatically.
+The CLI is a thin wrapper that delegates to bundled Node.js code registered by Hydra Desktop or the VS Code extension. The newest usable runtime wins, while older activations cannot downgrade it. Desktop and extension updates register their same-version CLI on the next startup or activation.
 
 ## Quick start
 

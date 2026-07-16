@@ -192,7 +192,7 @@ const extPath = typeof hydraConfig.cli?.extensionPath === 'string'
   : '';
 
 if (!extPath || !fs.existsSync(path.join(extPath, 'out', 'cli', 'index.js'))) {
-  console.error('Error: Hydra VS Code extension not found. Open VS Code with Hydra installed.');
+  console.error('Error: Hydra CLI runtime not found. Open Hydra Desktop or VS Code with Hydra installed.');
   process.exit(1);
 }
 

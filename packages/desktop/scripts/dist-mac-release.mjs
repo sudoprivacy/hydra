@@ -207,6 +207,29 @@ async function validateApp(candidatePath) {
   await run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', candidatePath]);
   await run('xcrun', ['stapler', 'validate', candidatePath]);
   await run('spctl', ['--assess', '--type', 'execute', '--verbose=4', candidatePath]);
+  await validateBundledCli(candidatePath);
+}
+
+async function validateBundledCli(candidatePath) {
+  const appRoot = path.join(candidatePath, 'Contents', 'Resources', 'app');
+  const cliPackagePath = path.join(appRoot, 'node_modules', '@hydra', 'cli', 'package.json');
+  const cliEntryPoint = path.join(appRoot, 'node_modules', '@hydra', 'cli', 'out', 'cli', 'index.js');
+  const cliPackage = JSON.parse(await readFile(cliPackagePath, 'utf8'));
+  if (cliPackage.version !== version) {
+    throw new Error(`Packaged Hydra CLI version ${cliPackage.version} does not match Desktop ${version}.`);
+  }
+  if ((await stat(cliEntryPoint)).size === 0) {
+    throw new Error(`Packaged Hydra CLI entry point is empty: ${cliEntryPoint}`);
+  }
+
+  const result = await run(process.execPath, [cliEntryPoint, '--version'], {
+    capture: true,
+    cwd: appRoot,
+  });
+  if (result.stdout.trim() !== version) {
+    throw new Error(`Packaged Hydra CLI reported ${result.stdout.trim() || 'no version'}, expected ${version}.`);
+  }
+  console.log(`hydra-desktop release: bundled CLI verified at ${version}`);
 }
 
 async function stapleApp() {

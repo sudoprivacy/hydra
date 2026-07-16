@@ -8,6 +8,7 @@
   "include": [
     "src/bootstrap.ts",
     "src/autoUpdate.ts",
+    "src/desktopCli.ts",
     "src/externalLinks.ts",
     "src/sidecarLauncher.ts",
     "src/main.ts",
@@ -19,6 +20,7 @@
     "src/renderer/diff/diffModel.ts",
     "src/smoke/diffModelSmoke.ts",
     "src/smoke/autoUpdateSmoke.ts",
+    "src/smoke/desktopCliSmoke.ts",
     "src/smoke/externalLinksSmoke.ts"
   ],
   "references": [
