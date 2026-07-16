@@ -322,6 +322,78 @@ export interface HydraResolvedPaths {
   hydraTasksRoot: string;
 }
 
+const HYDRA_CONFIG_LOCK_RETRY_MS = 25;
+const HYDRA_CONFIG_LOCK_TIMEOUT_MS = 5_000;
+const HYDRA_CONFIG_LOCK_STALE_MS = 30_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireHydraConfigLock(configPath: string): () => void {
+  const lockPath = `${configPath}.lock`;
+  const deadline = Date.now() + HYDRA_CONFIG_LOCK_TIMEOUT_MS;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+  for (;;) {
+    try {
+      fs.mkdirSync(lockPath);
+      return () => {
+        try {
+          fs.rmdirSync(lockPath);
+        } catch {
+          // A best-effort release must not hide the completed config update.
+        }
+      };
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== 'EEXIST') {
+        throw error;
+      }
+
+      try {
+        const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+        if (ageMs >= HYDRA_CONFIG_LOCK_STALE_MS) {
+          fs.rmdirSync(lockPath);
+          continue;
+        }
+      } catch (statError) {
+        const statCode = (statError as { code?: string }).code;
+        if (statCode === 'ENOENT') {
+          continue;
+        }
+        throw statError;
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for Hydra config lock at ${lockPath}`);
+      }
+      sleepSync(HYDRA_CONFIG_LOCK_RETRY_MS);
+    }
+  }
+}
+
+function writeHydraConfigAtomically(configPath: string, config: HydraGlobalConfig): void {
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(configPath).mode & 0o777;
+  } catch {
+    // New config files default to owner-only permissions.
+  }
+
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf-8', mode });
+    fs.renameSync(tempPath, configPath);
+  } finally {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Ignore cleanup failures after a successful atomic replacement.
+    }
+  }
+}
+
 export function getDefaultHydraHome(): string {
   return path.join(os.homedir(), '.hydra');
 }
@@ -411,10 +483,28 @@ export function getHydraConfig(): HydraGlobalConfig {
   return getHydraPaths().hydraConfig;
 }
 
-export function writeHydraConfig(config: HydraGlobalConfig): void {
+export function updateHydraConfig(
+  mutator: (current: HydraGlobalConfig) => HydraGlobalConfig,
+): HydraGlobalConfig {
   const { hydraConfigPath } = getHydraPaths();
-  fs.mkdirSync(path.dirname(hydraConfigPath), { recursive: true });
-  fs.writeFileSync(hydraConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  const releaseLock = acquireHydraConfigLock(hydraConfigPath);
+  try {
+    const current = readHydraConfigFile(hydraConfigPath);
+    const next = mutator(current);
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      throw new Error('Hydra config updater must return an object');
+    }
+    if (next !== current) {
+      writeHydraConfigAtomically(hydraConfigPath, next);
+    }
+    return next;
+  } finally {
+    releaseLock();
+  }
+}
+
+export function writeHydraConfig(config: HydraGlobalConfig): void {
+  updateHydraConfig(() => config);
 }
 
 export function getHydraBinDir(): string {

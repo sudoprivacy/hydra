@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getHydraConfigPath, getHydraHome, type HydraGlobalConfig } from './path';
+import {
+  getHydraConfigPath,
+  getHydraHome,
+  updateHydraConfig,
+  writeHydraConfig,
+  type HydraGlobalConfig,
+} from './path';
 import { AGENT_LABELS } from './agentConfig';
 import type { AgentType } from './types';
 
@@ -60,18 +66,17 @@ export function readHydraGlobalConfig(): HydraGlobalConfig {
 
 export function writeHydraGlobalConfig(config: HydraGlobalConfig): void {
   ensureHydraGlobalConfig();
-  fs.writeFileSync(getHydraConfigPath(), `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  writeHydraConfig(config);
 }
 
 export function updateHydraGlobalAgentCommands(commands: Record<string, string>): void {
-  const config = readHydraGlobalConfig();
-  writeHydraGlobalConfig({
+  updateHydraConfig(config => ({
     ...config,
     agentCommands: {
       ...(config.agentCommands ?? {}),
       ...commands,
     },
-  });
+  }));
 }
 
 export function getHydraGlobalAgentCommand(agentType: string): string | undefined {
@@ -93,18 +98,18 @@ export function getHydraGlobalDefaultAgent(): HydraDefaultAgentResolution {
 
 export function setHydraGlobalDefaultAgent(agent: string): HydraDefaultAgentResolution {
   const parsedAgent = parseHydraDefaultAgent(agent);
-  const config = readHydraGlobalConfig();
-  writeHydraGlobalConfig({
+  updateHydraConfig(config => ({
     ...config,
     defaultAgent: parsedAgent,
-  });
+  }));
   return { agent: parsedAgent, source: 'configured' };
 }
 
 export function unsetHydraGlobalDefaultAgent(): HydraDefaultAgentResolution {
-  const config = readHydraGlobalConfig();
-  const nextConfig = { ...config };
-  delete nextConfig.defaultAgent;
-  writeHydraGlobalConfig(nextConfig);
+  updateHydraConfig(config => {
+    const nextConfig = { ...config };
+    delete nextConfig.defaultAgent;
+    return nextConfig;
+  });
   return { agent: HYDRA_DEFAULT_AGENT_FALLBACK, source: 'fallback' };
 }

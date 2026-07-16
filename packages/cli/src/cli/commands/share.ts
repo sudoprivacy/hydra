@@ -13,7 +13,7 @@ import {
 } from '@hydra/core/git';
 import { exec } from '@hydra/core/exec';
 import { shellQuote } from '@hydra/core/shell';
-import { getHydraConfig, resolveAgentSessionFile, toCanonicalPath, writeHydraConfig } from '@hydra/core/path';
+import { getHydraConfig, resolveAgentSessionFile, toCanonicalPath, updateHydraConfig } from '@hydra/core/path';
 import { resolveRepoInput } from '@hydra/core/repoRegistry';
 import { createShareBundle, readBundle, writeBundle, type ShareableSession } from '../../share/bundle';
 import {
@@ -355,8 +355,7 @@ async function acceptWorker(
   return workerInfo;
 }
 
-function formatShareConfigForOutput(): Record<string, string | null> {
-  const config = getHydraConfig().share || {};
+function formatShareConfigForOutput(config = getHydraConfig().share || {}): Record<string, string | null> {
   return {
     bucket: config.bucket || null,
     prefix: config.prefix || 'shares',
@@ -365,38 +364,38 @@ function formatShareConfigForOutput(): Record<string, string | null> {
 }
 
 function updateShareConfig(opts: ShareConfigOpts): Record<string, string | null> {
-  const currentConfig = getHydraConfig();
-  if (opts.clear) {
-    const nextConfig = { ...currentConfig };
-    delete nextConfig.share;
-    writeHydraConfig(nextConfig);
-    return formatShareConfigForOutput();
-  }
-
-  const shareConfig = { ...(currentConfig.share || {}) };
-  if (opts.bucket !== undefined) {
-    shareConfig.bucket = normalizeGcsBucket(opts.bucket);
-  }
-  if (opts.prefix !== undefined) {
-    shareConfig.prefix = stripSlashes(opts.prefix) || 'shares';
-  }
-  if (opts.publicBaseUrl !== undefined) {
-    shareConfig.publicBaseUrl = opts.publicBaseUrl.replace(/\/+$/, '').trim();
-  }
-  if (opts.public === true) {
-    if (!shareConfig.bucket) {
-      throw new Error('Configure --bucket before enabling --public');
+  const nextConfig = updateHydraConfig(currentConfig => {
+    if (opts.clear) {
+      const clearedConfig = { ...currentConfig };
+      delete clearedConfig.share;
+      return clearedConfig;
     }
-    shareConfig.publicBaseUrl = buildDefaultPublicBaseUrl(shareConfig.bucket);
-  } else if (opts.public === false) {
-    delete shareConfig.publicBaseUrl;
-  }
 
-  writeHydraConfig({
-    ...currentConfig,
-    share: shareConfig,
+    const shareConfig = { ...(currentConfig.share || {}) };
+    if (opts.bucket !== undefined) {
+      shareConfig.bucket = normalizeGcsBucket(opts.bucket);
+    }
+    if (opts.prefix !== undefined) {
+      shareConfig.prefix = stripSlashes(opts.prefix) || 'shares';
+    }
+    if (opts.publicBaseUrl !== undefined) {
+      shareConfig.publicBaseUrl = opts.publicBaseUrl.replace(/\/+$/, '').trim();
+    }
+    if (opts.public === true) {
+      if (!shareConfig.bucket) {
+        throw new Error('Configure --bucket before enabling --public');
+      }
+      shareConfig.publicBaseUrl = buildDefaultPublicBaseUrl(shareConfig.bucket);
+    } else if (opts.public === false) {
+      delete shareConfig.publicBaseUrl;
+    }
+
+    return {
+      ...currentConfig,
+      share: shareConfig,
+    };
   });
-  return formatShareConfigForOutput();
+  return formatShareConfigForOutput(nextConfig.share || {});
 }
 
 function hasShareConfigMutation(opts: ShareConfigOpts): boolean {
