@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2026071600] - 2026-07-16
+
+### Added
+- Bundle and automatically register the matching Hydra CLI when packaged Desktop starts, including shell PATH setup for new installations
+
+### Fixed
+- Preserve concurrent Hydra configuration changes and prevent older surfaces from replacing a valid same-version or newer CLI runtime
+- Surface pending Codex command approvals as worker attention and clear them when the approval resolves
+
 ## [0.3.2026071503] - 2026-07-15
 
 ### Fixed
