@@ -11,6 +11,8 @@ const releaseScript = await readFile(path.join(packageDir, 'scripts', 'dist-mac-
 const publishWorkflow = await readFile(path.join(repoRoot, '.github', 'workflows', 'publish.yml'), 'utf8');
 
 assert.equal(desktopPackage.dependencies['electron-updater']?.startsWith('^6.'), true);
+assert.equal(desktopPackage.dependencies['@hydra/cli'], '*');
+assert.equal(desktopPackage.dependencies['@hydra/core'], '*');
 assert.deepEqual(desktopPackage.build.publish, [{ provider: 'github', owner: 'sudoprivacy', repo: 'hydra' }]);
 assert.deepEqual(desktopPackage.build.extraResources, [{ from: 'build/app-update.yml', to: 'app-update.yml' }]);
 assert.match(updateConfig, /^provider: github$/m);
@@ -20,6 +22,8 @@ assert.match(updateConfig, /^repo: hydra$/m);
 assert.match(releaseScript, /APPLE_APP_SPECIFIC_PASSWORD/);
 assert.match(releaseScript, /latest-mac\.yml/);
 assert.match(releaseScript, /zipBlockmapPath/);
+assert.match(releaseScript, /validateBundledCli/);
+assert.match(releaseScript, /node_modules', '@hydra', 'cli', 'out', 'cli', 'index\.js'/);
 assert.match(
   releaseScript,
   /\['--mac', 'dmg', '--prepackaged', appOutDir, '--publish', 'never'\]/,

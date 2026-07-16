@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import { normalizeExternalHttpUrl } from './externalLinks';
 import { startDesktopAutoUpdates, type DesktopUpdater } from './autoUpdate';
+import { installBundledDesktopCli } from './desktopCli';
 import { launchSidecar, type SidecarHandle } from './sidecarLauncher';
 import { IPC_BOOTSTRAP_CHANNEL, IPC_OPEN_EXTERNAL_CHANNEL, type HydraBootstrap } from './bootstrap';
 
@@ -123,7 +124,33 @@ function startAutoUpdates(): void {
   });
 }
 
+async function prepareBundledCli(): Promise<void> {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  try {
+    installBundledDesktopCli({
+      appVersion: app.getVersion(),
+      cliPackageJsonPath: require.resolve('@hydra/cli/package.json'),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Hydra CLI unavailable',
+      message: 'Hydra could not prepare its bundled CLI',
+      detail: `${detail}\n\nHydra Desktop will continue to open, but terminal commands and worker completion hooks may not work until the CLI is repaired.`,
+      buttons: ['Continue'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  }
+}
+
 async function start(): Promise<void> {
+  await prepareBundledCli();
   const token = randomBytes(32).toString('hex');
   sidecar = await launchSidecar({ token, env: { PATH: resolveUserPath() } });
 

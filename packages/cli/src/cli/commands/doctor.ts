@@ -111,7 +111,7 @@ export function registerDoctorCommand(program: Command): void {
         if (!existsSync(hydraBinDir)) {
           mkdirSync(hydraBinDir, { recursive: true });
         }
-        checks.push({ name: 'hydra-cli', status: 'fail', message: `Hydra CLI not found at ${hydraBin} — open VS Code with the Hydra extension installed to auto-install` });
+        checks.push({ name: 'hydra-cli', status: 'fail', message: `Hydra CLI not found at ${hydraBin} — open Hydra Desktop or VS Code with the Hydra extension installed to auto-install` });
       }
 
       // 8. Hydra bin in PATH
