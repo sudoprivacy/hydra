@@ -6,6 +6,7 @@
   "private": true,
   "main": "./out/main.js",
   "scripts": {
+    "build:runtime": "npm --prefix ../.. run compile",
     "build:main": "tsc -b tsconfig.json",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
     "build:renderer": "node scripts/build-frontend.mjs",
@@ -16,8 +17,8 @@
     "smoke:auto-update": "node out/smoke/autoUpdateSmoke.js",
     "smoke:cli": "node out/smoke/desktopCliSmoke.js",
     "smoke:release-config": "node scripts/releaseConfigurationSmoke.mjs",
-    "pack:mac": "npm run build && electron-builder --mac --dir",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "pack:mac": "npm run build:runtime && npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build:runtime && npm run build && electron-builder --mac",
     "dist:mac:release": "node scripts/dist-mac-release.mjs",
     "dist:mac:release:resume": "node scripts/dist-mac-release.mjs --resume"
   },
