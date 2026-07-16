@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getDefaultHydraHome, getHydraBinDir, getHydraConfig, writeHydraConfig } from './path';
+import { getDefaultHydraHome, getHydraBinDir, updateHydraConfig } from './path';
 
 function getWrapperPath(): string {
   if (process.platform === 'win32') {
@@ -226,42 +226,53 @@ NODE
 export function installCli(extensionPath: string, version: string): { installed: boolean; updated: boolean } {
   const binDir = getHydraBinDir();
   const wrapperPath = getWrapperPath();
-  const hydraConfig = getHydraConfig();
-  const previousVersion = hydraConfig.cli?.version?.trim();
-  const preserveNewerInstall = compareExtensionVersions(previousVersion, version) === 1
-    && isUsableCliExtensionPath(hydraConfig.cli?.extensionPath);
+  let result: { installed: boolean; updated: boolean } | undefined;
 
-  if (preserveNewerInstall) {
-    if (!isUsableWrapper(wrapperPath)) {
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.writeFileSync(wrapperPath, buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
+  updateHydraConfig(hydraConfig => {
+    const previousVersion = hydraConfig.cli?.version?.trim();
+    const comparison = compareExtensionVersions(previousVersion, version);
+    const configuredRuntimeUsable = isUsableCliExtensionPath(hydraConfig.cli?.extensionPath);
+    const preserveConfiguredRuntime = configuredRuntimeUsable
+      && (comparison === 1 || previousVersion === version);
+
+    if (preserveConfiguredRuntime) {
+      if (!isUsableWrapper(wrapperPath)) {
+        writeWrapper(binDir, wrapperPath);
+      }
+      result = { installed: false, updated: false };
+      return hydraConfig;
     }
-    return { installed: false, updated: false };
-  }
 
-  // Create Hydra CLI directory.
-  fs.mkdirSync(binDir, { recursive: true });
+    writeWrapper(binDir, wrapperPath);
+    result = !previousVersion
+      ? { installed: true, updated: false }
+      : { installed: false, updated: previousVersion !== version };
 
-  // Write wrapper script (mode is ignored on Windows)
-  fs.writeFileSync(wrapperPath, buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
-
-  writeHydraConfig({
-    ...hydraConfig,
-    cli: {
-      ...hydraConfig.cli,
-      extensionPath,
-      version,
-    },
+    return {
+      ...hydraConfig,
+      cli: {
+        ...hydraConfig.cli,
+        extensionPath,
+        version,
+      },
+    };
   });
 
-  if (!previousVersion) {
-    return { installed: true, updated: false };
+  if (!result) {
+    throw new Error('Hydra CLI installer finished without a result');
   }
-  if (previousVersion !== version) {
-    return { installed: false, updated: true };
+  return result;
+}
+
+function writeWrapper(binDir: string, wrapperPath: string): void {
+  fs.mkdirSync(binDir, { recursive: true });
+  const tempPath = `${wrapperPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, buildWrapperScript(), { encoding: 'utf-8', mode: 0o755 });
+    fs.renameSync(tempPath, wrapperPath);
+  } finally {
+    fs.rmSync(tempPath, { force: true });
   }
-  // Same version, no change
-  return { installed: false, updated: false };
 }
 
 export type ShellProfileStatus = 'added' | 'already_present' | 'skipped_custom_home';

@@ -15,7 +15,9 @@ interface CaseOptions {
   configuredVersion: string;
   activatingVersion: string;
   configuredPathUsable?: boolean;
-  expectPreserved: boolean;
+  wrapperUsable?: boolean;
+  expectConfigPreserved: boolean;
+  expectWrapperPreserved: boolean;
   expectedResult: { installed: boolean; updated: boolean };
 }
 
@@ -38,8 +40,11 @@ function runCase(options: CaseOptions): void {
   const activatingExtensionPath = createExtension(root, 'activating-extension');
   const wrapperSentinel = process.platform === 'win32' ? '@echo off\r\nrem newer wrapper\r\n' : '#!/bin/sh\n# newer wrapper\n';
 
-  fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
-  fs.writeFileSync(wrapperPath, wrapperSentinel, { encoding: 'utf-8', mode: 0o755 });
+  fs.mkdirSync(hydraHome, { recursive: true });
+  if (options.wrapperUsable !== false) {
+    fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
+    fs.writeFileSync(wrapperPath, wrapperSentinel, { encoding: 'utf-8', mode: 0o755 });
+  }
   fs.writeFileSync(configPath, `${JSON.stringify({
     cli: {
       extensionPath: configuredExtensionPath,
@@ -60,17 +65,17 @@ function runCase(options: CaseOptions): void {
     assert.deepEqual(result, options.expectedResult, `${options.name}: install result`);
     assert.equal(
       config.cli.extensionPath,
-      options.expectPreserved ? configuredExtensionPath : activatingExtensionPath,
+      options.expectConfigPreserved ? configuredExtensionPath : activatingExtensionPath,
       `${options.name}: configured extension path`,
     );
     assert.equal(
       config.cli.version,
-      options.expectPreserved ? options.configuredVersion : options.activatingVersion,
+      options.expectConfigPreserved ? options.configuredVersion : options.activatingVersion,
       `${options.name}: configured version`,
     );
     assert.equal(
       wrapper === wrapperSentinel,
-      options.expectPreserved,
+      options.expectWrapperPreserved,
       `${options.name}: wrapper preservation`,
     );
   } finally {
@@ -88,7 +93,8 @@ function main(): void {
       configuredVersion: '1.2.3',
       activatingVersion: '1.3.0',
       configuredPathUsable: true,
-      expectPreserved: false,
+      expectConfigPreserved: false,
+      expectWrapperPreserved: false,
       expectedResult: { installed: false, updated: true },
     });
     runCase({
@@ -96,7 +102,8 @@ function main(): void {
       configuredVersion: '1.3.0',
       activatingVersion: '1.2.3',
       configuredPathUsable: true,
-      expectPreserved: true,
+      expectConfigPreserved: true,
+      expectWrapperPreserved: true,
       expectedResult: { installed: false, updated: false },
     });
     runCase({
@@ -104,15 +111,27 @@ function main(): void {
       configuredVersion: '1.2.3',
       activatingVersion: '1.2.3',
       configuredPathUsable: true,
-      expectPreserved: false,
+      expectConfigPreserved: true,
+      expectWrapperPreserved: true,
       expectedResult: { installed: false, updated: false },
     });
     runCase({
       name: 'missing-configured-path',
       configuredVersion: '1.3.0',
       activatingVersion: '1.2.3',
-      expectPreserved: false,
+      expectConfigPreserved: false,
+      expectWrapperPreserved: false,
       expectedResult: { installed: false, updated: true },
+    });
+    runCase({
+      name: 'newer-config-missing-wrapper',
+      configuredVersion: '1.3.0',
+      activatingVersion: '1.2.3',
+      configuredPathUsable: true,
+      wrapperUsable: false,
+      expectConfigPreserved: true,
+      expectWrapperPreserved: false,
+      expectedResult: { installed: false, updated: false },
     });
   } finally {
     if (previousHydraHome === undefined) delete process.env.HYDRA_HOME;
