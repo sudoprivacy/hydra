@@ -339,6 +339,7 @@ if (resume) {
   console.log('hydra-desktop release: cleaning previous artifacts');
   await rm(distDir, { force: true, recursive: true });
   await mkdir(distDir, { recursive: true });
+  await run('npm', ['run', 'build:runtime']);
   await run('npm', ['run', 'build']);
   await run(builderPath, ['--mac', '--dir', '--arm64'], { env: releaseEnvironment() });
   await run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
