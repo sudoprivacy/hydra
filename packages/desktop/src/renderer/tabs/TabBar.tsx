@@ -51,6 +51,7 @@ export function TabBar(): JSX.Element {
             ref={element => registerTab(tab.id, element)}
             id={tabElementId(tab.id)}
             role="tab"
+            aria-label={`${label}, ${STATUS_LABELS[status]}`}
             aria-selected={active}
             aria-controls={tabPanelId(tab.id)}
             tabIndex={active ? 0 : -1}
@@ -69,7 +70,9 @@ export function TabBar(): JSX.Element {
               }
             }}
           >
-            <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
+            {isAttention(status) ? (
+              <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
+            ) : null}
             {row ? (
               <span className="hydra-tab__kind">
                 {row.kind === 'worker' ? row.type.toUpperCase() : 'COPILOT'}

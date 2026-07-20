@@ -69,6 +69,41 @@ function testConcurrentFirstDispatchConverges(): void {
   }
 }
 
+function testDeliveryPolicyIsPersistedAndImmutablePerRun(): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-completion-job-delivery-policy-'));
+  try {
+    const firstStore = createStore(root);
+    const secondStore = createStore(root);
+    const first = firstStore.armForDispatch({
+      workerId: 16,
+      lifecycleEpoch: 'epoch-16',
+      runId: 'run-first',
+      deliverCompatibilityToCopilot: false,
+    }, { runtimeActive: false, runtimeRunId: null });
+    const reused = secondStore.armForDispatch({
+      workerId: 16,
+      lifecycleEpoch: 'epoch-16',
+      runId: 'run-first',
+      deliverCompatibilityToCopilot: true,
+    }, { runtimeActive: true, runtimeRunId: 'run-first' });
+    const adopted = secondStore.armForDispatch({
+      workerId: 16,
+      lifecycleEpoch: 'epoch-16',
+      runId: 'concurrent-run',
+      deliverCompatibilityToCopilot: true,
+    }, { runtimeActive: false, runtimeRunId: null });
+
+    assert.equal(first.job.deliverCompatibilityToCopilot, false);
+    assert.equal(reused.job.jobId, first.job.jobId);
+    assert.equal(reused.job.deliverCompatibilityToCopilot, false);
+    assert.equal(adopted.job.jobId, first.job.jobId);
+    assert.equal(adopted.adopted, true);
+    assert.equal(adopted.job.deliverCompatibilityToCopilot, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function testEndedRunIsCancelledBeforeNewArm(): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-completion-job-new-run-'));
   try {
@@ -185,6 +220,25 @@ function testFailClosedPersistence(): void {
     };
     fs.writeFileSync(filePath, JSON.stringify(invalidCancelled), 'utf-8');
     assert.throws(() => new CompletionJobStore(filePath).list(), /requires cancelledAt and cancelReason/);
+
+    const malformedDeliveryPolicy = {
+      version: 1,
+      jobs: [{
+        version: 1,
+        jobId: 'job-delivery-policy',
+        workerId: 17,
+        lifecycleEpoch: 'epoch-17',
+        runId: 'run-17',
+        status: 'pending',
+        armedAt: '2026-07-10T00:00:00.000Z',
+        deliverCompatibilityToCopilot: 'no',
+      }],
+    };
+    fs.writeFileSync(filePath, JSON.stringify(malformedDeliveryPolicy), 'utf-8');
+    assert.throws(
+      () => new CompletionJobStore(filePath).list(),
+      /deliverCompatibilityToCopilot must be a boolean/,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -216,6 +270,7 @@ function testStaleLockRecovery(): void {
 function main(): void {
   testIdempotentArmAndFire();
   testConcurrentFirstDispatchConverges();
+  testDeliveryPolicyIsPersistedAndImmutablePerRun();
   testEndedRunIsCancelledBeforeNewArm();
   testCancellationFilters();
   testCancelPendingOutsideEpoch();

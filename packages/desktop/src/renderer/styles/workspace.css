@@ -50,12 +50,6 @@
   font-weight: 650;
 }
 
-.hydra-session-header__titleline > .hydra-sdot {
-  width: 7px;
-  height: 7px;
-  margin-left: 4px;
-}
-
 .hydra-session-header__status,
 .hydra-session-header__connection,
 .hydra-session-header__session,

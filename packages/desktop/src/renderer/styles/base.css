@@ -911,7 +911,7 @@ body.hydra-resizing {
   font-size: 0.68rem;
 }
 
-/* ── status dots (shared by tree + tabs) ──────────────────────────── */
+/* ── status markers ──────────────────────────────────────────────── */
 .hydra-sdot {
   width: 0.6rem;
   height: 0.6rem;
@@ -926,6 +926,7 @@ body.hydra-resizing {
   border: 1.5px solid color-mix(in srgb, var(--hy-run-idle) 32%, transparent);
   border-top-color: var(--hy-run-idle);
 }
+.hydra-sdot--live { background: var(--hy-run-idle); }
 .hydra-sdot--completed { background: var(--hy-ok); }
 .hydra-sdot--idle {
   background: transparent;

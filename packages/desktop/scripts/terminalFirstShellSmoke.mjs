@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import * as fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
@@ -83,5 +84,23 @@ state = tabsReducer(INITIAL_TABS_STATE, { type: 'open', descriptor: descriptors[
 state = tabsReducer(state, { type: 'reconcile', sessions: [] });
 assert.equal(state.tabs.length, 0, 'deleted sessions prune their tabs');
 assert.equal(state.activeId, null);
+
+const rendererRoot = path.join(here, '..', 'src', 'renderer');
+const tabBarSource = fs.readFileSync(path.join(rendererRoot, 'tabs', 'TabBar.tsx'), 'utf-8');
+const headerSource = fs.readFileSync(path.join(rendererRoot, 'shell', 'SessionHeader.tsx'), 'utf-8');
+const treeRowSource = fs.readFileSync(path.join(rendererRoot, 'sidebar', 'TreeRow.tsx'), 'utf-8');
+const baseStyles = fs.readFileSync(path.join(rendererRoot, 'styles', 'base.css'), 'utf-8');
+
+assert.match(tabBarSource, /aria-label=\{`\$\{label\}, \$\{STATUS_LABELS\[status\]\}`\}/);
+assert.match(tabBarSource, /\{isAttention\(status\) \? \(/);
+assert.equal(
+  (tabBarSource.match(/hydra-sdot/g) ?? []).length,
+  2,
+  'tabs render one exceptional marker class and its status modifier only inside the attention branch',
+);
+assert.doesNotMatch(headerSource, /hydra-sdot/);
+assert.match(headerSource, /STATUS_LABELS\[status\]/);
+assert.match(treeRowSource, /row\.kind === 'worker' \|\| status === 'stopped'/);
+assert.match(baseStyles, /\.hydra-sdot--running \{ animation: hy-spin/);
 
 console.log('terminalFirstShellSmoke: ok');

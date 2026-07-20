@@ -314,8 +314,8 @@ function validateCurrentEpochSignal(
     return 'stale-revision';
   }
   if (previous) {
-    if (!isLegalTransition(previous.state, signal.state, true)) return 'illegal-transition';
-  } else if (!isLegalTransition('unknown', signal.state, false)) {
+    if (!isLegalTransition(previous.state, signal, true)) return 'illegal-transition';
+  } else if (!isLegalTransition('unknown', signal, false)) {
     return 'illegal-transition';
   }
   return undefined;
@@ -357,8 +357,22 @@ function createSnapshot(
   };
 }
 
-function isLegalTransition(from: WorkerRuntimeState, to: WorkerRuntimeState, allowSameState: boolean): boolean {
-  if (allowSameState && from === to) return true;
+function isLegalTransition(
+  from: WorkerRuntimeState,
+  signal: WorkerRuntimeSignalV2,
+  allowSameState: boolean,
+): boolean {
+  const to = signal.state;
+  if (!allowSameState && from === 'unknown' && to === 'unknown') {
+    return isGuardedInitialUnknown(signal);
+  }
+  if (allowSameState && from === to) {
+    return to !== 'unknown' || isGuardedUnknownSignal(signal);
+  }
+  if (to === 'unknown') {
+    return (from === 'idle' || from === 'running' || from === 'needs-input')
+      && isGuardedUnknownSignal(signal);
+  }
   switch (from) {
     case 'unknown': return to === 'running' || to === 'idle' || to === 'error';
     case 'running': return to === 'needs-input' || to === 'idle' || to === 'error';
@@ -366,6 +380,26 @@ function isLegalTransition(from: WorkerRuntimeState, to: WorkerRuntimeState, all
     case 'idle': return to === 'running' || to === 'error';
     case 'error': return to === 'running' || to === 'idle';
   }
+}
+
+function isGuardedInitialUnknown(signal: WorkerRuntimeSignalV2): boolean {
+  if (signal.origin !== 'lifecycle') return false;
+  if (signal.reason === 'completion-tracking-unavailable') {
+    return signal.runId !== null;
+  }
+  return signal.runId === null
+    && (signal.reason === 'worker-creating'
+      || signal.reason === 'worker-starting'
+      || signal.reason === 'worker-restoring');
+}
+
+function isGuardedUnknownSignal(signal: WorkerRuntimeSignalV2): boolean {
+  return signal.origin === 'lifecycle'
+    && (signal.reason === 'completion-tracking-unavailable'
+      || signal.reason === 'worker-renamed'
+      || signal.reason === 'worker-creating'
+      || signal.reason === 'worker-starting'
+      || signal.reason === 'worker-restoring');
 }
 
 function resolveRunId(previous: WorkerRuntimeSnapshotV2 | undefined, state: WorkerRuntimeState, requested: string | null | undefined): string | null {

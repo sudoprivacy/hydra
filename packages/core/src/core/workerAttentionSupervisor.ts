@@ -34,6 +34,7 @@ import {
 } from './workerRuntimeCoordinator';
 import { WorkerRuntimeStateStore, type WorkerRuntimeState } from './workerRuntimeState';
 import { WorkerRuntimeStateStoreV2, type WorkerRuntimeSnapshotV2 } from './workerRuntimeV2';
+import { WorkerRuntimeReconciler } from './workerRuntimeReconciler';
 
 export interface WorkerAttentionSupervisorOptions {
   producerKind: WorkerAttentionProducerKind;
@@ -50,6 +51,7 @@ export interface WorkerAttentionSupervisorOptions {
   eventLog?: EventLog;
   runtimeCoordinator?: WorkerRuntimeCoordinator;
   completionCoordinator?: CompletionCoordinator;
+  runtimeReconciler?: WorkerRuntimeReconciler;
   now?: () => number;
 }
 
@@ -80,6 +82,7 @@ export class WorkerAttentionSupervisor implements Disposable {
   private readonly completionJobStore: CompletionJobStore;
   private readonly runtimeCoordinator: WorkerRuntimeCoordinator;
   private readonly completionCoordinator: CompletionCoordinator;
+  private readonly runtimeReconciler: WorkerRuntimeReconciler;
   private readonly eventSource: HydraEventSource;
   private readonly now: () => number;
   private lease: WorkerAttentionLease | undefined;
@@ -133,6 +136,13 @@ export class WorkerAttentionSupervisor implements Disposable {
       eventSource: this.eventSource,
       now: this.now,
     });
+    this.runtimeReconciler = options.runtimeReconciler ?? new WorkerRuntimeReconciler({
+      runtimeStore: this.runtimeV2Store,
+      completionJobStore: this.completionJobStore,
+      runtimeCoordinator: this.runtimeCoordinator,
+      eventSource: this.eventSource,
+      now: this.now,
+    });
   }
 
   initialize(): void {
@@ -169,8 +179,10 @@ export class WorkerAttentionSupervisor implements Disposable {
 
     let workersScanned = 0;
     let eventsProcessed = 0;
-    const workers = readWorkerSessions(this.sessionsFile)
-      .filter(worker => worker.status !== 'stopped' && worker.agent === 'codex');
+    const liveWorkers = readWorkerSessions(this.sessionsFile)
+      .filter(worker => worker.status !== 'stopped');
+    this.runtimeReconciler.reconcile(liveWorkers);
+    const workers = liveWorkers.filter(worker => worker.agent === 'codex');
     let activeLease = lease;
     for (const worker of workers) {
       const renewed = this.leaseStore.renew(activeLease, this.leaseTtlMs);
