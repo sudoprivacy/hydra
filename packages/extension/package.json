@@ -2,7 +2,7 @@
   "name": "hydra-code",
   "displayName": "Hydra Code",
   "description": "Monitor and orchestrate parallel AI coding agents — see every worker's status, git diff, and terminal output from one sidebar",
-  "version": "0.3.2026071601",
+  "version": "0.3.2026072000",
   "engines": {
     "vscode": "^1.85.0"
   },

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2026072000] - 2026-07-20
+
+### Added
+- Add managed tmux shell panes to Desktop workers, including creating, switching, and closing additional shells
+
+### Fixed
+- Distinguish worker readiness from active agent work so runtime status, completion handling, and attention notifications stay accurate
+
 ## [0.3.2026071601] - 2026-07-16
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "@hydra/cli",
-  "version": "0.3.2026071601",
+  "version": "0.3.2026072000",
   "description": "Hydra CLI — the `hydra` command (depends on @hydra/core)",
   "license": "MIT",
   "private": true,
