@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import * as fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
@@ -83,5 +84,32 @@ state = tabsReducer(INITIAL_TABS_STATE, { type: 'open', descriptor: descriptors[
 state = tabsReducer(state, { type: 'reconcile', sessions: [] });
 assert.equal(state.tabs.length, 0, 'deleted sessions prune their tabs');
 assert.equal(state.activeId, null);
+
+const rendererRoot = path.join(here, '..', 'src', 'renderer');
+const baseStyles = fs.readFileSync(path.join(rendererRoot, 'styles', 'base.css'), 'utf-8');
+const terminalSource = fs.readFileSync(path.join(rendererRoot, 'routes', 'WorkerTerminal.tsx'), 'utf-8');
+const newShellSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'NewShellControl.tsx'),
+  'utf-8',
+);
+const panePopoverSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'NewShellPopover.tsx'),
+  'utf-8',
+);
+const closePaneSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'ClosePaneConfirm.tsx'),
+  'utf-8',
+);
+
+assert.match(terminalSource, /<NewShellControl/);
+assert.match(terminalSource, /enabled=\{active && status === 'connected'\}/);
+assert.match(newShellSource, /crypto\.randomUUID\(\)/);
+assert.match(newShellSource, /direction: 'down',[\s\S]*startDirectory: 'session-workdir'/);
+assert.match(newShellSource, /client\.focusTerminalPane/);
+assert.match(newShellSource, /client\.closeTerminalPane/);
+assert.match(panePopoverSource, /pane\.canClose \? \(/);
+assert.match(panePopoverSource, /agent-current-directory/);
+assert.match(closePaneSource, /Running processes in this pane will stop\./);
+assert.match(baseStyles, /\.hydra-shell-popover \{/);
 
 console.log('terminalFirstShellSmoke: ok');

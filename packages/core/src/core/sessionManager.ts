@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { CopilotMode, MultiplexerBackendCore } from './types';
+import { CopilotMode, MultiplexerBackendCore, MultiplexerSession } from './types';
 import * as coreGit from './git';
 import { ensureHydraGlobalConfig, getHydraGlobalAgentCommand, getHydraGlobalDefaultAgent } from './hydraGlobalConfig';
 import { buildAgentLaunchCommand, buildAgentResumePlan, CLAUDE_READY_DELAY_MS, AGENT_READY_TIMEOUT_MS, AGENT_READY_POLL_INTERVAL_MS, agentSupportsCompletionNotification, agentSupportsCopilotMode, getAgentDefaultCommand, getAgentDefinition, getAgentReadyPromptHandlers, getUnsupportedCopilotModeMessage, type AgentCommandOptions, type AgentPromptAction, type ShellTarget } from './agentConfig';
@@ -420,7 +420,24 @@ export class SessionManager {
   // ── Sync: reconcile sessions.json <-> live multiplexer ──
 
   async sync(): Promise<SessionState> {
-    const liveSessions = await this.backend.listSessions();
+    const reportedLiveSessions = await this.backend.listSessions();
+    const lostAgentSessions = reportedLiveSessions.filter(session => (
+      session.agentPaneId !== undefined && session.agentPaneAlive === false
+    ));
+    const ownedLostAgentSessions = (await Promise.all(lostAgentSessions.map(async (session) => {
+      try {
+        const ownership = await this.assertHydraSessionOwnership(session.name);
+        return ownership.live ? session : undefined;
+      } catch (error) {
+        logger.warn('session.sync', 'Refusing to clean an unowned tmux session with stale Agent metadata', {
+          sessionName: session.name,
+          agentPaneId: session.agentPaneId,
+          error,
+        });
+        return undefined;
+      }
+    }))).filter((session): session is MultiplexerSession => session !== undefined);
+    const liveSessions = reportedLiveSessions.filter(session => session.agentPaneAlive !== false);
     const liveSessionMap = new Map(liveSessions.map(s => [s.name, s]));
     const orphanedWorkerSessions: string[] = [];
     const migratedWorkerIds = new Set<number>();
@@ -632,6 +649,21 @@ export class SessionManager {
         .find(candidate => candidate.workerId === workerId);
       if (worker) this.ensureWorkerCompletionHook(worker);
     }
+    await Promise.all(ownedLostAgentSessions.map(async (session) => {
+      try {
+        await this.backend.killSession(session.name);
+        logger.warn('session.sync', 'Stopped tmux session after its Agent pane disappeared', {
+          sessionName: session.name,
+          agentPaneId: session.agentPaneId,
+        });
+      } catch (error) {
+        logger.warn('session.sync', 'Unable to clean tmux session whose Agent pane disappeared', {
+          sessionName: session.name,
+          agentPaneId: session.agentPaneId,
+          error,
+        });
+      }
+    }));
     return state;
   }
 
@@ -797,6 +829,10 @@ export class SessionManager {
   async getCopilot(sessionName: string): Promise<CopilotInfo | undefined> {
     const state = await this.sync();
     return state.copilots[sessionName];
+  }
+
+  getPersistedCopilot(sessionName: string): CopilotInfo | undefined {
+    return this.readSessionState().copilots[sessionName];
   }
 
   // ── Worker Lifecycle ──

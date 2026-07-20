@@ -2211,6 +2211,180 @@ body.hydra-resizing .hydra-resizer::after {
   opacity: 0.38;
   cursor: default;
 }
+.hydra-new-shell {
+  position: relative;
+}
+.hydra-new-shell__buttons {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.hydra-terminal__actions .hydra-new-shell__buttons button {
+  border-radius: 0;
+}
+.hydra-terminal__actions .hydra-new-shell__primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.hydra-terminal__actions .hydra-new-shell__disclosure {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  padding-inline: 5px;
+  border-left: 1px solid rgba(255, 255, 255, 0.13);
+}
+.hydra-shell-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(360px, calc(100vw - 32px));
+  color: var(--hy-text);
+  border: 1px solid var(--hy-border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--hy-canvas) 96%, var(--hy-panel));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+  text-align: left;
+  overflow: hidden;
+}
+.hydra-shell-popover__section {
+  padding: 12px;
+}
+.hydra-shell-popover__section + .hydra-shell-popover__section {
+  border-top: 1px solid var(--hy-border);
+}
+.hydra-shell-popover__heading {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.hydra-shell-popover__heading strong {
+  color: var(--hy-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+.hydra-shell-popover__heading span,
+.hydra-shell-popover__empty {
+  color: var(--hy-muted);
+  font-size: 11px;
+}
+.hydra-shell-popover__empty {
+  margin: 8px 0;
+}
+.hydra-shell-popover__panes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hydra-shell-pane {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border-radius: 7px;
+}
+.hydra-shell-pane--active {
+  background: color-mix(in srgb, var(--hy-accent) 11%, transparent);
+}
+.hydra-terminal__actions .hydra-shell-pane button {
+  min-height: 38px;
+  border-radius: 7px;
+  color: var(--hy-text);
+}
+.hydra-terminal__actions .hydra-shell-pane__focus {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  text-align: left;
+}
+.hydra-terminal__actions .hydra-shell-pane__close {
+  flex: none;
+  width: 32px;
+  padding: 0;
+  color: var(--hy-muted);
+}
+.hydra-terminal__actions .hydra-shell-pane__close:hover {
+  color: var(--hy-danger);
+  background: rgba(200, 63, 47, 0.1);
+}
+.hydra-shell-pane__copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hydra-shell-pane__copy strong,
+.hydra-shell-pane__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hydra-shell-pane__copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.hydra-shell-pane__copy small {
+  color: var(--hy-muted);
+  font-size: 10px;
+}
+.hydra-shell-pane__active {
+  flex: none;
+  align-self: center;
+  color: var(--hy-ok);
+  font-size: 10px;
+}
+.hydra-shell-popover__create {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.hydra-shell-popover__grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 8px;
+}
+.hydra-shell-popover .hydra-field {
+  gap: 4px;
+}
+.hydra-shell-popover .hydra-field__label em {
+  color: var(--hy-muted);
+  font-style: normal;
+  font-weight: 400;
+}
+.hydra-shell-popover .hydra-field__input {
+  min-height: 31px;
+  padding: 5px 7px;
+  border-color: var(--hy-border);
+  border-radius: 7px;
+  background: var(--hy-canvas);
+  font-size: 11px;
+}
+.hydra-terminal__actions .hydra-shell-popover__submit {
+  width: 100%;
+  min-height: 31px;
+  margin-top: 1px;
+  border: 1px solid color-mix(in srgb, var(--hy-accent) 55%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--hy-accent) 15%, transparent);
+  color: var(--hy-text);
+}
+.hydra-terminal__actions .hydra-shell-popover__submit:hover {
+  background: color-mix(in srgb, var(--hy-accent) 23%, transparent);
+}
+.hydra-shell-close__warning {
+  margin: 0;
+  color: var(--hy-text);
+}
 .hydra-terminal__surface {
   border-radius: 0;
   box-shadow: none;

@@ -10,6 +10,7 @@ export {
   History,
   ListFilter,
   ListTree,
+  LockKeyhole,
   Maximize2,
   Megaphone,
   Minimize2,

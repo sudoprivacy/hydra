@@ -53,6 +53,11 @@ import type {
   StartSessionOptions,
   StartSessionPayload,
   StopWorkerPayload,
+  TerminalPaneCloseResult,
+  TerminalPaneCreateInput,
+  TerminalPaneListInput,
+  TerminalPaneListResult,
+  TerminalPaneTargetInput,
   WorkerRuntimeListV2Result,
 } from './dto';
 
@@ -72,6 +77,10 @@ export interface HydraControlClient {
   // Terminal I/O by proxy
   getLogs(session: string, kind: SessionKind, lines?: number): Promise<LogResult>;
   sendMessage(session: string, kind: SessionKind, message: string): Promise<SendResult>;
+  listTerminalPanes(session: string): Promise<TerminalPaneListResult>;
+  createTerminalPane(input: TerminalPaneCreateInput): Promise<TerminalPaneListResult>;
+  focusTerminalPane(session: string, paneId: string): Promise<TerminalPaneListResult>;
+  closeTerminalPane(session: string, paneId: string): Promise<TerminalPaneCloseResult>;
   broadcastToWorkers(message: string): Promise<BroadcastResult>;
 
   // Attention inbox
@@ -150,6 +159,22 @@ export function createHydraControlClient(
     sendMessage: (session, kind, message) =>
       transport.request<SendMessagePayload, SendResult>(
         Op.sendMessage, { session, kind, message }, auth),
+
+    listTerminalPanes: (session) =>
+      transport.request<TerminalPaneListInput, TerminalPaneListResult>(
+        Op.listTerminalPanes, { session }, auth),
+
+    createTerminalPane: (input) =>
+      transport.request<TerminalPaneCreateInput, TerminalPaneListResult>(
+        Op.createTerminalPane, input, auth),
+
+    focusTerminalPane: (session, paneId) =>
+      transport.request<TerminalPaneTargetInput, TerminalPaneListResult>(
+        Op.focusTerminalPane, { session, paneId }, auth),
+
+    closeTerminalPane: (session, paneId) =>
+      transport.request<TerminalPaneTargetInput, TerminalPaneCloseResult>(
+        Op.closeTerminalPane, { session, paneId }, auth),
 
     broadcastToWorkers: (message) =>
       transport.request<BroadcastPayload, BroadcastResult>(Op.broadcastToWorkers, { message }, auth),
