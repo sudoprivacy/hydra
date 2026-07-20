@@ -7,6 +7,7 @@ import { getHydraConfigPath, getHydraHome, getTmuxCommand, toCanonicalPath } fro
 import { shellQuote, pwshQuote } from './shell';
 import { MultiplexerBackendCore, MultiplexerSession, SessionStatusInfo, HydraRole } from './types';
 import { logger } from './logger';
+import { TmuxTerminalPaneController } from './tmuxTerminalPanes';
 
 interface ExecFailure extends Error {
   stderr?: string;
@@ -49,7 +50,7 @@ export function buildSanitizedTmuxCommand(command: string): string {
 // wrapped in literal '…' — silently breaking listSessions / getSessionInfo /
 // getSessionPanePids parsers. See issue #225 §1.
 export function buildListSessionsCommand(): string {
-  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}|||#{@hydra-role}|||#{@hydra-agent}|||#{@workdir}"`;
+  return `${getTmuxCommand()} list-sessions -F "#{session_name}|||#{session_windows}|||#{session_attached}|||hydra-pane-v1|||#{@hydra-agent-pane}|||#{@hydra-role}|||#{@hydra-agent}|||#{@workdir}"`;
 }
 
 export function buildSessionInfoCommand(sessionName: string): string {
@@ -67,7 +68,13 @@ function parseNonNegativeInteger(value: string | undefined): number {
 
 export function parseListSessionsOutput(output: string): MultiplexerSession[] {
   return output.split('\n').filter(line => line.trim()).map(line => {
-    const [name, windowsValue, attachedValue, roleValue, agentValue, ...workdirParts] = line.split('|||');
+    const fields = line.split('|||');
+    const [name, windowsValue, attachedValue] = fields;
+    const versioned = fields[3] === 'hydra-pane-v1';
+    const agentPaneValue = versioned ? fields[4]?.trim() : undefined;
+    const roleValue = versioned ? fields[5] : fields[3];
+    const agentValue = versioned ? fields[6] : fields[4];
+    const workdirParts = fields.slice(versioned ? 7 : 5);
     const attachedClients = parseNonNegativeInteger(attachedValue);
     const role = roleValue?.trim();
     const agent = agentValue?.trim();
@@ -83,6 +90,7 @@ export function parseListSessionsOutput(output: string): MultiplexerSession[] {
     if (role === 'worker' || role === 'copilot') session.role = role;
     if (agent) session.agent = agent;
     if (workdir) session.workdir = workdir;
+    if (agentPaneValue) session.agentPaneId = agentPaneValue;
     return session;
   });
 }
@@ -229,6 +237,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   readonly installHint = process.platform === 'win32'
     ? 'Install: `winget install psmux`'
     : 'Install: `brew install tmux`';
+  readonly terminalPanes = new TmuxTerminalPaneController();
 
   async isInstalled(): Promise<boolean> {
     try {
@@ -250,6 +259,24 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     try {
       const output = await exec(buildListSessionsCommand());
       const sessions = parseListSessionsOutput(output);
+      if (sessions.some(session => session.agentPaneId)) {
+        const paneOutput = await exec(
+          `${getTmuxCommand()} list-panes -a -F "#{session_name}|||#{pane_id}"`,
+        );
+        const livePaneIds = new Map<string, Set<string>>();
+        for (const line of paneOutput.split('\n').filter(Boolean)) {
+          const [sessionName, paneId] = line.split('|||');
+          if (!sessionName || !paneId) continue;
+          const ids = livePaneIds.get(sessionName) ?? new Set<string>();
+          ids.add(paneId);
+          livePaneIds.set(sessionName, ids);
+        }
+        for (const session of sessions) {
+          if (session.agentPaneId) {
+            session.agentPaneAlive = livePaneIds.get(session.name)?.has(session.agentPaneId) === true;
+          }
+        }
+      }
       logger.debug('tmux.listSessions', 'Listed multiplexer sessions', { count: sessions.length });
       return sessions;
     } catch (error) {
@@ -274,6 +301,16 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
         buildSanitizedTmuxCommand(`new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`),
         { unsetEnv: getTmuxSanitizedEnvKeys() },
       );
+      try {
+        await this.terminalPanes.initializeAgentPane(sessionName);
+      } catch (error) {
+        try {
+          await this.killSession(sessionName);
+        } catch {
+          // Preserve the pane-identity error; cleanup is best effort.
+        }
+        throw error;
+      }
       logger.info('tmux.createSession', 'Created multiplexer session', { sessionName, cwd });
     } catch (error) {
       logger.error('tmux.createSession', 'Failed to create multiplexer session', { sessionName, cwd, error });
@@ -400,21 +437,32 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
   async setSessionAgent(sessionName: string, agent: string): Promise<void> {
     const tmuxCommand = getTmuxCommand();
     await exec(`${tmuxCommand} set-option -t ${shellQuote(sessionName)} @hydra-agent ${shellQuote(agent)}`);
+    try {
+      await this.terminalPanes.setAgentTitle(sessionName, agent);
+    } catch (error) {
+      logger.warn('tmux.setSessionAgent', 'Unable to update Agent pane title', {
+        sessionName,
+        agent,
+        error,
+      });
+    }
   }
 
   async sendKeys(sessionName: string, keys: string): Promise<void> {
     const tmuxCommand = getTmuxCommand();
+    const agentPaneId = await this.terminalPanes.resolveAgentPane(sessionName);
     logger.debug('tmux.sendKeys', 'Sending keys to multiplexer session', {
       sessionName,
       keyLength: keys.length,
     });
-    await exec(`${tmuxCommand} send-keys -t ${shellQuote(sessionName)} ${shellQuote(keys)} Enter`);
+    await exec(`${tmuxCommand} send-keys -t ${shellQuote(agentPaneId)} ${shellQuote(keys)} Enter`);
   }
 
   async capturePane(sessionName: string, lines?: number): Promise<string> {
     const tmuxCommand = getTmuxCommand();
+    const agentPaneId = await this.terminalPanes.resolveAgentPane(sessionName);
     const startArg = lines ? `-S -${lines}` : '';
-    const output = await exec(`${tmuxCommand} capture-pane -t ${shellQuote(sessionName)} -p ${startArg}`.trim());
+    const output = await exec(`${tmuxCommand} capture-pane -t ${shellQuote(agentPaneId)} -p ${startArg}`.trim());
     logger.debug('tmux.capturePane', 'Captured multiplexer pane', {
       sessionName,
       lines,
@@ -425,6 +473,7 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
 
   async sendMessage(sessionName: string, message: string): Promise<void> {
     const tmuxCommand = getTmuxCommand();
+    const agentPaneId = await this.terminalPanes.resolveAgentPane(sessionName);
     // Write message to a temp file and load it into a tmux buffer.
     // This avoids shell-quoting issues and ARG_MAX limits that cause
     // send-keys -l to silently drop the trailing Enter on long or
@@ -432,14 +481,24 @@ export class TmuxBackendCore implements MultiplexerBackendCore {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const bufferName = `hydra-send-${suffix}`;
     const tmpFile = path.join(os.tmpdir(), `hydra-msg-${suffix}`);
+    let bufferLoaded = false;
     try {
-      fs.writeFileSync(tmpFile, message);
+      fs.writeFileSync(tmpFile, message, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       await exec(`${tmuxCommand} load-buffer -b ${bufferName} ${shellQuote(tmpFile)}`);
-      await exec(`${tmuxCommand} paste-buffer -b ${bufferName} -t ${shellQuote(sessionName)} -d`);
+      bufferLoaded = true;
+      await exec(`${tmuxCommand} paste-buffer -b ${bufferName} -t ${shellQuote(agentPaneId)} -d`);
+      bufferLoaded = false;
       await new Promise(resolve => setTimeout(resolve, 100));
       // Send Enter separately to submit
-      await exec(`${tmuxCommand} send-keys -t ${shellQuote(sessionName)} Enter`);
+      await exec(`${tmuxCommand} send-keys -t ${shellQuote(agentPaneId)} Enter`);
     } finally {
+      if (bufferLoaded) {
+        try {
+          await exec(`${tmuxCommand} delete-buffer -b ${bufferName}`, { logFailure: false });
+        } catch {
+          // Best-effort cleanup after a failed paste.
+        }
+      }
       try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
     }
   }

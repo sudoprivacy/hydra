@@ -22,6 +22,10 @@
 //                             restoreCopilotAndFinalize                          (archive.ts)
 //  Op.getLogs               TmuxBackendCore.capturePane (+ getWorker/getCopilot) (worker.ts)
 //  Op.sendMessage           WorkerLifecycleService / TmuxBackendCore             (worker.ts)
+//  Op.listTerminalPanes     SessionTerminalService.list
+//  Op.createTerminalPane    SessionTerminalService.create
+//  Op.focusTerminalPane     SessionTerminalService.focus
+//  Op.closeTerminalPane     SessionTerminalService.close
 //  Op.broadcastToWorkers    WorkerLifecycleService.broadcastToWorkers            (worker send --all)
 //  Op.listNotifications     NotificationStore.list
 //  Op.listNotificationOccurrencesV2 NotificationStore.listOccurrences
@@ -78,6 +82,7 @@ import {
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
+import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
 
@@ -128,6 +133,11 @@ import {
   type SessionResult,
   type StartSessionPayload,
   type StopWorkerPayload,
+  type TerminalPaneCloseResult,
+  type TerminalPaneCreateInput,
+  type TerminalPaneListInput,
+  type TerminalPaneListResult,
+  type TerminalPaneTargetInput,
   type TerminalAttachInput,
   type TerminalChannel,
   type WorkerRuntimeCliSnapshot,
@@ -182,6 +192,7 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
   private readonly runtimeV2Store: WorkerRuntimeStateStoreV2;
   private readonly workerLifecycle: WorkerLifecycleService;
+  private readonly sessionTerminal: SessionTerminalService;
   private readonly eventLog: EventLog;
   private readonly eventHub: EventHub;
   private readonly notificationStateService: NotificationStateService;
@@ -224,6 +235,7 @@ export class HydraAppService implements HydraAppServiceApi {
       eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
     });
+    this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }
 
   // ── transport waist (3 methods) + sidecar-internal terminal authorization ──
@@ -297,6 +309,14 @@ export class HydraAppService implements HydraAppServiceApi {
         return this.getLogs(payload as GetLogsPayload);
       case Op.sendMessage:
         return this.sendMessage(payload as SendMessagePayload);
+      case Op.listTerminalPanes:
+        return this.listTerminalPanes(payload as TerminalPaneListInput);
+      case Op.createTerminalPane:
+        return this.createTerminalPane(payload as TerminalPaneCreateInput);
+      case Op.focusTerminalPane:
+        return this.focusTerminalPane(payload as TerminalPaneTargetInput);
+      case Op.closeTerminalPane:
+        return this.closeTerminalPane(payload as TerminalPaneTargetInput);
       case Op.broadcastToWorkers:
         return this.broadcastToWorkers(payload as BroadcastPayload);
       case Op.listNotifications:
@@ -720,6 +740,22 @@ export class HydraAppService implements HydraAppServiceApi {
       await this.backend.sendMessage(payload.session, payload.message);
     }
     return { status: 'sent', session: payload.session, message: payload.message };
+  }
+
+  private async listTerminalPanes(payload: TerminalPaneListInput): Promise<TerminalPaneListResult> {
+    return this.sessionTerminal.list(payload?.session);
+  }
+
+  private async createTerminalPane(input: TerminalPaneCreateInput): Promise<TerminalPaneListResult> {
+    return this.sessionTerminal.create(input);
+  }
+
+  private async focusTerminalPane(input: TerminalPaneTargetInput): Promise<TerminalPaneListResult> {
+    return this.sessionTerminal.focus(input?.session, input?.paneId);
+  }
+
+  private async closeTerminalPane(input: TerminalPaneTargetInput): Promise<TerminalPaneCloseResult> {
+    return this.sessionTerminal.close(input?.session, input?.paneId);
   }
 
   /** WorkerLifecycleService.broadcastToWorkers — mirrors `worker send --all`. */

@@ -12,6 +12,7 @@ import type { Disposable, TerminalChannel } from '@hydra/protocol';
 import { useHydraClient } from '../HydraClientProvider';
 import { useShellUi } from '../shell/shellState';
 import { Maximize2, Minimize2, RotateCw, Trash2 } from '../ui/icons';
+import { NewShellControl } from './terminal/NewShellControl';
 
 type ConnectionStatus =
   | 'inactive'
@@ -27,6 +28,7 @@ interface TerminalController {
   readonly deactivate: () => void;
   readonly reconnect: () => void;
   readonly clearLocal: () => void;
+  readonly focus: () => void;
 }
 
 const INITIAL_RETRY_MS = 500;
@@ -58,6 +60,7 @@ export function WorkerTerminal({
     deactivate: () => {},
     reconnect: () => {},
     clearLocal: () => {},
+    focus: () => {},
   });
   const [status, setStatus] = useState<ConnectionStatus>(active ? 'connecting' : 'inactive');
   const [detail, setDetail] = useState<string | null>(null);
@@ -281,7 +284,9 @@ export function WorkerTerminal({
       term.focus();
     };
 
-    controllerRef.current = { activate, deactivate, reconnect, clearLocal };
+    const focus = () => term.focus();
+
+    controllerRef.current = { activate, deactivate, reconnect, clearLocal, focus };
     const inputSub = term.onData(data => channel?.write(data));
     const resizeSub = term.onResize(({ cols, rows }) => {
       if (!channel || !activeRef.current || (lastResize.cols === cols && lastResize.rows === rows)) return;
@@ -299,6 +304,7 @@ export function WorkerTerminal({
         deactivate: () => {},
         reconnect: () => {},
         clearLocal: () => {},
+        focus: () => {},
       };
       observer.disconnect();
       if (fitFrame !== null) cancelAnimationFrame(fitFrame);
@@ -327,6 +333,11 @@ export function WorkerTerminal({
         </code>
         {detail ? <span className="hydra-terminal__detail" title={detail}>{detail}</span> : null}
         <div className="hydra-terminal__actions">
+          <NewShellControl
+            session={session}
+            enabled={active && status === 'connected'}
+            onTerminalFocus={() => controllerRef.current.focus()}
+          />
           <button
             type="button"
             title="Reconnect this terminal channel"

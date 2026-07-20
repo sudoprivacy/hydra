@@ -12,6 +12,48 @@ export interface MultiplexerSession {
   workdir?: string;
   role?: HydraRole;
   agent?: string;
+  /** Stable tmux pane ID recorded when Hydra creates the Agent pane. */
+  agentPaneId?: string;
+  /** False only when recorded metadata points to a pane that no longer exists. */
+  agentPaneAlive?: boolean;
+}
+
+export type TerminalPaneRole = 'agent' | 'shell' | 'external';
+export type TerminalPaneDirection = 'down' | 'right';
+
+export interface TerminalPaneSnapshot {
+  paneId: string;
+  windowId: string;
+  paneIndex: number;
+  title: string;
+  label: string;
+  role: TerminalPaneRole;
+  active: boolean;
+  currentCommand: string | null;
+  currentPath: string | null;
+  canClose: boolean;
+}
+
+export interface CreateTerminalPaneOptions {
+  requestId: string;
+  direction: TerminalPaneDirection;
+  cwd: string;
+  targetPaneId: string;
+  command?: string;
+}
+
+export interface TerminalPaneController {
+  resolveAgentPane(sessionName: string): Promise<string>;
+  list(sessionName: string): Promise<TerminalPaneSnapshot[]>;
+  create(
+    sessionName: string,
+    options: CreateTerminalPaneOptions,
+  ): Promise<TerminalPaneSnapshot[]>;
+  focus(sessionName: string, paneId: string): Promise<TerminalPaneSnapshot[]>;
+  close(sessionName: string, paneId: string): Promise<{
+    outcome: 'closed' | 'already-closed';
+    panes: TerminalPaneSnapshot[];
+  }>;
 }
 
 export interface SessionStatusInfo {
@@ -31,6 +73,7 @@ export interface MultiplexerBackendCore {
   readonly type: MultiplexerType;
   readonly displayName: string;
   readonly installHint: string;
+  readonly terminalPanes?: TerminalPaneController;
   isInstalled(): Promise<boolean>;
   listSessions(): Promise<MultiplexerSession[]>;
   createSession(sessionName: string, cwd: string): Promise<void>;
