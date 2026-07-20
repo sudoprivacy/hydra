@@ -249,7 +249,10 @@ export class CompletionCoordinator {
 
     let compatibilityDelivered = false;
     const target = routedIdentity.worker.copilotSessionName;
-    if (notificationResult.created && target && this.deliverCompatibility) {
+    if (notificationResult.created
+      && job.deliverCompatibilityToCopilot !== false
+      && target
+      && this.deliverCompatibility) {
       try {
         await this.deliverCompatibility(target, content.body);
         compatibilityDelivered = true;

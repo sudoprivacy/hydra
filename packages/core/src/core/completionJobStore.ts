@@ -13,6 +13,8 @@ export interface CompletionJob {
   runId: string;
   status: CompletionJobStatus;
   armedAt: string;
+  /** Legacy terminal-paste delivery policy. Missing on pre-remediation jobs means enabled. */
+  deliverCompatibilityToCopilot?: boolean;
   firedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
@@ -22,6 +24,7 @@ export interface CompletionJobArmInput {
   workerId: number;
   lifecycleEpoch: string;
   runId: string;
+  deliverCompatibilityToCopilot?: boolean;
 }
 
 export interface CompletionJobArmContext {
@@ -149,6 +152,7 @@ export class CompletionJobStore {
         runId: input.runId,
         status: 'pending',
         armedAt: timestamp(this.now()),
+        deliverCompatibilityToCopilot: input.deliverCompatibilityToCopilot ?? true,
       };
       store.jobs.push(job);
       return { job: cloneJob(job), created: true, adopted: false };
@@ -338,6 +342,10 @@ function parseJob(value: unknown, index: number, filePath: string): CompletionJo
   validateTimestamp(value.armedAt, `jobs[${index}].armedAt`);
   validateOptionalTimestamp(value.firedAt, `jobs[${index}].firedAt`);
   validateOptionalTimestamp(value.cancelledAt, `jobs[${index}].cancelledAt`);
+  if (value.deliverCompatibilityToCopilot !== undefined
+    && typeof value.deliverCompatibilityToCopilot !== 'boolean') {
+    throw new Error(`Completion job jobs[${index}].deliverCompatibilityToCopilot must be a boolean`);
+  }
   if (value.cancelReason !== undefined) {
     validateRequiredString(value.cancelReason, `jobs[${index}].cancelReason`, MAX_REASON_LENGTH);
   }
@@ -381,6 +389,10 @@ function validateJob(job: CompletionJob, field: string): void {
   validateTimestamp(job.armedAt, `${field}.armedAt`);
   validateOptionalTimestamp(job.firedAt, `${field}.firedAt`);
   validateOptionalTimestamp(job.cancelledAt, `${field}.cancelledAt`);
+  if (job.deliverCompatibilityToCopilot !== undefined
+    && typeof job.deliverCompatibilityToCopilot !== 'boolean') {
+    throw new Error(`Completion job ${field}.deliverCompatibilityToCopilot must be a boolean`);
+  }
   if (job.cancelReason !== undefined) {
     validateRequiredString(job.cancelReason, `${field}.cancelReason`, MAX_REASON_LENGTH);
   }
@@ -403,6 +415,10 @@ function validateArmInput(input: CompletionJobArmInput): void {
   validateWorkerId(input.workerId);
   validateRequiredString(input.lifecycleEpoch, 'lifecycleEpoch', MAX_ID_LENGTH);
   validateRequiredString(input.runId, 'runId', MAX_ID_LENGTH);
+  if (input.deliverCompatibilityToCopilot !== undefined
+    && typeof input.deliverCompatibilityToCopilot !== 'boolean') {
+    throw new Error('Completion job deliverCompatibilityToCopilot must be a boolean');
+  }
 }
 
 function sameRunIdentity(job: CompletionJob, input: CompletionJobArmInput): boolean {

@@ -175,16 +175,73 @@ function seedRunning(ctx: TestContext, runId = 'run-7'): void {
   assert.equal(result.outcome, 'applied');
 }
 
-function arm(ctx: TestContext, runId = 'run-7', store = ctx.jobStore): string {
+function arm(
+  ctx: TestContext,
+  runId = 'run-7',
+  store = ctx.jobStore,
+  deliverCompatibilityToCopilot = true,
+): string {
   const result = store.armForDispatch({
     workerId: ctx.worker.worker.workerId,
     lifecycleEpoch: ctx.worker.lifecycleEpoch,
     runId,
+    deliverCompatibilityToCopilot,
   }, {
     runtimeActive: true,
     runtimeRunId: runId,
   });
   return result.job.jobId;
+}
+
+async function testSuppressedCompatibilityStillCompletesGlobally(): Promise<void> {
+  const ctx = createContext();
+  try {
+    seedRunning(ctx, 'run-no-compatibility');
+    arm(ctx, 'run-no-compatibility', ctx.jobStore, false);
+    const completed = await createCoordinator(ctx).complete({
+      workerId: 7,
+      lifecycleEpoch: 'epoch-7',
+    });
+
+    assert.equal(completed.outcome, 'completed');
+    assert.equal(completed.runtime?.state, 'idle');
+    assert.equal(completed.notification?.kind, 'complete');
+    assert.equal(completed.compatibilityDelivered, false);
+    assert.equal(ctx.notificationStore.listOccurrences().length, 1);
+    assert.equal(ctx.deliveries.length, 0);
+    assert.equal(ctx.jobStore.list()[0]?.status, 'fired');
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+}
+
+async function testLegacyMissingDeliveryPolicyDefaultsToCompatibility(): Promise<void> {
+  const ctx = createContext();
+  try {
+    seedRunning(ctx, 'run-legacy-delivery-policy');
+    fs.writeFileSync(path.join(ctx.hydraHome, 'completion-jobs.json'), JSON.stringify({
+      version: 1,
+      jobs: [{
+        version: 1,
+        jobId: 'legacy-delivery-job',
+        workerId: 7,
+        lifecycleEpoch: 'epoch-7',
+        runId: 'run-legacy-delivery-policy',
+        status: 'pending',
+        armedAt: '2026-07-10T00:00:00.000Z',
+      }],
+    }), 'utf-8');
+
+    const completed = await createCoordinator(ctx).complete({
+      workerId: 7,
+      lifecycleEpoch: 'epoch-7',
+    });
+    assert.equal(completed.outcome, 'completed');
+    assert.equal(completed.compatibilityDelivered, true);
+    assert.equal(ctx.deliveries.length, 1);
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
 }
 
 async function testCompletionAndIdempotency(): Promise<void> {
@@ -391,6 +448,8 @@ async function testRejectionsAndBestEffortDelivery(): Promise<void> {
 
 async function main(): Promise<void> {
   await testCompletionAndIdempotency();
+  await testSuppressedCompatibilityStillCompletesGlobally();
+  await testLegacyMissingDeliveryPolicyDefaultsToCompatibility();
   await testNotificationFailureRepairsOnRetry();
   await testMarkFiredFailureRepairsOnRetry();
   await testCurrentRoutingAndGlobalOccurrence();

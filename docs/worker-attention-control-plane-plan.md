@@ -8,7 +8,7 @@
 
 **Approved:** 2026-07-10
 
-**Last updated:** 2026-07-11
+**Last updated:** 2026-07-20
 
 This document is the source of truth for the notification, worker runtime,
 completion, needs-input, and attention-inbox re-architecture. It supplements
@@ -95,6 +95,12 @@ requires the change-control process in section 16.
     Logical PRs merge into `feat/worker-attention-control-plane`; only after
     the complete program passes Wave 5 are its squash commits promoted to
     `main` through dependency-ordered PRs.
+17. **Lifecycle liveness and agent activity are independent.** Creating,
+    starting, or restoring a worker initializes runtime as `unknown` and then
+    converges to `idle` after readiness unless a prompt is actually dispatched.
+18. **Completion tracking is independent from terminal compatibility
+    delivery.** Disabling parent-copilot terminal paste does not suppress the
+    durable completion job, Runtime v2 transition, or global occurrence.
 
 ## 4. Source-of-truth boundaries
 
@@ -147,6 +153,10 @@ A single leased producer that runs agent monitors which cannot be expressed as
 direct hooks, including incremental Codex transcript parsing. The sidecar owns
 the supervisor while running. The VS Code extension may acquire the lease only
 when no sidecar supervisor owns it.
+
+The current lease owner also runs conservative Runtime v2 reconciliation.
+Live `running` snapshots without a matching pending completion job become
+static `unknown`; CLI read paths never invoke this repair.
 
 ### 5.6 `AgentHookAdapter`
 
@@ -215,13 +225,25 @@ Rules:
 | From | Allowed transitions |
 |---|---|
 | `unknown` | `running`, `idle`, `error` |
-| `running` | `needs-input`, `idle`, `error` |
-| `needs-input` | `running`, `idle`, `error` |
-| `idle` | `running`, `error` |
+| `running` | `needs-input`, `idle`, `error`, guarded `unknown` |
+| `needs-input` | `running`, `idle`, `error`, guarded `unknown` |
+| `idle` | `running`, `error`, guarded `unknown` |
 | `error` | `running`, `idle` |
 
 A same-state signal may update reason/metadata only when it has a newer
 revision and a distinct signalId.
+
+The following `unknown` transitions are narrowly approved:
+
+- a missing current-epoch snapshot may initialize to `unknown` only for a
+  lifecycle create/start/restore signal with `runId: null`;
+- a dispatched run without reliable completion tracking may enter `unknown`
+  with its non-null `runId` and reason `completion-tracking-unavailable`;
+- the leased attention supervisor may reconcile `running` or `needs-input` to
+  `unknown` with the same reason when no matching pending completion job
+  exists.
+
+Generic `unknown` signals remain illegal. Reconciliation never infers `idle`.
 
 ### 6.3 Run boundaries
 
@@ -304,6 +326,7 @@ interface CompletionJob {
   runId: string;
   status: 'pending' | 'fired' | 'cancelled';
   armedAt: string;
+  deliverCompatibilityToCopilot?: boolean;
   firedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
@@ -320,6 +343,11 @@ Rules:
 - A stale hook cannot fire or cancel a current job.
 - Hook execution resolves the worker's current session and parent at execution
   time; scripts contain no copied routing metadata.
+- New jobs persist an explicit compatibility-delivery preference. A missing
+  value on a legacy job means enabled, and the first dispatch's preference is
+  immutable for the run.
+- Completion always transitions runtime and creates the global occurrence;
+  `deliverCompatibilityToCopilot: false` suppresses only the terminal paste.
 
 ## 9. Agent signal semantics
 
@@ -386,6 +414,11 @@ sequence:
    create an error occurrence.
 
 Clients do not reproduce these steps.
+
+Create, start, and restore without a prompt use a readiness path instead of
+the dispatch sequence: guarded `unknown` while the agent launches, then
+`idle` with `runId: null`. An initial task enters the dispatch sequence only
+after readiness and persists completion intent before sending bytes.
 
 Create/start/restore failures use the same error pipeline. Stop/delete cancel
 active jobs and resolve current attention with an explicit reason. Rename only

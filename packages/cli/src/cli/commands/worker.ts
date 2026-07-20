@@ -126,8 +126,8 @@ export function registerWorkerCommands(program: Command): void {
     .option('--task <prompt>', 'Task prompt for the agent')
     .option('--task-file <path>', 'Path to a file containing the task description')
     .option('--copilot <session>', 'Session name of the parent copilot (auto-detected if inside a copilot)')
-    .option('--notify-copilot', 'Notify parent copilot when worker completes (default: true)', true)
-    .option('--no-notify-copilot', 'Disable completion notification to parent copilot')
+    .option('--notify-copilot', 'Paste completion messages into the parent copilot terminal (default: true)', true)
+    .option('--no-notify-copilot', 'Do not paste completion messages into the parent copilot terminal')
     .action(async (opts: {
       repo?: string;
       branch?: string;

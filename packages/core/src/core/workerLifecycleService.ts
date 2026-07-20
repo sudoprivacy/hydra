@@ -15,7 +15,7 @@ import {
 } from './sessionManager';
 import type { MultiplexerBackendCore } from './types';
 import {
-  awaitWorkerPostCreateOrPublishError,
+  classifyRuntimeErrorReason,
   publishWorkerRuntimeErrorNotification,
   type WorkerRuntimeErrorReason,
 } from './workerAttentionNotifications';
@@ -28,6 +28,7 @@ export type WorkerSelector = string | number;
 
 export interface WorkerMessageOptions {
   actorSessionName?: string | null;
+  /** Legacy name: this controls parent-terminal compatibility delivery, not tracking. */
   notifyCompletion?: boolean;
   reason?: string;
 }
@@ -116,11 +117,10 @@ export class WorkerLifecycleService {
   ): Promise<CreateWorkerResult> {
     const worker = await this.resolveWorker(selector);
     try {
-      return this.wrapPostCreate(
-        this.prepareStartedWorker(
-          await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand),
-          'worker-started',
-        ),
+      return this.prepareReadyWorker(
+        await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand),
+        'worker-starting',
+        'start',
       );
     } catch (error) {
       const currentWorker = this.resolveCurrentWorkerIdentity(worker);
@@ -153,7 +153,7 @@ export class WorkerLifecycleService {
         options.notifyCompletion !== false,
       );
       await this.backend.sendMessage(worker.sessionName, message);
-      return { worker, completionArmed: dispatch.completionJobCreated };
+      return { worker, completionArmed: !!dispatch.completionJob };
     } catch (error) {
       if (dispatch?.completionJobCreated && dispatch.completionJob) {
         this.cancelCompletionJob(dispatch.completionJob, 'message-delivery-failed');
@@ -231,8 +231,11 @@ export class WorkerLifecycleService {
     const worker = archived?.type === 'worker' ? archived.data as WorkerInfo : undefined;
     try {
       const result = await this.sessionManager.restoreWorker(sessionName);
-      if (worker) this.cancelCompletionIntent(worker, 'worker-restored');
-      return this.wrapPostCreate(this.prepareStartedWorker(result, 'worker-restored'));
+      if (worker) {
+        this.cancelCompletionIntent(worker, 'worker-restored');
+        this.resolveWorkerNeedsInput(worker.workerId, 'worker-restored');
+      }
+      return this.prepareReadyWorker(result, 'worker-restoring', 'restore');
     } catch (error) {
       if (worker) {
         const currentWorker = this.resolveCurrentWorkerIdentity(worker);
@@ -243,37 +246,13 @@ export class WorkerLifecycleService {
     }
   }
 
-  private wrapPostCreate(result: CreateWorkerResult): CreateWorkerResult {
-    return {
-      ...result,
-      postCreatePromise: awaitWorkerPostCreateOrPublishError(
-        result.workerInfo,
-        result.postCreatePromise,
-        {
-          eventSource: this.eventSource,
-          store: this.notificationStore,
-          runtimeStateStore: this.runtimeStateStore,
-        },
-      ),
-    };
-  }
-
   private async prepareCreatedWorker(
     result: CreateWorkerResult,
-    notifyCompletion: boolean,
+    deliverCompatibilityToCopilot: boolean,
   ): Promise<CreateWorkerResult> {
+    this.applyInitialUnknownTransition(result.workerInfo, 'worker-creating');
     if (!result.deliverInitialPrompt) {
-      try {
-        await this.sessionManager.assertHydraSessionOwnership(result.workerInfo.sessionName, 'worker');
-        this.prepareDispatch(result.workerInfo, 'worker-created', false);
-      } catch (error) {
-        this.publishError(result.workerInfo, error, 'post-create');
-        throw error;
-      }
-      return this.wrapPostCreate({
-        workerInfo: result.workerInfo,
-        postCreatePromise: result.postCreatePromise,
-      });
+      return this.prepareReadyWorker(result, 'worker-creating', 'post-create', true);
     }
 
     const deliverInitialPrompt = result.deliverInitialPrompt;
@@ -281,24 +260,51 @@ export class WorkerLifecycleService {
     const postCreatePromise = result.postCreatePromise
       .then(async () => {
         await this.sessionManager.assertHydraSessionOwnership(result.workerInfo.sessionName, 'worker');
-        dispatch = this.prepareDispatch(result.workerInfo, 'worker-initial-prompt', notifyCompletion);
+        dispatch = this.prepareDispatch(
+          result.workerInfo,
+          'worker-initial-prompt',
+          deliverCompatibilityToCopilot,
+        );
         await deliverInitialPrompt();
       })
       .catch((error) => {
         if (dispatch?.completionJobCreated && dispatch.completionJob) {
           this.cancelCompletionJob(dispatch.completionJob, 'initial-prompt-failed');
         }
+        this.publishError(result.workerInfo, error, classifyRuntimeErrorReason(error));
         throw error;
       });
-    return this.wrapPostCreate({
+    return {
       workerInfo: result.workerInfo,
       postCreatePromise,
-    });
+    };
   }
 
-  private prepareStartedWorker(result: CreateWorkerResult, reason: string): CreateWorkerResult {
-    this.prepareDispatch(result.workerInfo, reason, false);
-    return result;
+  private prepareReadyWorker(
+    result: CreateWorkerResult,
+    startingReason: 'worker-creating' | 'worker-starting' | 'worker-restoring',
+    errorReason: WorkerRuntimeErrorReason,
+    alreadyInitialized = false,
+  ): CreateWorkerResult {
+    if (!alreadyInitialized) {
+      this.applyInitialUnknownTransition(result.workerInfo, startingReason);
+    }
+    const lifecycleEpoch = getWorkerLifecycleEpoch(result.workerInfo);
+    this.cancelStaleCompletionIntents(result.workerInfo, lifecycleEpoch);
+    const postCreatePromise = result.postCreatePromise
+      .then(async () => {
+        await this.sessionManager.assertHydraSessionOwnership(result.workerInfo.sessionName, 'worker');
+        this.applyReadyTransition(result.workerInfo, lifecycleEpoch);
+      })
+      .catch((error) => {
+        this.publishError(
+          result.workerInfo,
+          error,
+          errorReason === 'post-create' ? classifyRuntimeErrorReason(error) : errorReason,
+        );
+        throw error;
+      });
+    return { ...result, postCreatePromise };
   }
 
   private async resolveWorker(selector: WorkerSelector): Promise<WorkerInfo> {
@@ -319,7 +325,7 @@ export class WorkerLifecycleService {
   private prepareDispatch(
     worker: WorkerInfo,
     reason: string,
-    notifyCompletion: boolean,
+    deliverCompatibilityToCopilot: boolean,
   ): PreparedWorkerDispatch {
     const before = this.runtimeV2Store.get(worker.workerId);
     const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
@@ -332,7 +338,7 @@ export class WorkerLifecycleService {
     let completionJobCreated = false;
 
     try {
-      if (notifyCompletion && agentSupportsCompletionNotification(worker.agent)) {
+      if (agentSupportsCompletionNotification(worker.agent)) {
         const hookAvailable = this.sessionManager.ensureWorkerCompletionHook(worker);
         if (!hookAvailable) {
           logger.warn('worker-lifecycle.completion-unavailable', 'Worker dispatch will continue without completion tracking', {
@@ -345,6 +351,7 @@ export class WorkerLifecycleService {
             workerId: worker.workerId,
             lifecycleEpoch,
             runId: proposedRunId,
+            deliverCompatibilityToCopilot,
           }, {
             runtimeActive,
             runtimeRunId: before?.runId ?? null,
@@ -352,13 +359,26 @@ export class WorkerLifecycleService {
           if (armed.job.status !== 'pending') {
             throw new Error(`Completion job for worker #${worker.workerId} run ${armed.job.runId} is already ${armed.job.status}`);
           }
+          if ((armed.job.deliverCompatibilityToCopilot !== false) !== deliverCompatibilityToCopilot) {
+            logger.warn('worker-lifecycle.completion-policy', 'Existing completion job retains its original compatibility delivery policy', {
+              workerId: worker.workerId,
+              lifecycleEpoch,
+              runId: armed.job.runId,
+              requested: deliverCompatibilityToCopilot,
+              retained: armed.job.deliverCompatibilityToCopilot !== false,
+            });
+          }
           completionJob = armed.job;
           completionJobCreated = armed.created;
         }
       }
 
       const runId = completionJob?.runId ?? proposedRunId;
-      this.applyRunningTransition(worker, lifecycleEpoch, runId, reason);
+      if (completionJob) {
+        this.applyRunningTransition(worker, lifecycleEpoch, runId, reason);
+      } else {
+        this.applyUnknownTransition(worker, lifecycleEpoch, runId, 'completion-tracking-unavailable');
+      }
       if (before?.state === 'needs-input') {
         if (before.lifecycleEpoch === lifecycleEpoch && before.runId === runId) {
           this.resolveNeedsInputOccurrences(worker.workerId, lifecycleEpoch, runId, 'worker-message');
@@ -403,6 +423,95 @@ export class WorkerLifecycleService {
       }
     }
     throw new Error(`Worker runtime running transition for #${worker.workerId} did not converge`);
+  }
+
+  private applyInitialUnknownTransition(
+    worker: WorkerInfo,
+    reason: 'worker-creating' | 'worker-starting' | 'worker-restoring',
+  ): WorkerRuntimeSnapshotV2 {
+    const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.runtimeV2Store.get(worker.workerId);
+      const currentEpoch = current?.lifecycleEpoch === lifecycleEpoch ? current : undefined;
+      const result = this.runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch,
+        runId: null,
+        revision: (currentEpoch?.revision ?? -1) + 1,
+        state: 'unknown',
+        signalId: randomUUID(),
+        origin: 'lifecycle',
+        reason,
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, this.eventSource);
+      if (result.outcome === 'applied' && result.snapshot) return result.snapshot;
+      if (result.outcome !== 'stale-revision') {
+        throw new Error(`Worker runtime initialization was rejected with ${result.outcome}`);
+      }
+    }
+    throw new Error(`Worker runtime initialization for #${worker.workerId} did not converge`);
+  }
+
+  private applyReadyTransition(
+    worker: WorkerInfo,
+    lifecycleEpoch: string,
+  ): WorkerRuntimeSnapshotV2 {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.runtimeV2Store.get(worker.workerId);
+      const currentEpoch = current?.lifecycleEpoch === lifecycleEpoch ? current : undefined;
+      const result = this.runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch,
+        runId: null,
+        revision: (currentEpoch?.revision ?? -1) + 1,
+        state: 'idle',
+        signalId: randomUUID(),
+        origin: 'lifecycle',
+        reason: 'worker-ready',
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, this.eventSource);
+      if (result.outcome === 'applied' && result.snapshot) return result.snapshot;
+      if (result.outcome !== 'stale-revision') {
+        throw new Error(`Worker runtime ready transition was rejected with ${result.outcome}`);
+      }
+    }
+    throw new Error(`Worker runtime ready transition for #${worker.workerId} did not converge`);
+  }
+
+  private applyUnknownTransition(
+    worker: WorkerInfo,
+    lifecycleEpoch: string,
+    runId: string,
+    reason: 'completion-tracking-unavailable',
+  ): WorkerRuntimeSnapshotV2 {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.runtimeV2Store.get(worker.workerId);
+      const result = this.runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch,
+        runId,
+        revision: (current?.revision ?? -1) + 1,
+        state: 'unknown',
+        signalId: randomUUID(),
+        origin: 'lifecycle',
+        reason,
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, this.eventSource);
+      if (result.outcome === 'applied' && result.snapshot) return result.snapshot;
+      if (result.outcome !== 'stale-revision') {
+        throw new Error(`Worker runtime unknown transition was rejected with ${result.outcome}`);
+      }
+    }
+    throw new Error(`Worker runtime unknown transition for #${worker.workerId} did not converge`);
   }
 
   private refreshRuntimeRoute(worker: WorkerInfo, reason: string): void {
@@ -562,18 +671,67 @@ export class WorkerLifecycleService {
   }
 
   private publishError(worker: WorkerInfo, error: unknown, reason: WorkerRuntimeErrorReason): void {
-    const result = publishWorkerRuntimeErrorNotification(worker, error, {
+    const currentWorker = this.resolveCurrentWorkerIdentity(worker);
+    let runtime: WorkerRuntimeSnapshotV2 | undefined;
+    try {
+      runtime = this.applyErrorTransition(currentWorker, reason);
+    } catch (runtimeError) {
+      logger.warn('worker-lifecycle.error-runtime', 'Failed to apply worker runtime error transition', {
+        sessionName: currentWorker.sessionName,
+        workerId: currentWorker.workerId,
+        reason,
+        error: runtimeError,
+      });
+    }
+    const result = publishWorkerRuntimeErrorNotification(currentWorker, error, {
       eventSource: this.eventSource,
       reason,
       store: this.notificationStore,
       runtimeStateStore: this.runtimeStateStore,
+      updateRuntime: false,
+      occurrenceId: runtime?.occurrenceId,
+      lifecycleEpoch: runtime?.lifecycleEpoch,
+      runId: runtime?.runId ?? undefined,
+      signalId: runtime?.signalId,
     });
     logger.warn('worker-lifecycle.error', 'Worker lifecycle operation failed', {
-      sessionName: worker.sessionName,
-      workerId: worker.workerId,
+      sessionName: currentWorker.sessionName,
+      workerId: currentWorker.workerId,
       reason,
       notificationStatus: result.created ? 'created' : result.skipped || 'existing',
       error,
     });
+  }
+
+  private applyErrorTransition(
+    worker: WorkerInfo,
+    reason: WorkerRuntimeErrorReason,
+  ): WorkerRuntimeSnapshotV2 {
+    const lifecycleEpoch = getWorkerLifecycleEpoch(worker);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.runtimeV2Store.get(worker.workerId);
+      const currentEpoch = current?.lifecycleEpoch === lifecycleEpoch ? current : undefined;
+      const occurrenceId = randomUUID();
+      const result = this.runtimeCoordinator.apply({
+        workerId: worker.workerId,
+        sessionName: worker.sessionName,
+        lifecycleEpoch,
+        runId: currentEpoch?.runId ?? null,
+        revision: (currentEpoch?.revision ?? -1) + 1,
+        state: 'error',
+        signalId: randomUUID(),
+        occurrenceId,
+        origin: 'lifecycle',
+        reason,
+        observedAt: new Date().toISOString(),
+        agent: worker.agent,
+        workdir: worker.workdir,
+      }, this.eventSource);
+      if (result.outcome === 'applied' && result.snapshot) return result.snapshot;
+      if (result.outcome !== 'stale-revision') {
+        throw new Error(`Worker runtime error transition was rejected with ${result.outcome}`);
+      }
+    }
+    throw new Error(`Worker runtime error transition for #${worker.workerId} did not converge`);
   }
 }

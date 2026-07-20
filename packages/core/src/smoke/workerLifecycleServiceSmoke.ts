@@ -436,7 +436,9 @@ async function testInitialPromptArmsOnlyAfterReadiness(): Promise<void> {
     });
 
     assert.equal(ctx.jobStore.getPending(worker.workerId), undefined);
-    assert.equal(ctx.runtimeV2Store.get(worker.workerId), undefined);
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'unknown');
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.reason, 'worker-creating');
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.runId, null);
     releaseReadiness?.();
     await result.postCreatePromise;
     assert.equal(ctx.jobStore.getPending(worker.workerId)?.status, 'pending');
@@ -459,9 +461,66 @@ async function testUnavailableHookDoesNotBlockDelivery(): Promise<void> {
     const result = await service.sendWorkerMessage(worker.sessionName, 'deliver anyway');
     assert.equal(result.completionArmed, false);
     assert.equal(ctx.jobStore.getPending(worker.workerId), undefined);
-    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'running');
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'unknown');
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.reason, 'completion-tracking-unavailable');
+    assert.ok(ctx.runtimeV2Store.get(worker.workerId)?.runId);
     assert.deepEqual(backend.sent, [{ sessionName: worker.sessionName, message: 'deliver anyway' }]);
     assert.equal(fs.readFileSync(hooksPath, 'utf-8'), '{"hooks":[');
+  });
+}
+
+async function testReadyLifecycleOperationsDoNotFabricateRuns(): Promise<void> {
+  await withContext(async (ctx) => {
+    const cases = ['create', 'create-directory', 'start', 'restore'] as const;
+    for (const [index, operation] of cases.entries()) {
+      const worker = createWorker(14 + index, `worker-ready-${operation}`);
+      const backend = new RecordingBackend();
+      const manager = new FakeSessionManager(backend, [worker]);
+      let releaseReadiness: (() => void) | undefined;
+      manager.postCreateGate = new Promise<void>((resolve) => {
+        releaseReadiness = resolve;
+      });
+      const service = createService(ctx, backend, manager);
+
+      const result = operation === 'create'
+        ? await service.createWorker({ repoRoot: '/tmp/hydra', branchName: 'feat/ready' })
+        : operation === 'create-directory'
+          ? await service.createDirectoryWorker({ workdir: '/tmp/task', name: 'ready-task' })
+          : operation === 'start'
+            ? await service.startWorker(worker.sessionName)
+            : await service.restoreWorker(worker.sessionName);
+
+      assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'unknown');
+      releaseReadiness?.();
+      await result.postCreatePromise;
+      const ready = ctx.runtimeV2Store.get(worker.workerId);
+      assert.equal(ready?.state, 'idle', `${operation} should become idle after readiness`);
+      assert.equal(ready?.runId, null);
+      assert.equal(ready?.reason, 'worker-ready');
+      assert.equal(ctx.jobStore.getPending(worker.workerId), undefined);
+    }
+  });
+}
+
+async function testCompatibilitySuppressionKeepsCompletionTracking(): Promise<void> {
+  await withContext(async (ctx) => {
+    const worker = createWorker(18, 'worker-no-compatibility-paste');
+    const backend = new RecordingBackend();
+    const manager = new FakeSessionManager(backend, [worker]);
+    manager.deliverInitialPrompt = () => backend.sendMessage(worker.sessionName, 'tracked task');
+    const service = createService(ctx, backend, manager);
+
+    const result = await service.createWorker({
+      repoRoot: '/tmp/hydra',
+      branchName: 'feat/no-compatibility-paste',
+      task: 'tracked task',
+      notifyCopilot: false,
+    });
+    await result.postCreatePromise;
+
+    assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'running');
+    assert.equal(ctx.jobStore.getPending(worker.workerId)?.deliverCompatibilityToCopilot, false);
+    assert.deepEqual(backend.sent, [{ sessionName: worker.sessionName, message: 'tracked task' }]);
   });
 }
 
@@ -493,6 +552,13 @@ async function testDeliveryFailureCleanup(): Promise<void> {
     const created = ctx.notificationStore.list({ sourceSession: newWorker.sessionName }).notifications;
     assert.equal(created.length, 1);
     assert.match(created[0].title, /failed to receive a message/);
+    const errorRuntime = ctx.runtimeV2Store.get(newWorker.workerId);
+    const errorOccurrence = ctx.notificationStore.listOccurrences()
+      .find(item => item.workerId === newWorker.workerId && item.kind === 'error');
+    assert.equal(errorOccurrence?.lifecycleEpoch, errorRuntime?.lifecycleEpoch);
+    assert.equal(errorOccurrence?.runId, errorRuntime?.runId);
+    assert.equal(errorOccurrence?.signalId, errorRuntime?.signalId);
+    assert.equal(errorOccurrence?.occurrenceId, errorRuntime?.occurrenceId);
 
     await assert.rejects(
       service.sendWorkerMessage(existingWorker.sessionName, 'continue old run', {
@@ -638,6 +704,7 @@ async function testLifecycleErrorTitles(): Promise<void> {
       assert.equal(notifications.length, 1);
       assert.match(notifications[0].title, testCase.expectedTitle);
       assert.equal(ctx.runtimeStateStore.get(worker.sessionName)?.state, 'error');
+      assert.equal(ctx.runtimeV2Store.get(worker.workerId)?.state, 'error');
     }
   });
 }
@@ -647,6 +714,8 @@ async function main(): Promise<void> {
   await testSendOrderingAndCompletionIntent();
   await testInitialPromptArmsOnlyAfterReadiness();
   await testUnavailableHookDoesNotBlockDelivery();
+  await testReadyLifecycleOperationsDoNotFabricateRuns();
+  await testCompatibilitySuppressionKeepsCompletionTracking();
   await testDeliveryFailureCleanup();
   await testStopDeleteAndBroadcast();
   await testCleanupFailureDoesNotMaskLifecycleOutcome();

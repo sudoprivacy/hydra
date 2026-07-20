@@ -21,7 +21,7 @@ export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
   const attentionBadge = row.kind === 'copilot'
     ? row.activeAttentionCount
     : row.activeAttentionCount > 1 ? row.activeAttentionCount : 0;
-  const showLifecycleDot = row.kind === 'worker' || status !== 'running';
+  const showStatusDot = row.kind === 'worker' || status === 'stopped';
   const canOpen = row.lifecycle === 'running' || (row.kind === 'worker' && row.type === 'code');
   const preferredView = row.lifecycle === 'stopped' ? 'diff' : 'terminal';
   const openPreferredView = () => {
@@ -74,7 +74,7 @@ export function TreeRow({ row }: { row: SessionControlRow }): JSX.Element {
           {attentionBadge}
         </span>
       ) : null}
-      {showLifecycleDot ? (
+      {showStatusDot ? (
         <span className={`hydra-sdot hydra-sdot--${status}`} title={STATUS_LABELS[status]} />
       ) : null}
       <RowMenu row={row} />

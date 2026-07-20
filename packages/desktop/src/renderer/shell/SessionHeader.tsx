@@ -21,8 +21,7 @@ export function SessionHeader({ tab, row }: { tab: Tab; row: SessionControlRow }
       <div className="hydra-session-header__identity">
         <div className="hydra-session-header__titleline">
           <h1 title={row.name}>{row.name}</h1>
-          <span className={`hydra-sdot hydra-sdot--${status}`} aria-hidden="true" />
-          <span className="hydra-session-header__status">{status === 'running' ? 'Live' : STATUS_LABELS[status]}</span>
+          <span className="hydra-session-header__status">{STATUS_LABELS[status]}</span>
           <span className="hydra-session-header__separator" aria-hidden="true">•</span>
           <span className="hydra-session-header__session" title={row.session}>Session: {row.session}</span>
           {!control.connected ? <span className="hydra-session-header__connection">Reconnecting…</span> : null}

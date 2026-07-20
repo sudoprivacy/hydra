@@ -39,6 +39,10 @@ export interface PublishWorkerAttentionNotificationInput {
   context?: HydraNotification['context'];
   eventSource?: HydraEventSource;
   store?: NotificationStore;
+  occurrenceId?: string;
+  lifecycleEpoch?: string;
+  runId?: string;
+  signalId?: string;
 }
 
 export interface PublishWorkerRuntimeErrorOptions {
@@ -46,6 +50,12 @@ export interface PublishWorkerRuntimeErrorOptions {
   reason?: WorkerRuntimeErrorReason;
   store?: NotificationStore;
   runtimeStateStore?: WorkerRuntimeStateStore;
+  /** Lifecycle service callers update Runtime v2 through their injected coordinator. */
+  updateRuntime?: boolean;
+  occurrenceId?: string;
+  lifecycleEpoch?: string;
+  runId?: string;
+  signalId?: string;
 }
 
 export interface PublishWorkerNeedsInputOptions {
@@ -80,6 +90,10 @@ export function publishWorkerAttentionNotification(
       },
       context: input.context,
       eventSource: input.eventSource || 'session-manager',
+      occurrenceId: input.occurrenceId,
+      lifecycleEpoch: input.lifecycleEpoch,
+      runId: input.runId,
+      signalId: input.signalId,
     });
   } catch (error) {
     logger.warn('worker-attention-notification.create', 'Failed to create worker attention notification', {
@@ -118,8 +132,12 @@ export function publishWorkerRuntimeErrorNotification(
     },
     eventSource: options.eventSource || 'session-manager',
     store: options.store,
+    occurrenceId: options.occurrenceId,
+    lifecycleEpoch: options.lifecycleEpoch,
+    runId: options.runId,
+    signalId: options.signalId,
   });
-  if (result.created || result.skipped) {
+  if (options.updateRuntime !== false && (result.created || result.skipped)) {
     updateWorkerRuntimeStateFromAttention(
       worker,
       'error',

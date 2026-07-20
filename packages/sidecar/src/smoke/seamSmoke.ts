@@ -289,13 +289,13 @@ async function main(): Promise<void> {
     assert.equal(workerEntry.session, tempSession, 'listed worker matches created session');
     assert.equal(workerEntry.type, 'task');
     assert.equal(typeof workerEntry.number, 'number', 'worker has a numeric id');
-    assert.equal(workerEntry.runtimeState.state, 'running', 'just-launched worker projects running');
+    assert.equal(workerEntry.runtimeState.state, 'idle', 'ready worker without a prompt projects idle');
     assert.equal(workerEntry.agentSessionId, workerEntry.sessionId, 'agentSessionId mirrors sessionId');
     const runtimeV2 = await client.listWorkerRuntimeV2();
     const runtimeV2Entry = runtimeV2.runtimes.find(runtime => runtime.workerId === workerEntry.number);
     assert.equal(runtimeV2.version, 2, 'Desktop runtime snapshot uses the v2 contract');
     assert.equal(runtimeV2Entry?.sessionName, tempSession, 'runtime v2 snapshot shares durable worker identity');
-    assert.equal(runtimeV2Entry?.state, 'running', 'runtime v2 snapshot carries the authoritative state');
+    assert.equal(runtimeV2Entry?.state, 'idle', 'runtime v2 snapshot carries the authoritative state');
     assert.ok(Number.isSafeInteger(runtimeV2.lastEventSeq), 'runtime v2 snapshot carries an event cursor');
 
     const deleted = await client.deleteSession(tempSession, 'worker');

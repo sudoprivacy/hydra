@@ -206,6 +206,7 @@ assert.deepEqual(view.workerGroups.map(group => group.kind), ['repository', 'loc
 assert.equal(view.workerGroups[0].label, 'repo-a');
 assert.equal(view.copilots[0].workerCount, 2);
 assert.equal(view.copilots[0].repoCount, 1);
+assert.equal(controlRowStatus(view.copilots[0]), 'live');
 assert.equal(view.workers[0].runtimeState, 'running');
 assert.equal(controlRowStatus(view.workers[0]), 'running');
 assert.equal(controlRowStatus(view.workers[1]), 'idle');

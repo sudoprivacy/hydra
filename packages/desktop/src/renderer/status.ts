@@ -1,12 +1,13 @@
-// One status vocabulary shared by the sidebar dots and the tab dots so a session
-// looks the same wherever it appears. A session's status folds its lifecycle
+// One status vocabulary shared by Desktop presentation surfaces. A session's
+// status folds its lifecycle
 // (running / stopped) and — for workers — its live runtime projection into a
 // single glanceable token:
-//   running, completed, idle, stopped, needs-input, error, or unknown.
+//   live, running, completed, idle, stopped, needs-input, error, or unknown.
 
 import type { SessionControlRow } from './controlState/selectors';
 
 export type SessionStatus =
+  | 'live'
   | 'running'
   | 'completed'
   | 'idle'
@@ -16,6 +17,7 @@ export type SessionStatus =
   | 'unknown';
 
 export const STATUS_LABELS: Record<SessionStatus, string> = {
+  live: 'Live',
   running: 'Running',
   completed: 'Completed',
   idle: 'Idle',
@@ -31,7 +33,7 @@ export function controlRowStatus(row: SessionControlRow): SessionStatus {
     return 'stopped';
   }
   if (row.kind === 'copilot') {
-    return 'running';
+    return 'live';
   }
   if (row.runtimeState === 'needs-input') {
     return 'needs-input';

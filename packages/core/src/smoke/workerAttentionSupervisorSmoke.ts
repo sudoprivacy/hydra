@@ -17,6 +17,7 @@ import { WorkerAttentionLeaseStore } from '../core/workerAttentionLease';
 import { WorkerAttentionSupervisor } from '../core/workerAttentionSupervisor';
 import { WorkerRuntimeStateStore } from '../core/workerRuntimeState';
 import { WorkerRuntimeStateStoreV2 } from '../core/workerRuntimeV2';
+import { WorkerRuntimeCoordinator } from '../core/workerRuntimeCoordinator';
 
 interface TestContext {
   root: string;
@@ -131,6 +132,109 @@ function createSupervisor(
     completionJobStore: ctx.completionJobStore,
     eventLog: ctx.eventLog,
   });
+}
+
+function seedRunningRuntime(
+  ctx: TestContext,
+  reason: string,
+  lifecycleEpoch = ctx.worker.lifecycleEpoch!,
+  runId = `run-${ctx.worker.workerId}`,
+): void {
+  const coordinator = new WorkerRuntimeCoordinator(
+    workerId => workerId === ctx.worker.workerId ? {
+      workerId,
+      sessionName: ctx.worker.sessionName,
+      lifecycleEpoch,
+      agent: ctx.worker.agent,
+      workdir: ctx.worker.workdir,
+    } : undefined,
+    ctx.runtimeV2Store,
+    ctx.runtimeStateStore,
+    ctx.eventLog,
+  );
+  const applied = coordinator.apply({
+    workerId: ctx.worker.workerId,
+    sessionName: ctx.worker.sessionName,
+    lifecycleEpoch,
+    runId,
+    revision: 0,
+    state: 'running',
+    signalId: `seed:${ctx.worker.workerId}:${lifecycleEpoch}:${runId}`,
+    origin: 'lifecycle',
+    reason,
+    observedAt: new Date().toISOString(),
+    agent: ctx.worker.agent,
+    workdir: ctx.worker.workdir,
+  }, 'cli');
+  assert.equal(applied.outcome, 'applied');
+}
+
+async function testOwnerScopedRuntimeReconciliation(): Promise<void> {
+  const cases = [
+    { label: 'legacy-lifecycle', reason: 'worker-started' },
+    { label: 'direct-terminal', reason: 'terminal-direct-input' },
+    { label: 'untracked-dispatch', reason: 'worker-send' },
+  ];
+  for (const [index, testCase] of cases.entries()) {
+    const ctx = createContext(`hydra-attention-reconcile-${testCase.label}-`, 60 + index);
+    const supervisor = createSupervisor(ctx, 'sidecar', `reconcile-${testCase.label}`);
+    try {
+      seedRunningRuntime(ctx, testCase.reason);
+      const candidate = ctx.runtimeV2Store.get(ctx.worker.workerId)!;
+      const scan = await supervisor.scanOnce();
+      assert.equal(scan.leaseAcquired, true);
+      const repaired = ctx.runtimeV2Store.get(ctx.worker.workerId)!;
+      assert.equal(repaired.state, 'unknown');
+      assert.notEqual(repaired.state, 'idle');
+      assert.equal(repaired.reason, 'completion-tracking-unavailable');
+      assert.equal(repaired.runId, candidate.runId);
+      assert.equal(
+        repaired.signalId,
+        `runtime-reconcile:${ctx.worker.workerId}:${ctx.worker.lifecycleEpoch}:${candidate.signalId}`,
+      );
+      assert.equal(ctx.runtimeStateStore.get(ctx.worker.sessionName)?.state, 'unknown');
+
+      await supervisor.scanOnce();
+      assert.equal(
+        ctx.runtimeV2Store.get(ctx.worker.workerId)?.revision,
+        repaired.revision,
+        'repeated reconciliation must be a no-op',
+      );
+    } finally {
+      supervisor.dispose();
+      removeTree(ctx.root);
+    }
+  }
+}
+
+async function testRuntimeReconciliationGuards(): Promise<void> {
+  const tracked = createContext('hydra-attention-reconcile-tracked-', 63);
+  const trackedSupervisor = createSupervisor(tracked, 'sidecar', 'reconcile-tracked');
+  try {
+    seedRunningRuntime(tracked, 'worker-send', undefined, 'tracked-run');
+    tracked.completionJobStore.armForDispatch({
+      workerId: tracked.worker.workerId,
+      lifecycleEpoch: tracked.worker.lifecycleEpoch!,
+      runId: 'tracked-run',
+    }, { runtimeActive: true, runtimeRunId: 'tracked-run' });
+    await trackedSupervisor.scanOnce();
+    assert.equal(tracked.runtimeV2Store.get(tracked.worker.workerId)?.state, 'running');
+  } finally {
+    trackedSupervisor.dispose();
+    removeTree(tracked.root);
+  }
+
+  const stale = createContext('hydra-attention-reconcile-stale-epoch-', 64);
+  const staleSupervisor = createSupervisor(stale, 'sidecar', 'reconcile-stale');
+  try {
+    seedRunningRuntime(stale, 'worker-started', 'old-epoch', 'old-run');
+    await staleSupervisor.scanOnce();
+    assert.equal(stale.runtimeV2Store.get(stale.worker.workerId)?.state, 'running');
+    assert.equal(stale.runtimeV2Store.get(stale.worker.workerId)?.lifecycleEpoch, 'old-epoch');
+  } finally {
+    staleSupervisor.dispose();
+    removeTree(stale.root);
+  }
 }
 
 async function testIncrementalCursorResolutionAbortAndLease(): Promise<void> {
@@ -492,6 +596,8 @@ function removeTree(root: string): void {
 }
 
 async function main(): Promise<void> {
+  await testOwnerScopedRuntimeReconciliation();
+  await testRuntimeReconciliationGuards();
   await testIncrementalCursorResolutionAbortAndLease();
   await testTranscriptCompletionAndCursorRestart();
   await testCodexExecApprovalLifecycle();

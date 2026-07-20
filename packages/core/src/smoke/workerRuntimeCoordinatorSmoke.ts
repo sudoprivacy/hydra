@@ -188,6 +188,51 @@ function testEpochFirstIdleAndError(): void {
   }
 }
 
+function testGuardedUnknownTransitions(): void {
+  const runtime = createRuntime('hydra-runtime-v2-guarded-unknown-');
+  try {
+    const initialized = runtime.coordinator.apply(signal({
+      state: 'unknown',
+      runId: null,
+      revision: 0,
+      signalId: 'worker-starting',
+      reason: 'worker-starting',
+    }));
+    assert.equal(initialized.outcome, 'applied');
+    assert.equal(initialized.snapshot?.state, 'unknown');
+
+    const generic = runtime.coordinator.apply(signal({
+      state: 'unknown',
+      runId: null,
+      revision: 1,
+      signalId: 'generic-unknown',
+      reason: 'generic-unknown',
+    }));
+    assert.equal(generic.outcome, 'illegal-transition');
+
+    const untracked = runtime.coordinator.apply(signal({
+      state: 'unknown',
+      runId: 'untracked-run',
+      revision: 2,
+      signalId: 'untracked-dispatch',
+      reason: 'completion-tracking-unavailable',
+    }));
+    assert.equal(untracked.outcome, 'applied');
+    assert.equal(untracked.snapshot?.runId, 'untracked-run');
+
+    const repeatedGeneric = runtime.coordinator.apply(signal({
+      state: 'unknown',
+      runId: 'untracked-run',
+      revision: 3,
+      signalId: 'repeated-generic-unknown',
+      reason: 'generic-unknown',
+    }));
+    assert.equal(repeatedGeneric.outcome, 'illegal-transition');
+  } finally {
+    fs.rmSync(runtime.root, { recursive: true, force: true });
+  }
+}
+
 function testRenameAndClearProjection(): void {
   const runtime = createRuntime();
   try {
@@ -486,6 +531,7 @@ function main(): void {
   testOrderingEpochRunAndDedupe();
   testRejectedSignalNeverResurrectsAfterHistoryGrowth();
   testEpochFirstIdleAndError();
+  testGuardedUnknownTransitions();
   testRenameAndClearProjection();
   testDuplicateRepairsFailedProjectionWithoutSecondEvent();
   testDuplicateRepairsFailedRenameClear();
