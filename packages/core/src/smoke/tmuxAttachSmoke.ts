@@ -59,6 +59,7 @@ function main(): void {
       'one-client|||2|||1|||copilot|||claude|||/tmp/copilot',
       'two-clients|||1|||2|||||||||',
       'three-clients|||1|||3|||worker|||custom|||/tmp/with|||delimiter',
+      'pane-aware|||1|||0|||hydra-pane-v1|||%42|||worker|||codex|||/tmp/pane-aware',
     ].join('\n'));
     assert.deepEqual(
       sessions.map(session => ({
@@ -71,6 +72,7 @@ function main(): void {
         { name: 'one-client', attached: true, attachedClients: 1 },
         { name: 'two-clients', attached: true, attachedClients: 2 },
         { name: 'three-clients', attached: true, attachedClients: 3 },
+        { name: 'pane-aware', attached: false, attachedClients: 0 },
       ],
     );
     assert.equal(sessions[0].role, 'worker');
@@ -81,6 +83,8 @@ function main(): void {
     assert.equal(sessions[2].agent, undefined);
     assert.equal(sessions[2].workdir, undefined);
     assert.equal(sessions[3].workdir, '/tmp/with|||delimiter');
+    assert.equal(sessions[4].agentPaneId, '%42');
+    assert.equal(sessions[4].workdir, '/tmp/pane-aware');
     assert.deepEqual(
       parseSessionInfoOutput('3|||1710000000'),
       { attached: true, attachedClients: 3, lastActive: 1710000000 },

@@ -73,6 +73,71 @@ export interface ExecOptions {
   unsetEnv?: string[];
 }
 
+/**
+ * Execute a binary with an argv array. Use this at boundaries where values must
+ * never be interpreted by a shell (for example tmux pane-control requests).
+ */
+export async function execFile(
+  command: string,
+  args: readonly string[],
+  options?: ExecOptions,
+): Promise<string> {
+  const startedAt = Date.now();
+  const cwd = options?.cwd;
+  const codec = IS_WINDOWS ? getWindowsConsoleCodec() : 'utf8';
+  logger.debug('execFile.start', 'Running binary', {
+    command,
+    argCount: args.length,
+    cwd,
+  });
+  try {
+    const { stdout } = await execFilePromise(command, [...args], {
+      cwd,
+      env: getExecEnv(options?.unsetEnv),
+      encoding: IS_WINDOWS ? 'buffer' : 'utf8',
+    });
+    const decodedStdout = IS_WINDOWS
+      ? decodeChildOutput(stdout, codec)
+      : String(stdout ?? '');
+    logger.debug('execFile.success', 'Binary completed', {
+      command,
+      argCount: args.length,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      stdoutLength: decodedStdout.length,
+    });
+    return decodedStdout.trim();
+  } catch (error) {
+    const failure = error as Error & {
+      code?: unknown;
+      stdout?: unknown;
+      stderr?: unknown;
+    };
+    if (IS_WINDOWS) {
+      if (failure.stdout !== undefined) failure.stdout = decodeChildOutput(failure.stdout, codec);
+      if (failure.stderr !== undefined) failure.stderr = decodeChildOutput(failure.stderr, codec);
+    }
+    const context = {
+      command,
+      argCount: args.length,
+      cwd,
+      durationMs: Date.now() - startedAt,
+      exitCode: failure.code,
+    };
+    if (options?.logFailure === false) {
+      logger.debug('execFile.probeFailure', 'Binary probe failed', context);
+    } else {
+      logger.error('execFile.failure', 'Binary failed', {
+        ...context,
+        stdout: failure.stdout,
+        stderr: failure.stderr,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
 // VS Code is a GUI app and doesn't inherit shell PATH.
 // Add common binary locations (Homebrew, etc.) to PATH.
 function getCurrentPath(): string {

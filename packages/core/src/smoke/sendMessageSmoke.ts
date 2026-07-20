@@ -25,20 +25,22 @@ import { shellQuote } from '../core/shell';
 
 // ── helpers ──
 
+const TMUX = `tmux -L ${shellQuote(`hydra-send-message-smoke-${process.pid}-${Date.now()}`)}`;
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function killSession(name: string): Promise<void> {
-  try { await exec(`tmux kill-session -t ${shellQuote(name)}`); } catch { /* ignore */ }
+  try { await exec(`${TMUX} kill-session -t ${shellQuote(name)}`); } catch { /* ignore */ }
 }
 
 // ── OLD method (send-keys -l + separate Enter) ──
 
 async function sendMessageOld(session: string, message: string): Promise<void> {
-  await exec(`tmux send-keys -l -t ${shellQuote(session)} ${shellQuote(message)}`);
+  await exec(`${TMUX} send-keys -l -t ${shellQuote(session)} ${shellQuote(message)}`);
   await sleep(100);
-  await exec(`tmux send-keys -t ${shellQuote(session)} Enter`);
+  await exec(`${TMUX} send-keys -t ${shellQuote(session)} Enter`);
 }
 
 // ── NEW method (load-buffer + paste-buffer + separate Enter) ──
@@ -49,10 +51,10 @@ async function sendMessageNew(session: string, message: string): Promise<void> {
   const tmpFile = path.join(os.tmpdir(), `hydra-smoke-${suffix}`);
   try {
     fs.writeFileSync(tmpFile, message);
-    await exec(`tmux load-buffer -b ${bufferName} ${shellQuote(tmpFile)}`);
-    await exec(`tmux paste-buffer -b ${bufferName} -t ${shellQuote(session)} -d`);
+    await exec(`${TMUX} load-buffer -b ${bufferName} ${shellQuote(tmpFile)}`);
+    await exec(`${TMUX} paste-buffer -b ${bufferName} -t ${shellQuote(session)} -d`);
     await sleep(100);
-    await exec(`tmux send-keys -t ${shellQuote(session)} Enter`);
+    await exec(`${TMUX} send-keys -t ${shellQuote(session)} Enter`);
   } finally {
     try { fs.unlinkSync(tmpFile); } catch { /* best-effort */ }
   }
@@ -92,8 +94,10 @@ const ENTER_TESTS: TestCase[] = [
     message: `"hello" 'world' \`cmd\` $HOME \\path (parens) {braces} [brackets] | & ; # ~ !`,
   },
   {
-    name: 'long message (1000 chars)',
-    message: 'x'.repeat(1_000),
+    // Stay below macOS's smaller canonical-mode line-buffer ceiling. Payloads
+    // beyond that ceiling are covered by the raw-mode-oriented group below.
+    name: 'long message (500 chars)',
+    message: 'x'.repeat(500),
   },
   {
     name: 'embedded newlines',
@@ -109,12 +113,15 @@ async function runEnterTest(method: Method, tc: TestCase, index: number): Promis
   try {
     try { fs.unlinkSync(recvFile); } catch { /* no-op */ }
 
-    await exec(`tmux new-session -d -s ${shellQuote(session)} -x 200 -y 50`);
-    await sleep(200);
+    await exec(`${TMUX} new-session -d -s ${shellQuote(session)} -x 200 -y 50`);
+    // A fresh isolated tmux server still launches the user's configured shell;
+    // prompt frameworks may reset the line editor during their startup. Wait
+    // long enough that the read loop is not sent into a transient prompt.
+    await sleep(1_000);
 
     // Start a read-loop that writes a marker when a complete line is received
     const loop = `while IFS= read -r line; do echo GOT >> ${shellQuote(recvFile)}; done`;
-    await exec(`tmux send-keys -t ${shellQuote(session)} ${shellQuote(loop)} Enter`);
+    await exec(`${TMUX} send-keys -t ${shellQuote(session)} ${shellQuote(loop)} Enter`);
     await sleep(400);
 
     // Send the test message
@@ -156,7 +163,7 @@ async function runLargeTest(method: Method, tc: TestCase, index: number): Promis
   const session = `hydra-smoke-lg-${method}-${index}-${ts}`;
 
   try {
-    await exec(`tmux new-session -d -s ${shellQuote(session)} -x 200 -y 50`);
+    await exec(`${TMUX} new-session -d -s ${shellQuote(session)} -x 200 -y 50`);
     await sleep(200);
 
     const send = method === 'old' ? sendMessageOld : sendMessageNew;

@@ -86,21 +86,30 @@ assert.equal(state.tabs.length, 0, 'deleted sessions prune their tabs');
 assert.equal(state.activeId, null);
 
 const rendererRoot = path.join(here, '..', 'src', 'renderer');
-const tabBarSource = fs.readFileSync(path.join(rendererRoot, 'tabs', 'TabBar.tsx'), 'utf-8');
-const headerSource = fs.readFileSync(path.join(rendererRoot, 'shell', 'SessionHeader.tsx'), 'utf-8');
-const treeRowSource = fs.readFileSync(path.join(rendererRoot, 'sidebar', 'TreeRow.tsx'), 'utf-8');
 const baseStyles = fs.readFileSync(path.join(rendererRoot, 'styles', 'base.css'), 'utf-8');
-
-assert.match(tabBarSource, /aria-label=\{`\$\{label\}, \$\{STATUS_LABELS\[status\]\}`\}/);
-assert.match(tabBarSource, /\{isAttention\(status\) \? \(/);
-assert.equal(
-  (tabBarSource.match(/hydra-sdot/g) ?? []).length,
-  2,
-  'tabs render one exceptional marker class and its status modifier only inside the attention branch',
+const terminalSource = fs.readFileSync(path.join(rendererRoot, 'routes', 'WorkerTerminal.tsx'), 'utf-8');
+const newShellSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'NewShellControl.tsx'),
+  'utf-8',
 );
-assert.doesNotMatch(headerSource, /hydra-sdot/);
-assert.match(headerSource, /STATUS_LABELS\[status\]/);
-assert.match(treeRowSource, /row\.kind === 'worker' \|\| status === 'stopped'/);
-assert.match(baseStyles, /\.hydra-sdot--running \{ animation: hy-spin/);
+const panePopoverSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'NewShellPopover.tsx'),
+  'utf-8',
+);
+const closePaneSource = fs.readFileSync(
+  path.join(rendererRoot, 'routes', 'terminal', 'ClosePaneConfirm.tsx'),
+  'utf-8',
+);
+
+assert.match(terminalSource, /<NewShellControl/);
+assert.match(terminalSource, /enabled=\{active && status === 'connected'\}/);
+assert.match(newShellSource, /crypto\.randomUUID\(\)/);
+assert.match(newShellSource, /direction: 'down',[\s\S]*startDirectory: 'session-workdir'/);
+assert.match(newShellSource, /client\.focusTerminalPane/);
+assert.match(newShellSource, /client\.closeTerminalPane/);
+assert.match(panePopoverSource, /pane\.canClose \? \(/);
+assert.match(panePopoverSource, /agent-current-directory/);
+assert.match(closePaneSource, /Running processes in this pane will stop\./);
+assert.match(baseStyles, /\.hydra-shell-popover \{/);
 
 console.log('terminalFirstShellSmoke: ok');

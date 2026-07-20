@@ -125,6 +125,14 @@ implementation:
 10. **Agent-native history remains native.** A structured cross-agent
     Conversation view is deferred until a separate normalized transcript
     contract is approved.
+11. **Managed auxiliary shell panes.** A running Copilot or Worker Terminal may
+    create auxiliary tmux shell panes without replacing or retargeting its Agent
+    pane. The primary `New Shell` action creates a downward split immediately;
+    its disclosure opens advanced direction, start-directory, optional-command,
+    focus, and close controls. Hydra-created shell panes are closable with an
+    explicit running-process warning. The Agent pane is always protected. The
+    implementation contract is
+    [`TMUX-SHELL-PANES.md`](./TMUX-SHELL-PANES.md).
 
 ## 4. Application shell
 

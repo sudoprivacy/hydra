@@ -9,7 +9,7 @@
 //      imports are `import type` — fully erased, so this package pulls in ZERO
 //      engine runtime code and stays transport-agnostic.
 
-import type { CopilotMode } from '@hydra/core/types';
+import type { CopilotMode, TerminalPaneSnapshot } from '@hydra/core/types';
 import type {
   WorkerRuntimeState,
   WorkerRuntimeSignalOrigin,
@@ -38,6 +38,7 @@ import type { SessionKind } from './types';
 // vocabulary from `@hydra/protocol` alone.
 export type {
   CopilotMode,
+  TerminalPaneSnapshot,
   WorkerRuntimeState,
   WorkerRuntimeSignalOrigin,
   HydraEvent,
@@ -148,6 +149,34 @@ export interface WorkerRuntimeListV2Result {
   lastEventSeq: number;
   runtimes: WorkerRuntimeSnapshotV2[];
   count: number;
+}
+
+export interface TerminalPaneListInput {
+  session: string;
+}
+
+export interface TerminalPaneCreateInput {
+  session: string;
+  requestId: string;
+  direction: 'down' | 'right';
+  startDirectory: 'session-workdir' | 'agent-current-directory';
+  command?: string;
+}
+
+export interface TerminalPaneTargetInput {
+  session: string;
+  paneId: string;
+}
+
+export interface TerminalPaneListResult {
+  session: string;
+  agentPaneId: string;
+  panes: TerminalPaneSnapshot[];
+  maxPanes: number;
+}
+
+export interface TerminalPaneCloseResult extends TerminalPaneListResult {
+  outcome: 'closed' | 'already-closed';
 }
 
 export interface NotificationOccurrenceFiltersV2 {

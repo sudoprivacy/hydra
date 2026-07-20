@@ -13,9 +13,10 @@
  *   1. bidirectional I/O    — a keystroke reaches the shell and its echo returns;
  *   2. mouse scrollback     — wheel input enters tmux copy-mode, not the pane;
  *   3. resize propagation   — `pty.resize` → tmux → the shell's `stty size`;
- *   4. drop + reconnect     — the session persists and a fresh attach repaints;
- *   5. read-only mirror     — a mirror observer sees the current screen;
- *   6. auth enforcement     — a wrong bearer token on the terminal WS is rejected.
+ *   4. pane-border dragging — SGR mouse drag resizes the native tmux split;
+ *   5. drop + reconnect     — the session persists and a fresh attach repaints;
+ *   6. read-only mirror     — a mirror observer sees the current screen;
+ *   7. auth enforcement     — a wrong bearer token on the terminal WS is rejected.
  * Then it cleans up the tmux session + server.
  *
  * Skips cleanly (exit 0) when tmux is unavailable so it is safe in the suite.
@@ -355,8 +356,65 @@ async function main(): Promise<void> {
       `before=${before?.cols}c after=${after?.cols}c (rows ${before?.rows}->${after?.rows}, status off)`,
     );
 
-    // ── 4. drop + reconnect: session persists and a fresh attach repaints ──
-    console.log('4. Drop + reconnect (repaint of current screen)');
+    // ── 4. native tmux pane-border drag over the real terminal channel ──
+    console.log('4. Native pane-border dragging');
+    const split = tmux([
+      'split-window',
+      '-d',
+      '-h',
+      '-p',
+      '40',
+      '-t',
+      `${SESSION}:0.0`,
+      'bash',
+      '--norc',
+      '-i',
+    ]);
+    const paneLayout = (): Array<{ paneId: string; left: number; width: number }> => (
+      tmux([
+        'list-panes',
+        '-t',
+        SESSION,
+        '-F',
+        '#{pane_id}|#{pane_left}|#{pane_width}',
+      ]).stdout
+        ?.trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => {
+          const [paneId, left, width] = line.split('|');
+          return { paneId, left: Number(left), width: Number(width) };
+        }) ?? []
+    );
+    const beforeDrag = paneLayout().sort((left, right) => left.left - right.left);
+    if (split.status === 0 && beforeDrag.length === 2) {
+      const borderColumn = beforeDrag[1].left;
+      const targetColumn = borderColumn + 12;
+      // xterm uses the SGR mouse protocol: 0=left press, 32=left-button
+      // motion, and a lowercase final byte releases the button. Coordinates
+      // are one-based, while tmux pane_left is zero-based; the right pane's
+      // left offset is therefore the border's one-based column.
+      t1.write(`\x1b[<0;${borderColumn};10M`);
+      t1.write(`\x1b[<32;${targetColumn};10M`);
+      t1.write(`\x1b[<0;${targetColumn};10m`);
+      await sleep(300);
+    }
+    const afterDrag = paneLayout().sort((left, right) => left.left - right.left);
+    check(
+      'dragging the tmux border changes pane widths',
+      split.status === 0
+        && beforeDrag.length === 2
+        && afterDrag.length === 2
+        && beforeDrag[0].width !== afterDrag[0].width,
+      `before=${beforeDrag.map(pane => pane.width).join('/')} after=${afterDrag.map(pane => pane.width).join('/')}`,
+    );
+    if (afterDrag[1]) {
+      tmux(['kill-pane', '-t', afterDrag[1].paneId]);
+      await sleep(100);
+    }
+
+    // ── 5. drop + reconnect: session persists and a fresh attach repaints ──
+    console.log('5. Drop + reconnect (repaint of current screen)');
     t1.clear();
     const persist = 'PERSIST_af19';
     t1.write(`echo ${persist}\r`);
@@ -379,8 +437,8 @@ async function main(): Promise<void> {
     check('interactive owner replacement exposes a structured error', Boolean(replacementReason));
     t2.close();
 
-    // ── 5. read-only mirror sees the current screen ──
-    console.log('5. Read-only mirror');
+    // ── 6. read-only mirror sees the current screen ──
+    console.log('6. Read-only mirror');
     const mirror = new Term(client, SESSION, { mode: 'mirror', cols: 120, rows: 40 });
     const mirrored = await mirror.waitFor(new RegExp(persist), 5000);
     check('mirror observer receives the current screen (capture-pane)', Boolean(mirrored));
@@ -388,8 +446,8 @@ async function main(): Promise<void> {
     replacement.close();
     await sleep(300);
 
-    // ── 6. auth: a wrong token on the terminal WS is rejected ──
-    console.log('6. Auth enforcement on the terminal WS');
+    // ── 7. auth: a wrong token on the terminal WS is rejected ──
+    console.log('7. Auth enforcement on the terminal WS');
     const wsBase = server.url.replace(/^http/, 'ws');
     const badUrl = `${wsBase}/v1/terminal?session=${encodeURIComponent(SESSION)}&mode=interactive&cols=80&rows=24&token=wrong`;
     const rejected = await connectRejected(badUrl);
@@ -398,7 +456,7 @@ async function main(): Promise<void> {
     const accepted = await connectRejected(okUrl);
     check('terminal WS with the valid token is accepted', !accepted);
 
-    // ── 7. the target session survived every attach/detach ──
+    // ── 8. the target session survived every attach/detach ──
     check('target tmux session still alive (never disrupted)', tmuxHasSession(SESSION));
 
     console.log(`\n${passes} passed, ${failures} failed`);

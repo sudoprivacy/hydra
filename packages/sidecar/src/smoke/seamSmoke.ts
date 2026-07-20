@@ -12,6 +12,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -118,6 +119,48 @@ async function main(): Promise<void> {
       .map(message => message.message);
     assert.match(copilotMessages[0], /You are a Hydra copilot/);
     assert.equal(copilotMessages[1], 'start with this task');
+
+    // ── Desktop tmux pane control round-trips through the same protocol seam. ──
+    const initialPanes = await client.listTerminalPanes(copilot.session);
+    assert.equal(initialPanes.panes.length, 1, 'pane list starts with the protected Agent');
+    assert.equal(initialPanes.panes[0].role, 'agent');
+    assert.equal(initialPanes.panes[0].canClose, false);
+    const createdPanes = await client.createTerminalPane({
+      session: copilot.session,
+      requestId: randomUUID(),
+      direction: 'right',
+      startDirectory: 'agent-current-directory',
+      command: 'npm run dev',
+    });
+    const shellPane = createdPanes.panes.find(pane => pane.role === 'shell');
+    assert.ok(shellPane, 'create pane returns the managed shell');
+    const focusedPanes = await client.focusTerminalPane(copilot.session, initialPanes.agentPaneId);
+    assert.equal(
+      focusedPanes.panes.find(pane => pane.paneId === initialPanes.agentPaneId)?.active,
+      true,
+      'focus targets the exact pane ID',
+    );
+    await assert.rejects(
+      () => client.closeTerminalPane(copilot.session, initialPanes.agentPaneId),
+      /protected/,
+      'Agent pane close is rejected server-side',
+    );
+    const closedPane = await client.closeTerminalPane(copilot.session, shellPane.paneId);
+    assert.equal(closedPane.outcome, 'closed');
+    assert.equal(closedPane.panes.some(pane => pane.paneId === shellPane.paneId), false);
+    const alreadyClosed = await client.closeTerminalPane(copilot.session, shellPane.paneId);
+    assert.equal(alreadyClosed.outcome, 'already-closed');
+    await assert.rejects(
+      () => client.createTerminalPane({
+        session: copilot.session,
+        requestId: 'not-a-uuid',
+        direction: 'down',
+        startDirectory: 'session-workdir',
+      }),
+      /valid UUID/,
+      'invalid create payload is rejected at the trusted service boundary',
+    );
+
     const parentedWorker = await client.createWorker({
       temp: true,
       name: 'parented-worker',

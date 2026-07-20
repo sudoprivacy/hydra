@@ -30,6 +30,9 @@ boundary until the terminal-first frontend is complete.
 6. Retain Worker Diff and lifecycle mutations behind `HydraControlClient`.
 7. Keep every state transition keyed by durable Worker identity and v2
    occurrence identity rather than terminal text.
+8. Support managed auxiliary shell panes through the additive contract in
+   [`TMUX-SHELL-PANES.md`](./TMUX-SHELL-PANES.md), while preserving one
+   session-level interactive terminal channel and a protected Agent pane.
 
 ## 2. Non-goals
 
