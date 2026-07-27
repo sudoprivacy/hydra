@@ -8,127 +8,103 @@
   :root { color-scheme: light dark; }
   body { font: 15px/1.6 -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1120px; margin: 2rem auto; padding: 0 1rem; }
   h1 { font-size: 1.6rem; } h2 { margin-top: 2rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
-  h3 { margin-top: 1.4rem; }
   code { background: #8882; padding: .1em .35em; border-radius: 4px; font-size: .9em; }
   table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 13.5px; }
   th, td { border: 1px solid #8886; padding: .5rem .6rem; vertical-align: top; text-align: left; }
   th { background: #8882; }
   .status { font-size: .9em; color: #888; }
   .decided { background: #2a77; border-left: 3px solid #2a7; padding: .3rem .7rem; margin: .4rem 0; }
-  .q { background: #ffcc0022; border-left: 3px solid #fc0; padding: .3rem .7rem; margin: .4rem 0; }
+  .todo { background: #ffcc0022; border-left: 3px solid #fc0; padding: .3rem .7rem; margin: .4rem 0; }
   .yes { color: #2a7; font-weight: 600; } .no { color: #c44; font-weight: 600; }
-  .tag { display:inline-block; font-size:.75em; padding:.05em .4em; border-radius:4px; background:#2a7; color:#fff; vertical-align:middle; }
+  .tag { display:inline-block; font-size:.72em; padding:.05em .4em; border-radius:4px; background:#2a7; color:#fff; vertical-align:middle; }
+  .tagt { background:#e90; }
 </style>
 </head>
 <body>
 <h1>Hydra → nexus A2A mapping</h1>
-<p class="status">Status: <b>reviewed with kernel lead — decisions locked, PoC-ready.</b> Decides how Hydra's Copilot/Worker map onto the nexus A2A <code>chat-with-me</code> DT_STREAM substrate. Substrate is live-accepted (nexus-vfs #183 Resume-founds-topology + #190 cold-read materialize, real Win↔Mac). This is the living design doc — iterate here.</p>
+<p class="status">Status: <b>reviewed (owner comments processed) — decisions locked, one implementation task (§4/§F) open.</b> Maps Hydra's Copilot/Worker onto the nexus A2A substrate. Substrate live-accepted (nexus-vfs #183 + #190, real Win↔Mac). Living doc — iterate here (edit → PR to hydra main → ShareOne re-fetches).</p>
 
-<h2>1. Code-confirmed identity &amp; lifecycle</h2>
-<p>Authoritative model: <code>packages/core/src/core/sessionManager.ts</code>; wire contract <code>packages/protocol/src</code>; state in <code>~/.hydra/sessions.json</code>.</p>
+<h2>1. Identity — persistent NAME + per-run PID (BOTH, not either/or)</h2>
+<p>Hydra (<code>sessionManager.ts</code>) and nexus (<code>rust/kernel/src/core/agents/registry.rs</code>, the "per-PID agent SSOT / <code>task_struct</code> analogue") model identity the SAME way — a stable identity plus an ephemeral per-run handle. nexus's <code>AgentDescriptor</code> carries <b>both</b> <code>name</code> and <code>pid</code>.</p>
 <table>
-  <tr><th>Concept</th><th>Stable identity</th><th>Persistent?</th><th>Mutable address(es)</th><th>PID?</th></tr>
-  <tr>
-    <td><b>Worker</b></td>
-    <td><code>workerId</code> — monotonic int (<code>nextWorkerId++</code>), never reused, preserved across stop/start/restore/rename</td>
-    <td class="yes">YES (confirmed with repo owner) — survives VS Code/reboot (sessions.json + tmux + worktree). <code>stop</code> keeps id; <code>restore</code> preserves id; only <code>delete</code> (archives) destroys</td>
-    <td><code>sessionName</code> = <code>${repo}_${slug}</code>; on rename old kept in <code>sessionAliases</code></td>
-    <td class="no">NOT identity — liveness/CPU/attention-lease only; changes every restart</td>
-  </tr>
-  <tr>
-    <td><b>Copilot</b></td>
-    <td><code>sessionName</code> string <em>is</em> the identity (key of <code>state.copilots</code>); no numeric id</td>
-    <td class="yes">YES — sessions.json + tmux; <code>restore</code> under same name</td>
-    <td>renamed via <code>renameCopilot</code> (re-points children's <code>copilotSessionName</code>)</td>
-    <td class="no">no</td>
-  </tr>
-  <tr>
-    <td><code>lifecycleEpoch</code></td>
-    <td>per-run <code>randomUUID()</code>, rotates every (re)start</td>
-    <td class="no">ephemeral by design (fences stale signals)</td>
-    <td>—</td><td>—</td>
-  </tr>
+  <tr><th></th><th>Persistent identity</th><th>Per-run handle</th><th>Real OS pid</th></tr>
+  <tr><td><b>Hydra Worker</b></td><td><code>workerId</code> (monotonic int, survives stop/restore/rename)</td><td><code>lifecycleEpoch</code> (uuid, rotates per start)</td><td>tmux pane pid (<code>getSessionPanePids</code>) — liveness only</td></tr>
+  <tr><td><b>Hydra Copilot</b></td><td><code>sessionName</code></td><td>(per start)</td><td>tmux pane pid</td></tr>
+  <tr><td><b>nexus AgentRegistry</b></td><td><code>AgentDescriptor.name</code> → <code>/agents/{name}/chat-with-me</code> (wal, replicated)</td><td><code>AgentDescriptor.pid</code> = synthetic uuid-12 handle → <code>/proc/{pid}/chat-with-me</code> (DT_PIPE, node-local); <code>generation</code> bumps on reconnect</td><td><code>ExternalProcessInfo.host_pid</code> (metadata field)</td></tr>
 </table>
-<p><b>Verdict:</b> Hydra agents are the integration-doc <b>§3.5 persistent-named</b> case (<code>/agents/{name}/chat-with-me</code>), <b>NOT</b> §3.6 per-pid.</p>
+<div class="decided"><b>Resolved (owner "pid" thread):</b> the two mailbox surfaces are complementary — <b>§3.5 persistent NAME</b> mailbox <code>/agents/{name}/chat-with-me</code> (the durable, cross-machine A2A address) AND <b>§3.6 per-run PID</b> <code>/proc/{pid}/chat-with-me</code> (node-local pipe for the live run). Earlier "§3.5 not §3.6" was wrong — it's both. And nexus's <code>pid</code> is <b>also a synthetic uuid handle, NOT the raw OS pid</b> (the real pid is a separate <code>host_pid</code> metadata field) — so a synthetic per-run token is the RIGHT call (OS pids are reused / node-local / non-portable). Hydra's <code>lifecycleEpoch</code> ↔ nexus pid-handle; hydra's pane pid ↔ <code>host_pid</code>. Aligned, no change needed to lifecycleEpoch.</div>
 
-<h2>2. Mailbox mapping <span class="tag">DECIDED</span></h2>
+<h2>2. Mailbox &amp; registry mapping <span class="tag">DECIDED</span></h2>
 <table>
-  <tr><th>Hydra entity / channel</th><th>Today</th><th>A2A mailbox</th><th>Rationale</th></tr>
+  <tr><th>Hydra entity / channel</th><th>Today</th><th>nexus</th><th>Rationale</th></tr>
   <tr>
-    <td><b>Worker mailbox</b></td>
-    <td><code>workerId</code> | <code>sessionName</code></td>
-    <td><code>/agents/&lt;node&gt;-hydra-w&lt;workerId&gt;/chat-with-me</code>; <code>displayName</code> travels in the envelope</td>
-    <td>anchor the STABLE <code>workerId</code> (persistent ⇒ persistent handling). <code>sessionName</code> is a mutable alias, never the anchor — a rename never moves the mailbox.</td>
+    <td><b>Worker — persistent</b></td><td><code>workerId</code></td>
+    <td><code>/agents/&lt;node&gt;-hydra-w&lt;workerId&gt;/chat-with-me</code> (replicated); <code>displayName</code> in envelope</td>
+    <td>anchor stable <code>workerId</code>; <code>sessionName</code> is a mutable alias — rename never moves the mailbox.</td>
   </tr>
   <tr>
-    <td><b>Copilot mailbox</b></td>
-    <td><code>sessionName</code></td>
-    <td><code>/agents/&lt;node&gt;-&lt;copilot-sessionName&gt;/chat-with-me</code></td>
-    <td><code>sessionName</code> is the copilot's only stable id.</td>
+    <td><b>Worker — per run</b></td><td>tmux pane spawn</td>
+    <td><code>register_external(kind=Unmanaged, name=&lt;…w{workerId}&gt;, host_pid=pane pid, connection_id=run handle)</code> + <code>heartbeat</code> → an AgentRegistry pid + <code>/proc/{pid}/…</code> + DT_LINK <code>/proc/{pid}/agent → /agents/{name}/</code></td>
+    <td>the registry RECORDS, does not SPAWN — hydra keeps tmux ownership and just reports the run in.</td>
   </tr>
   <tr>
-    <td><b>Worker → Copilot</b> (completion / needs-input / error)</td>
-    <td>file <code>NotificationStore</code> (json) + <code>fs.watchFile</code> ~1s + <code>EventHub</code> 250ms poll</td>
-    <td>write envelope to the <b>copilot's</b> mailbox; copilot <code>sys_watch</code> replaces the file-poll</td>
-    <td>durable + ordered + cross-machine + audited (§4.3) for free; unforgeable <code>from</code>; kills two poll loops.</td>
+    <td><b>Copilot</b></td><td><code>sessionName</code></td>
+    <td><code>/agents/&lt;node&gt;-&lt;sessionName&gt;/chat-with-me</code> + <code>register_external</code> per run</td>
+    <td>same model; sessionName is the copilot's only stable id.</td>
   </tr>
   <tr>
-    <td><b>Copilot / human → Worker</b> (<code>sendMessage</code> / <code>broadcastToWorkers</code>)</td>
-    <td>tmux <b>keystroke injection</b> into agent pane</td>
-    <td>write to the <b>worker's</b> mailbox; delivered to the agent by hydra (see §4)</td>
-    <td>one primitive both directions; broadcast = write each mailbox (or a group mailbox).</td>
+    <td><b>Worker → Copilot</b> attention</td><td><code>NotificationStore</code> json + <code>fs.watchFile</code>/<code>EventHub</code> poll</td>
+    <td>write copilot mailbox; copilot <code>sys_watch</code></td>
+    <td>durable/ordered/replicated/audited; unforgeable <code>from</code>; kills two poll loops.</td>
   </tr>
   <tr>
-    <td><code>lifecycleEpoch</code> / <code>runId</code></td>
-    <td>fences stale signals across restarts</td>
-    <td>an epoch field in the envelope; reader fences on it</td>
-    <td>parallels nexus §3.6 pid-as-run-token — hydra keeps <code>workerId</code> stable, fences on the epoch.</td>
-  </tr>
-  <tr>
-    <td><b>Orchestration</b> (create/stop/git/logs/lifecycle)</td>
-    <td>hydra core + tmux + worktree</td>
-    <td class="no">STAYS in hydra</td>
-    <td>integration-doc §8.1: control plane lives outside nexus. Only the MESSAGE plane moves.</td>
+    <td><b>Copilot/human → Worker</b> (<code>sendMessage</code>/<code>broadcast</code>)</td><td>tmux keystroke inject</td>
+    <td>write worker mailbox; delivered by hydra (§5)</td>
+    <td>one primitive both directions.</td>
   </tr>
 </table>
 
-<h2>3. Cross-node name uniqueness <span class="tag">DECIDED</span></h2>
-<p>The collision worry (two machines' Worker#1) — the model has two halves (<code>project_agent_identity_model</code>):</p>
+<h2>3. Cross-node uniqueness &amp; §F naming <span class="tagt tag">OPEN — implement next</span></h2>
+<p>Identity flow (the "original nexus design", owner Q7): <code>auth mint agent --subject-id &lt;name&gt;</code> → <code>AuthKeyRecord{subject_type:Agent, subject_id:&lt;name&gt;}</code> (per-node SOLO store, HMAC-keyed) → the <code>sk-</code> key resolves so <code>OperationContext.agent_id = subject_id</code> → <code>MailboxStampingHook</code> stamps <code>from = agent_id</code>, <b>overwriting</b> any caller value (unforgeable), and <b>fail-closes</b> an unauthenticated A2A write. So <code>from</code> == the minted name.</p>
 <ul>
-  <li><b>Within-node: ENFORCED (landed, nexus-vfs #175).</b> <code>mint_key</code> refuses a subject that already holds an active key (CAS scan of the local store).</li>
-  <li><b>Cross-node: uniqueness is BY the node-anchored NAME</b> — <code>{node_id-anchor}.{...}</code> makes names disjoint across nodes by construction. Each node has a persistent <code>node_id</code> (<code>read_or_mint_node_id</code>, already in the cert SAN). The auth store is per-node SOLO (never federated), so this naming is <b>load-bearing, not cosmetic</b>.</li>
+  <li><b>Within-node uniqueness: enforced</b> (<code>find_active_subject</code>, nexus-vfs #175).</li>
+  <li><b>Cross-node uniqueness: an UNENFORCED naming convention today.</b> The name is <code>subject_id</code>, supplied verbatim at mint — <b>node_id is NOT folded into it.</b> <code>node_id</code> (<code>read_or_mint_node_id</code>, opaque u64 at <code>&lt;data_dir&gt;/.node_id</code>) is used only for raft identity (cert SAN <code>node/{id}</code>); it is <b>not VFS-exposed</b>, so an agent can't even read its own node_id today. The <b>§F default-name generator (<code>{node_id}.{worktree}</code>) is NOT implemented anywhere</b> — only referenced in comments.</li>
 </ul>
-<div class="decided">The AUTO node-anchoring is design-locked but its default-name generator is deferred to sudocode-host §F (not yet landed). So <b>hydra supplies the anchor itself</b> — <code>&lt;node_id&gt;-hydra-w&lt;workerId&gt;</code> — which IS the load-bearing mechanism. hydra reads the local <code>node_id</code> from the daemon identity. No collision hole; not blocked on §F.</div>
+<div class="todo"><b>Task §F (owner: prioritize):</b> land node-anchored default naming so cross-node uniqueness holds by construction, not discipline. Two parts: (a) <b>expose the local node_id</b> to frontends (a small read-only VFS/procfs surface, or a mint helper), and (b) <b>generate the default name</b> <code>&lt;node_id&gt;.&lt;worktree/context&gt;</code> at mint. Design fork to settle: do (b) in the nexus mint (auto-anchor a default) or in the frontend (hydra/sudocode-host, which knows the worktree)? Recommend: nexus exposes node_id + a mint auto-anchor mode; frontend supplies the worktree suffix. This is the load-bearing cross-node mechanism.</div>
 
-<h2>4. tmux &amp; visibility <span class="tag">DECIDED — drop tmux for the message plane</span></h2>
-<p>tmux was chosen last year for <b>visibility</b> (messages visible in the pane; files felt invisible). That was a forced choice under insufficient infra. It no longer holds:</p>
+<h2>4. tmux &amp; visibility <span class="tag">DECIDED — drop tmux for messaging</span></h2>
 <ul>
-  <li>The mailbox is a <b>durable, ordered, replicated, audited</b> DT_STREAM — strictly MORE visible than tmux scrollback (which is ephemeral, node-local, lost on restart). <code>collect</code>/<code>read</code> any time, any node.</li>
-  <li>Surfaces for humans/agents to SEE it: FUSE/WinFsp mount → <code>cat</code> / <code>tail -f</code>; (later) the Matrix adapter → a chat room. Full visibility without Matrix, and without tmux.</li>
-  <li>tmux <b>occupies stdio 0/1</b> and contends with the user — a real cost the mailbox removes.</li>
+  <li>Mailbox = durable/ordered/replicated/audited DT_STREAM — strictly MORE visible than ephemeral node-local tmux scrollback. <code>cat</code>/<code>tail -f</code> via mount; (later) Matrix room. Full visibility without tmux or Matrix.</li>
+  <li>tmux occupies stdio 0/1 and contends with the user — removed for the message plane.</li>
+  <li>tmux's remaining role (process host/TTY) is orchestration; hydra keeps it via <code>register_external</code> (report the run in, don't hand spawning to nexus).</li>
 </ul>
-<p>tmux's remaining role (agent <em>process host</em> + TTY) is an <b>orchestration</b> concern (hydra's, §8.1), separable from messaging. Recommendation: drop tmux for messaging now; revisit the process-host model separately (an agent could read its mailbox via the mount instead of a shared TTY).</p>
 
-<h2>5. The switchable messaging abstraction <span class="tag">DECIDED — the core seam</span></h2>
-<p>hydra has users; the migration must not be heavy-handed. So the WHOLE message plane goes through <b>one hydra abstraction</b> with swappable backends — a true one-switch cutover:</p>
+<h2>5. Two synchronized switchable planes <span class="tag">DECIDED — core seam</span></h2>
+<p>Hydra has users; migration must not be heavy-handed. So BOTH planes go through switchable backends, <b>switched in sync</b> (both nexus or both legacy — never split):</p>
 <table>
-  <tr><th>Backend</th><th>send / broadcast</th><th>worker→copilot attention</th><th>watch / read</th></tr>
-  <tr><td><b>Legacy</b> (default, today)</td><td>tmux keystroke inject</td><td><code>NotificationStore</code> json</td><td><code>fs.watchFile</code> / <code>EventHub</code> poll</td></tr>
-  <tr><td><b>A2A</b> (nexus)</td><td>write peer mailbox</td><td>write copilot mailbox</td><td><code>sys_watch</code> + <code>collect</code></td></tr>
-  <tr><td><b>Dual</b> (migration)</td><td colspan="3">writes both (equivalent to double-write) — flip readers to A2A once trusted, then drop Legacy</td></tr>
+  <tr><th>Plane</th><th>Legacy backend</th><th>nexus backend</th></tr>
+  <tr><td><b>Message</b> (send/broadcast, attention)</td><td>tmux inject + <code>NotificationStore</code> poll</td><td>mailbox write + <code>sys_watch</code></td></tr>
+  <tr><td><b>Orchestration tracking</b> (identity/lifecycle of a run)</td><td>tmux-session tracking only</td><td><code>register_external</code>/<code>heartbeat</code> into AgentRegistry (+ <code>/proc/{pid}</code>)</td></tr>
 </table>
 <ul>
-  <li>Mirrors hydra's existing <code>HydraTransport</code> backend pattern (<code>in-process</code> now; add <code>a2a</code> alongside, config-switchable).</li>
-  <li><b>Control/message-plane split</b>: control (create/stop/git/logs) stays on the existing transport; only the message-plane ops (<code>sendMessage</code>, <code>broadcastToWorkers</code>, <code>events</code>, <code>notifications</code>) route through the messaging abstraction.</li>
-  <li>Because switchable + equivalent, <b>Dual = double-write for free</b> — no separate migration mechanism.</li>
+  <li>Mirrors hydra's existing <code>HydraTransport</code> backend pattern; add a nexus backend beside <code>in-process</code>. <b>Dual = double-write for free</b> — flip readers when trusted.</li>
+  <li>Process OWNERSHIP (spawn/kill/worktree/git) stays hydra either way (§8.1). Only tracking + messaging switch.</li>
+  <li>Copilot→Worker <b>delivery is itself switchable</b> (owner Q5): mailbox→tmux-inject bridge ↔ agent reads mailbox via mount — both kept, selectable.</li>
 </ul>
 
-<h2>6. Remaining open questions</h2>
-<div class="q">Q-A. Copilot→Worker delivery under the A2A backend: mailbox → tmux-inject bridge (keeps today's model, lowest risk) vs the worker agent reads its mailbox file via the mount. Lean: bridge first, then mount.</div>
-<div class="q">Q-B. Group/broadcast mailbox: fan-out writes to each worker mailbox, or a single <code>/agents/&lt;copilot&gt;/broadcast</code> stream all workers watch?</div>
-<div class="q">Q-C. How hydra reads the local <code>node_id</code> for the name anchor — a nexus CLI/syscall vs the identity file path.</div>
+<h2>6. Broadcast / multicast <span class="tag">DECIDED — native stream fan-out</span></h2>
+<p>Owner Q6 — confirmed against the kernel:</p>
+<ul>
+  <li><b>DT_STREAM is natively multi-reader / fan-out.</b> Reads are non-destructive + offset-based (each reader its own cursor); <code>sys_watch</code> wakes ALL parked watchers of a path (<code>notify_all</code>), and the raft stream-wakeup observer wakes watchers on every replica — genuine 1→N, cross-node. Proven by <code>a2a_wakeup</code>.</li>
+  <li><b>So broadcast = ONE shared stream</b> (e.g. <code>/agents/&lt;copilot&gt;/broadcast/chat-with-me</code>) that N workers watch. No new kernel primitive.</li>
+  <li><b>DT_LINK is NOT the fan-out tool.</b> It's a one-hop symlink (many→ONE target, self-loop-rejected). It can ALIAS each worker's path to the shared stream (addressing convenience / fan-IN), but the multicast comes from the stream's multi-reader property, not the link. No primitive clones one write into N per-agent streams.</li>
+</ul>
+
+<h2>7. Remaining open questions</h2>
+<div class="todo">Q-i (was Q-B): broadcast membership/naming — a single <code>/agents/&lt;copilot&gt;/broadcast</code> all workers watch, vs per-worker DT_LINKs aliasing it. Both use the native fan-out; pick by addressing ergonomics.</div>
+<div class="todo">Q-ii: §F design fork (see §3) — node_id exposure + default-name generation location.</div>
 
 <h2>PoC scope (pending greenlight)</h2>
-<p>Add <code>packages/transport-a2a</code> (or an <code>AgentMessaging</code> abstraction) implementing the message-plane slice onto mailboxes, keep <code>in-process</code>/Legacy alongside, config-switchable, Dual-write available. Orchestration untouched.</p>
+<p>Add a nexus messaging+tracking backend behind hydra's transport/messaging seam (<code>sendMessage</code>/<code>broadcast</code>/<code>events</code>/<code>notifications</code> → mailboxes + <code>sys_watch</code>; runs → <code>register_external</code>), Legacy alongside, config-switchable in sync, Dual available. Process ownership + git/worktree untouched. §F naming landed first (or in parallel) so mailbox names are cluster-unique.</p>
 </body>
 </html>
