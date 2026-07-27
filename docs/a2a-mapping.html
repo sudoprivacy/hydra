@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hydra → nexus A2A mapping (design)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1120px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.6rem; } h2 { margin-top: 2rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
+  h3 { margin-top: 1.4rem; }
+  code { background: #8882; padding: .1em .35em; border-radius: 4px; font-size: .9em; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 13.5px; }
+  th, td { border: 1px solid #8886; padding: .5rem .6rem; vertical-align: top; text-align: left; }
+  th { background: #8882; }
+  .status { font-size: .9em; color: #888; }
+  .decided { background: #2a77; border-left: 3px solid #2a7; padding: .3rem .7rem; margin: .4rem 0; }
+  .q { background: #ffcc0022; border-left: 3px solid #fc0; padding: .3rem .7rem; margin: .4rem 0; }
+  .yes { color: #2a7; font-weight: 600; } .no { color: #c44; font-weight: 600; }
+  .tag { display:inline-block; font-size:.75em; padding:.05em .4em; border-radius:4px; background:#2a7; color:#fff; vertical-align:middle; }
+</style>
+</head>
+<body>
+<h1>Hydra → nexus A2A mapping</h1>
+<p class="status">Status: <b>reviewed with kernel lead — decisions locked, PoC-ready.</b> Decides how Hydra's Copilot/Worker map onto the nexus A2A <code>chat-with-me</code> DT_STREAM substrate. Substrate is live-accepted (nexus-vfs #183 Resume-founds-topology + #190 cold-read materialize, real Win↔Mac). This is the living design doc — iterate here.</p>
+
+<h2>1. Code-confirmed identity &amp; lifecycle</h2>
+<p>Authoritative model: <code>packages/core/src/core/sessionManager.ts</code>; wire contract <code>packages/protocol/src</code>; state in <code>~/.hydra/sessions.json</code>.</p>
+<table>
+  <tr><th>Concept</th><th>Stable identity</th><th>Persistent?</th><th>Mutable address(es)</th><th>PID?</th></tr>
+  <tr>
+    <td><b>Worker</b></td>
+    <td><code>workerId</code> — monotonic int (<code>nextWorkerId++</code>), never reused, preserved across stop/start/restore/rename</td>
+    <td class="yes">YES (confirmed with repo owner) — survives VS Code/reboot (sessions.json + tmux + worktree). <code>stop</code> keeps id; <code>restore</code> preserves id; only <code>delete</code> (archives) destroys</td>
+    <td><code>sessionName</code> = <code>${repo}_${slug}</code>; on rename old kept in <code>sessionAliases</code></td>
+    <td class="no">NOT identity — liveness/CPU/attention-lease only; changes every restart</td>
+  </tr>
+  <tr>
+    <td><b>Copilot</b></td>
+    <td><code>sessionName</code> string <em>is</em> the identity (key of <code>state.copilots</code>); no numeric id</td>
+    <td class="yes">YES — sessions.json + tmux; <code>restore</code> under same name</td>
+    <td>renamed via <code>renameCopilot</code> (re-points children's <code>copilotSessionName</code>)</td>
+    <td class="no">no</td>
+  </tr>
+  <tr>
+    <td><code>lifecycleEpoch</code></td>
+    <td>per-run <code>randomUUID()</code>, rotates every (re)start</td>
+    <td class="no">ephemeral by design (fences stale signals)</td>
+    <td>—</td><td>—</td>
+  </tr>
+</table>
+<p><b>Verdict:</b> Hydra agents are the integration-doc <b>§3.5 persistent-named</b> case (<code>/agents/{name}/chat-with-me</code>), <b>NOT</b> §3.6 per-pid.</p>
+
+<h2>2. Mailbox mapping <span class="tag">DECIDED</span></h2>
+<table>
+  <tr><th>Hydra entity / channel</th><th>Today</th><th>A2A mailbox</th><th>Rationale</th></tr>
+  <tr>
+    <td><b>Worker mailbox</b></td>
+    <td><code>workerId</code> | <code>sessionName</code></td>
+    <td><code>/agents/&lt;node&gt;-hydra-w&lt;workerId&gt;/chat-with-me</code>; <code>displayName</code> travels in the envelope</td>
+    <td>anchor the STABLE <code>workerId</code> (persistent ⇒ persistent handling). <code>sessionName</code> is a mutable alias, never the anchor — a rename never moves the mailbox.</td>
+  </tr>
+  <tr>
+    <td><b>Copilot mailbox</b></td>
+    <td><code>sessionName</code></td>
+    <td><code>/agents/&lt;node&gt;-&lt;copilot-sessionName&gt;/chat-with-me</code></td>
+    <td><code>sessionName</code> is the copilot's only stable id.</td>
+  </tr>
+  <tr>
+    <td><b>Worker → Copilot</b> (completion / needs-input / error)</td>
+    <td>file <code>NotificationStore</code> (json) + <code>fs.watchFile</code> ~1s + <code>EventHub</code> 250ms poll</td>
+    <td>write envelope to the <b>copilot's</b> mailbox; copilot <code>sys_watch</code> replaces the file-poll</td>
+    <td>durable + ordered + cross-machine + audited (§4.3) for free; unforgeable <code>from</code>; kills two poll loops.</td>
+  </tr>
+  <tr>
+    <td><b>Copilot / human → Worker</b> (<code>sendMessage</code> / <code>broadcastToWorkers</code>)</td>
+    <td>tmux <b>keystroke injection</b> into agent pane</td>
+    <td>write to the <b>worker's</b> mailbox; delivered to the agent by hydra (see §4)</td>
+    <td>one primitive both directions; broadcast = write each mailbox (or a group mailbox).</td>
+  </tr>
+  <tr>
+    <td><code>lifecycleEpoch</code> / <code>runId</code></td>
+    <td>fences stale signals across restarts</td>
+    <td>an epoch field in the envelope; reader fences on it</td>
+    <td>parallels nexus §3.6 pid-as-run-token — hydra keeps <code>workerId</code> stable, fences on the epoch.</td>
+  </tr>
+  <tr>
+    <td><b>Orchestration</b> (create/stop/git/logs/lifecycle)</td>
+    <td>hydra core + tmux + worktree</td>
+    <td class="no">STAYS in hydra</td>
+    <td>integration-doc §8.1: control plane lives outside nexus. Only the MESSAGE plane moves.</td>
+  </tr>
+</table>
+
+<h2>3. Cross-node name uniqueness <span class="tag">DECIDED</span></h2>
+<p>The collision worry (two machines' Worker#1) — the model has two halves (<code>project_agent_identity_model</code>):</p>
+<ul>
+  <li><b>Within-node: ENFORCED (landed, nexus-vfs #175).</b> <code>mint_key</code> refuses a subject that already holds an active key (CAS scan of the local store).</li>
+  <li><b>Cross-node: uniqueness is BY the node-anchored NAME</b> — <code>{node_id-anchor}.{...}</code> makes names disjoint across nodes by construction. Each node has a persistent <code>node_id</code> (<code>read_or_mint_node_id</code>, already in the cert SAN). The auth store is per-node SOLO (never federated), so this naming is <b>load-bearing, not cosmetic</b>.</li>
+</ul>
+<div class="decided">The AUTO node-anchoring is design-locked but its default-name generator is deferred to sudocode-host §F (not yet landed). So <b>hydra supplies the anchor itself</b> — <code>&lt;node_id&gt;-hydra-w&lt;workerId&gt;</code> — which IS the load-bearing mechanism. hydra reads the local <code>node_id</code> from the daemon identity. No collision hole; not blocked on §F.</div>
+
+<h2>4. tmux &amp; visibility <span class="tag">DECIDED — drop tmux for the message plane</span></h2>
+<p>tmux was chosen last year for <b>visibility</b> (messages visible in the pane; files felt invisible). That was a forced choice under insufficient infra. It no longer holds:</p>
+<ul>
+  <li>The mailbox is a <b>durable, ordered, replicated, audited</b> DT_STREAM — strictly MORE visible than tmux scrollback (which is ephemeral, node-local, lost on restart). <code>collect</code>/<code>read</code> any time, any node.</li>
+  <li>Surfaces for humans/agents to SEE it: FUSE/WinFsp mount → <code>cat</code> / <code>tail -f</code>; (later) the Matrix adapter → a chat room. Full visibility without Matrix, and without tmux.</li>
+  <li>tmux <b>occupies stdio 0/1</b> and contends with the user — a real cost the mailbox removes.</li>
+</ul>
+<p>tmux's remaining role (agent <em>process host</em> + TTY) is an <b>orchestration</b> concern (hydra's, §8.1), separable from messaging. Recommendation: drop tmux for messaging now; revisit the process-host model separately (an agent could read its mailbox via the mount instead of a shared TTY).</p>
+
+<h2>5. The switchable messaging abstraction <span class="tag">DECIDED — the core seam</span></h2>
+<p>hydra has users; the migration must not be heavy-handed. So the WHOLE message plane goes through <b>one hydra abstraction</b> with swappable backends — a true one-switch cutover:</p>
+<table>
+  <tr><th>Backend</th><th>send / broadcast</th><th>worker→copilot attention</th><th>watch / read</th></tr>
+  <tr><td><b>Legacy</b> (default, today)</td><td>tmux keystroke inject</td><td><code>NotificationStore</code> json</td><td><code>fs.watchFile</code> / <code>EventHub</code> poll</td></tr>
+  <tr><td><b>A2A</b> (nexus)</td><td>write peer mailbox</td><td>write copilot mailbox</td><td><code>sys_watch</code> + <code>collect</code></td></tr>
+  <tr><td><b>Dual</b> (migration)</td><td colspan="3">writes both (equivalent to double-write) — flip readers to A2A once trusted, then drop Legacy</td></tr>
+</table>
+<ul>
+  <li>Mirrors hydra's existing <code>HydraTransport</code> backend pattern (<code>in-process</code> now; add <code>a2a</code> alongside, config-switchable).</li>
+  <li><b>Control/message-plane split</b>: control (create/stop/git/logs) stays on the existing transport; only the message-plane ops (<code>sendMessage</code>, <code>broadcastToWorkers</code>, <code>events</code>, <code>notifications</code>) route through the messaging abstraction.</li>
+  <li>Because switchable + equivalent, <b>Dual = double-write for free</b> — no separate migration mechanism.</li>
+</ul>
+
+<h2>6. Remaining open questions</h2>
+<div class="q">Q-A. Copilot→Worker delivery under the A2A backend: mailbox → tmux-inject bridge (keeps today's model, lowest risk) vs the worker agent reads its mailbox file via the mount. Lean: bridge first, then mount.</div>
+<div class="q">Q-B. Group/broadcast mailbox: fan-out writes to each worker mailbox, or a single <code>/agents/&lt;copilot&gt;/broadcast</code> stream all workers watch?</div>
+<div class="q">Q-C. How hydra reads the local <code>node_id</code> for the name anchor — a nexus CLI/syscall vs the identity file path.</div>
+
+<h2>PoC scope (pending greenlight)</h2>
+<p>Add <code>packages/transport-a2a</code> (or an <code>AgentMessaging</code> abstraction) implementing the message-plane slice onto mailboxes, keep <code>in-process</code>/Legacy alongside, config-switchable, Dual-write available. Orchestration untouched.</p>
+</body>
+</html>
