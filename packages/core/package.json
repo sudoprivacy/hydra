@@ -18,9 +18,13 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "compile": "tsc -b tsconfig.json"
+    "compile": "tsc -b tsconfig.json",
+    "smoke:nexus-tracking": "node out/smoke/nexusTrackingSmoke.js",
+    "smoke:nexus-tracking-wiring": "node out/smoke/nexusTrackingWiringSmoke.js"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13",
     "iconv-lite": "^0.7.2",
     "posthog-node": "^5.33.3"
   }
