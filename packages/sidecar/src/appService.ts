@@ -82,6 +82,7 @@ import {
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
+import { createTransport } from '@hydra/core/transport/nexus';
 import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
@@ -226,6 +227,9 @@ export class HydraAppService implements HydraAppServiceApi {
     });
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
+    // Orchestration-tracking plane (a2a-mapping doc §5), switched by HYDRA_TRANSPORT.
+    // Defaults to legacy (no-op), so this is inert unless nexus/dual is selected; the
+    // gRPC channel (nexus/dual only) dies with the sidecar's process.exit on shutdown.
     this.workerLifecycle = new WorkerLifecycleService({
       backend: this.backend,
       sessionManager: this.sessionManager,
@@ -234,6 +238,7 @@ export class HydraAppService implements HydraAppServiceApi {
       runtimeV2Store: this.runtimeV2Store,
       eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
+      runTracker: createTransport().runTracker,
     });
     this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }
