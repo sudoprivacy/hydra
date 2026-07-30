@@ -48,7 +48,7 @@ type OperationError =
   | 'rename'
   | 'restore';
 
-class RecordingBackend implements MultiplexerBackendCore {
+export class RecordingBackend implements MultiplexerBackendCore {
   readonly type = 'tmux' as const;
   readonly displayName = 'recording-backend';
   readonly installHint = 'not needed';
@@ -96,7 +96,7 @@ class FailingCompletionJobStore extends CompletionJobStore {
   }
 }
 
-class FakeSessionManager extends SessionManager {
+export class FakeSessionManager extends SessionManager {
   readonly workers = new Map<string, WorkerInfo>();
   readonly archived = new Map<string, ArchivedSessionInfo>();
   readonly stopCalls: string[] = [];
@@ -319,7 +319,7 @@ function restoreEnv(previous: Record<string, string | undefined>): void {
   }
 }
 
-function createWorker(workerId: number, sessionName: string, overrides: Partial<WorkerInfo> = {}): WorkerInfo {
+export function createWorker(workerId: number, sessionName: string, overrides: Partial<WorkerInfo> = {}): WorkerInfo {
   const now = new Date().toISOString();
   return {
     source: 'repo',
@@ -724,7 +724,9 @@ async function main(): Promise<void> {
   console.log('workerLifecycleServiceSmoke: ok');
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}

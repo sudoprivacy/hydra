@@ -23,6 +23,7 @@ import { WorkerRuntimeCoordinator, type WorkerRuntimeIdentity } from './workerRu
 import { WorkerRuntimeStateStore } from './workerRuntimeState';
 import { WorkerRuntimeStateStoreV2, type WorkerRuntimeSnapshotV2 } from './workerRuntimeV2';
 import { getWorkerLifecycleEpoch, normalizeWorkerSessionAliases } from './workerIdentity';
+import { NoopRunTracker, type RunTracker } from './transport/nexus';
 
 export type WorkerSelector = string | number;
 
@@ -52,6 +53,8 @@ export interface WorkerLifecycleServiceOptions {
   completionJobStore?: CompletionJobStore;
   eventLog?: EventLog;
   eventSource?: HydraEventSource;
+  /** Orchestration-tracking plane (doc §5). Defaults to the legacy no-op tracker. */
+  runTracker?: RunTracker;
 }
 
 interface PreparedWorkerDispatch {
@@ -77,6 +80,9 @@ export class WorkerLifecycleService {
   private readonly runtimeCoordinator: WorkerRuntimeCoordinator;
   private readonly completionJobStore: CompletionJobStore;
   private readonly eventSource: HydraEventSource;
+  private readonly runTracker: RunTracker;
+  /** workerId -> the nexus pid we registered, so stop can unregister the same run. */
+  private readonly registeredRuns = new Map<number, string>();
 
   constructor(options: WorkerLifecycleServiceOptions) {
     this.backend = options.backend;
@@ -86,12 +92,69 @@ export class WorkerLifecycleService {
     this.runtimeV2Store = options.runtimeV2Store ?? new WorkerRuntimeStateStoreV2();
     this.completionJobStore = options.completionJobStore ?? new CompletionJobStore();
     this.eventSource = options.eventSource ?? 'session-manager';
+    this.runTracker = options.runTracker ?? new NoopRunTracker();
     this.runtimeCoordinator = options.runtimeCoordinator ?? new WorkerRuntimeCoordinator(
       workerId => this.resolveRuntimeIdentity(workerId),
       this.runtimeV2Store,
       this.runtimeStateStore,
       options.eventLog ?? new EventLog(),
     );
+  }
+
+  /** Release the tracking backend (its gRPC channel). No-op in legacy mode. */
+  close(): void {
+    this.runTracker.close();
+  }
+
+  /**
+   * Report a started run into the tracking plane (best-effort, idempotent). Tracking is
+   * observability, never a gate on lifecycle — failures are logged and swallowed. `name`
+   * is the worker's sessionName (worktree/branch-anchored); `hostPid` is the agent pane's
+   * OS pid, which the kernel makes the agent pid (nexus-vfs #195).
+   */
+  private async trackRunStarted(worker: WorkerInfo): Promise<void> {
+    if (this.registeredRuns.has(worker.workerId)) {
+      return;
+    }
+    try {
+      const panePids = await this.backend.getSessionPanePids(worker.sessionName);
+      // TODO(multi-pane): resolve the @hydra-agent-pane pid; [0] is the agent for single-pane sessions.
+      const hostPid = Number(panePids[0]);
+      if (!Number.isInteger(hostPid) || hostPid <= 0) {
+        return;
+      }
+      const handle = await this.runTracker.registerRun({
+        name: worker.sessionName,
+        hostPid,
+        connectionId: `${worker.sessionName}#${getWorkerLifecycleEpoch(worker)}`,
+        labels: { role: 'worker', workerId: String(worker.workerId) },
+      });
+      if (handle) {
+        this.registeredRuns.set(worker.workerId, handle.pid);
+      }
+    } catch (error) {
+      logger.warn('nexus-tracking.register', 'registerRun failed (non-fatal)', {
+        workerId: worker.workerId,
+        error: String(error),
+      });
+    }
+  }
+
+  /** Report a stopped run out of the tracking plane (best-effort). */
+  private async trackRunStopped(workerId: number): Promise<void> {
+    const pid = this.registeredRuns.get(workerId);
+    if (!pid) {
+      return;
+    }
+    this.registeredRuns.delete(workerId);
+    try {
+      await this.runTracker.unregisterRun(pid);
+    } catch (error) {
+      logger.warn('nexus-tracking.unregister', 'unregisterRun failed (non-fatal)', {
+        workerId,
+        error: String(error),
+      });
+    }
   }
 
   async createWorker(options: CreateWorkerOpts): Promise<CreateWorkerResult> {
@@ -117,11 +180,9 @@ export class WorkerLifecycleService {
   ): Promise<CreateWorkerResult> {
     const worker = await this.resolveWorker(selector);
     try {
-      return this.prepareReadyWorker(
-        await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand),
-        'worker-starting',
-        'start',
-      );
+      const started = await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand);
+      await this.trackRunStarted(started.workerInfo);
+      return this.prepareReadyWorker(started, 'worker-starting', 'start');
     } catch (error) {
       const currentWorker = this.resolveCurrentWorkerIdentity(worker);
       this.cancelStaleCompletionIntents(currentWorker, getWorkerLifecycleEpoch(currentWorker));
@@ -185,6 +246,7 @@ export class WorkerLifecycleService {
     const worker = await this.resolveWorker(selector);
     try {
       await this.sessionManager.stopWorker(worker.sessionName);
+      await this.trackRunStopped(worker.workerId);
       this.cancelCompletionIntent(worker, 'worker-stopped');
       this.resolveWorkerNeedsInput(worker.workerId, 'worker-stopped');
       this.runtimeCoordinator.clear(worker.workerId);
