@@ -1,4 +1,6 @@
-// Thin client over the nexus VFS gRPC "agent plane" (the loopback sk--token bind).
+// Thin client over the nexus VFS gRPC agent plane. Two planes by credential:
+// a CERT plane (mTLS with an agent identity cert, on the main bind — see the
+// `tls` option) and a loopback plaintext/sk--token plane (serve-local).
 //
 // This is the low-level primitive both switchable planes (doc §5) build on: the
 // tracking plane rides the generic `Call` RPC (this file); the message plane will add
@@ -15,6 +17,11 @@ import * as path from 'node:path';
 // __dirname at runtime = <core>/out/core/transport/nexus  →  up 4  = <core>, then /proto.
 const DEFAULT_PROTO_ROOT = path.join(__dirname, '..', '..', '..', '..', 'proto');
 const PROTO_FILE = 'nexus/grpc/vfs/vfs.proto';
+
+// The fixed DNS SAN every nexus NODE cert carries. On the cert plane the mTLS
+// client verifies the server against this, NOT the dialed host — so a loopback
+// or overlay-IP dial still validates. SSOT: nexus-vfs `TlsConfig::CLUSTER_SERVER_NAME`.
+const CLUSTER_SERVER_NAME = 'nexus-node';
 
 // loadSync is not free; cache the resolved service constructor per proto root.
 const serviceCache = new Map<string, grpc.ServiceClientConstructor>();
@@ -38,12 +45,28 @@ function loadService(protoRoot: string): grpc.ServiceClientConstructor {
 }
 
 export interface NexusVfsClientOptions {
-  /** Agent-plane address, host:port (loopback token plane). Default 127.0.0.1:2129. */
+  /**
+   * Agent-plane address, host:port. Cert plane (`tls` set) → the main mTLS
+   * bind, default `127.0.0.1:2126`. Loopback plaintext plane → default
+   * `127.0.0.1:2129`.
+   */
   address?: string;
-  /** sk- agent key. The agent plane always authenticates, so this is required in practice. */
+  /**
+   * `sk-` key for the loopback token/plaintext plane. Left empty on the cert
+   * plane — the client certificate IS the identity, so no token is sent.
+   */
   token?: string;
   /** Override the proto include dir (tests). */
   protoRoot?: string;
+  /**
+   * mTLS cert bundle for the CERT plane — an agent minted by
+   * `nexusd-cluster auth mint --subject-type agent`. When set, the client dials
+   * the main mTLS bind presenting its client cert; the cert authenticates, so
+   * `token` is left empty. `ca` verifies the server (whose node cert carries the
+   * fixed `nexus-node` SAN); `cert`/`key` are the agent's own. Omit for the
+   * loopback insecure/sk- plane. Mirrors the Rust `examples/mailbox_cli.rs`.
+   */
+  tls?: { ca: Buffer; cert: Buffer; key: Buffer };
 }
 
 interface CallResponse {
@@ -60,10 +83,26 @@ export class NexusVfsClient {
   constructor(options: NexusVfsClientOptions = {}) {
     this.token = options.token ?? '';
     const Service = loadService(options.protoRoot ?? DEFAULT_PROTO_ROOT);
-    this.client = new Service(
-      options.address ?? '127.0.0.1:2129',
-      grpc.credentials.createInsecure(),
-    );
+    if (options.tls) {
+      // CERT plane: mTLS with the agent's own client cert. The cert is the
+      // identity (no token). The server presents a NODE cert whose SAN is the
+      // fixed cluster server name, so verify against THAT rather than the dialed
+      // host — matching the Rust client (`examples/mailbox_cli.rs`).
+      const creds = grpc.credentials.createSsl(
+        options.tls.ca,
+        options.tls.key,
+        options.tls.cert,
+      );
+      this.client = new Service(options.address ?? '127.0.0.1:2126', creds, {
+        'grpc.ssl_target_name_override': CLUSTER_SERVER_NAME,
+      });
+    } else {
+      // Loopback plaintext plane (serve-local / auth-off): sk- token on Call.
+      this.client = new Service(
+        options.address ?? '127.0.0.1:2129',
+        grpc.credentials.createInsecure(),
+      );
+    }
   }
 
   /**
