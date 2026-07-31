@@ -14,10 +14,16 @@ import {
   NoopRunTracker,
   RunTracker,
 } from './runTracker';
+import {
+  MessageTransport,
+  NexusMessageTransport,
+  NoopMessageTransport,
+} from './messageTransport';
 import { NexusVfsClientOptions } from './vfsClient';
 
 export * from './vfsClient';
 export * from './runTracker';
+export * from './messageTransport';
 
 export type TransportMode = 'legacy' | 'nexus' | 'dual';
 
@@ -37,7 +43,7 @@ export interface TransportOptions {
 export interface TransportBackends {
   mode: TransportMode;
   runTracker: RunTracker;
-  // messageTransport: MessageTransport;  // joins here with the message plane
+  messageTransport: MessageTransport;
 }
 
 /** Construct the per-process transport backends, both planes switched by one mode. */
@@ -45,7 +51,11 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
   const env = opts.env ?? process.env;
   const mode = resolveTransportMode(env);
   if (mode === 'legacy') {
-    return { mode, runTracker: new NoopRunTracker() };
+    return {
+      mode,
+      runTracker: new NoopRunTracker(),
+      messageTransport: new NoopMessageTransport(),
+    };
   }
 
   const clientOptions: NexusVfsClientOptions = {
@@ -53,15 +63,22 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
     token: env.NEXUS_SK,
     ...opts.clientOptions,
   };
-  const nexus = new NexusRunTracker(clientOptions);
+  const nexusTracker = new NexusRunTracker(clientOptions);
+  const messageTransport = new NexusMessageTransport(clientOptions);
   if (mode === 'nexus') {
-    return { mode, runTracker: nexus };
+    return { mode, runTracker: nexusTracker, messageTransport };
   }
 
+  // Dual: nexus tracking is best-effort (swallow); the tmux-legacy message send runs
+  // alongside `messageTransport.send` at the callsite (slice 2 wiring).
   const onError =
     opts.onError ??
     ((op: string, error: unknown) =>
       // eslint-disable-next-line no-console
-      console.warn(`[hydra/nexus-tracking] non-fatal ${op} failure:`, error));
-  return { mode, runTracker: new DualRunTracker(nexus, onError) };
+      console.warn(`[hydra/nexus-transport] non-fatal ${op} failure:`, error));
+  return {
+    mode,
+    runTracker: new DualRunTracker(nexusTracker, onError),
+    messageTransport,
+  };
 }
