@@ -29,7 +29,8 @@
     "smoke:nexus-watch": "node out/smoke/nexusWatchSmoke.js",
     "smoke:nexus-bridge": "node out/smoke/nexusBridgeSmoke.js",
     "smoke:nexus-multi": "node out/smoke/nexusMultiSmoke.js",
-    "smoke:nexus-fanout": "node out/smoke/nexusFanoutSmoke.js"
+    "smoke:nexus-fanout": "node out/smoke/nexusFanoutSmoke.js",
+    "smoke:nexus-cert-agent": "node out/smoke/nexusCertAgentSmoke.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",
