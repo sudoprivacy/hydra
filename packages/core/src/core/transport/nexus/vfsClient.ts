@@ -96,6 +96,62 @@ export class NexusVfsClient {
     });
   }
 
+  /** One typed VFS RPC returning `{is_error, error_payload}`; rejects on `is_error`. */
+  private unary<Res>(rpc: string, req: Record<string, unknown>): Promise<Res> {
+    return new Promise<Res>((resolve, reject) => {
+      this.client[rpc](
+        req,
+        (
+          err: grpc.ServiceError | null,
+          res: Res & { is_error?: boolean; error_payload?: Buffer },
+        ) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          if (res.is_error) {
+            const msg =
+              res.error_payload && res.error_payload.length
+                ? Buffer.from(res.error_payload).toString()
+                : '(no payload)';
+            reject(new Error(`${rpc}: ${msg}`));
+            return;
+          }
+          resolve(res);
+        },
+      );
+    });
+  }
+
+  /** Create (idempotent) a wal-backed DT_STREAM mailbox at `path`. */
+  async mkstream(path: string): Promise<void> {
+    await this.unary('Setattr', {
+      path,
+      auth_token: this.token,
+      entry_type: 4, // DT_STREAM
+      io_profile: 'wal,memory',
+    });
+  }
+
+  /** Append one frame to the DT_STREAM at `path`; returns the offset it landed at. */
+  async streamWrite(path: string, data: Buffer): Promise<string> {
+    const res = await this.unary<{ offset?: string }>('StreamWriteNowait', {
+      path,
+      data,
+      auth_token: this.token,
+    });
+    return res.offset ?? '0';
+  }
+
+  /** Read the whole DT_STREAM at `path` (all frames concatenated). */
+  async streamCollect(path: string): Promise<Buffer> {
+    const res = await this.unary<{ data?: Buffer }>('StreamCollectAll', {
+      path,
+      auth_token: this.token,
+    });
+    return res.data && res.data.length ? Buffer.from(res.data) : Buffer.alloc(0);
+  }
+
   close(): void {
     this.client.close();
   }

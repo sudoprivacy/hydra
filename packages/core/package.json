@@ -24,7 +24,8 @@
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "smoke:nexus-tracking": "node out/smoke/nexusTrackingSmoke.js",
-    "smoke:nexus-tracking-wiring": "node out/smoke/nexusTrackingWiringSmoke.js"
+    "smoke:nexus-tracking-wiring": "node out/smoke/nexusTrackingWiringSmoke.js",
+    "smoke:nexus-message": "node out/smoke/nexusMessageSmoke.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",
