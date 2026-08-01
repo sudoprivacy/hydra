@@ -152,6 +152,33 @@ export class NexusVfsClient {
     return res.data && res.data.length ? Buffer.from(res.data) : Buffer.alloc(0);
   }
 
+  /**
+   * Read frames from `offset`. With `blocking`, the server waits up to `timeoutMs` for a
+   * frame to appear (tail-follow, sys_watch under the hood); non-blocking returns
+   * `eof=true` when nothing is ready. Returns the frame bytes + the cursor for next read.
+   */
+  async streamReadAt(
+    path: string,
+    offset: string,
+    opts: { blocking?: boolean; timeoutMs?: number } = {},
+  ): Promise<{ data: Buffer; nextOffset: string; eof: boolean }> {
+    const res = await this.unary<{ data?: Buffer; next_offset?: string; eof?: boolean }>(
+      'StreamReadAt',
+      {
+        path,
+        offset,
+        blocking: opts.blocking ?? false,
+        timeout_ms: opts.timeoutMs ?? 0,
+        auth_token: this.token,
+      },
+    );
+    return {
+      data: res.data && res.data.length ? Buffer.from(res.data) : Buffer.alloc(0),
+      nextOffset: res.next_offset ?? offset,
+      eof: res.eof ?? false,
+    };
+  }
+
   close(): void {
     this.client.close();
   }
