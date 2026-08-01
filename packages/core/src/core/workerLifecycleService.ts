@@ -23,7 +23,12 @@ import { WorkerRuntimeCoordinator, type WorkerRuntimeIdentity } from './workerRu
 import { WorkerRuntimeStateStore } from './workerRuntimeState';
 import { WorkerRuntimeStateStoreV2, type WorkerRuntimeSnapshotV2 } from './workerRuntimeV2';
 import { getWorkerLifecycleEpoch, normalizeWorkerSessionAliases } from './workerIdentity';
-import { NoopRunTracker, type RunTracker } from './transport/nexus';
+import {
+  LegacyMessageTransport,
+  NoopRunTracker,
+  type MessageTransport,
+  type RunTracker,
+} from './transport/nexus';
 
 export type WorkerSelector = string | number;
 
@@ -55,6 +60,8 @@ export interface WorkerLifecycleServiceOptions {
   eventSource?: HydraEventSource;
   /** Orchestration-tracking plane (doc §5). Defaults to the legacy no-op tracker. */
   runTracker?: RunTracker;
+  /** Message plane (doc §5). Defaults to legacy tmux inject via the backend. */
+  messageTransport?: MessageTransport;
 }
 
 interface PreparedWorkerDispatch {
@@ -81,6 +88,7 @@ export class WorkerLifecycleService {
   private readonly completionJobStore: CompletionJobStore;
   private readonly eventSource: HydraEventSource;
   private readonly runTracker: RunTracker;
+  private readonly messageTransport: MessageTransport;
   /** workerId -> the nexus pid we registered, so stop can unregister the same run. */
   private readonly registeredRuns = new Map<number, string>();
 
@@ -93,6 +101,8 @@ export class WorkerLifecycleService {
     this.completionJobStore = options.completionJobStore ?? new CompletionJobStore();
     this.eventSource = options.eventSource ?? 'session-manager';
     this.runTracker = options.runTracker ?? new NoopRunTracker();
+    this.messageTransport =
+      options.messageTransport ?? new LegacyMessageTransport(this.backend);
     this.runtimeCoordinator = options.runtimeCoordinator ?? new WorkerRuntimeCoordinator(
       workerId => this.resolveRuntimeIdentity(workerId),
       this.runtimeV2Store,
@@ -101,9 +111,10 @@ export class WorkerLifecycleService {
     );
   }
 
-  /** Release the tracking backend (its gRPC channel). No-op in legacy mode. */
+  /** Release the transport backends (their gRPC channels). No-op in legacy mode. */
   close(): void {
     this.runTracker.close();
+    this.messageTransport.close();
   }
 
   /**
@@ -213,7 +224,7 @@ export class WorkerLifecycleService {
         options.reason || 'worker-send',
         options.notifyCompletion !== false,
       );
-      await this.backend.sendMessage(worker.sessionName, message);
+      await this.messageTransport.send(worker.sessionName, { body: message });
       return { worker, completionArmed: !!dispatch.completionJob };
     } catch (error) {
       if (dispatch?.completionJobCreated && dispatch.completionJob) {

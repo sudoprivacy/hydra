@@ -227,9 +227,11 @@ export class HydraAppService implements HydraAppServiceApi {
     });
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
-    // Orchestration-tracking plane (a2a-mapping doc §5), switched by HYDRA_TRANSPORT.
-    // Defaults to legacy (no-op), so this is inert unless nexus/dual is selected; the
-    // gRPC channel (nexus/dual only) dies with the sidecar's process.exit on shutdown.
+    // Two synchronized switchable planes (a2a-mapping doc §5), by HYDRA_TRANSPORT.
+    // Defaults to legacy (tmux + no-op tracking) so this is inert unless nexus/dual is
+    // selected; nexus/dual gRPC channels die with the sidecar's process.exit on shutdown.
+    // `backend` powers the legacy (tmux) message plane.
+    const transport = createTransport({ backend: this.backend });
     this.workerLifecycle = new WorkerLifecycleService({
       backend: this.backend,
       sessionManager: this.sessionManager,
@@ -238,7 +240,8 @@ export class HydraAppService implements HydraAppServiceApi {
       runtimeV2Store: this.runtimeV2Store,
       eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
-      runTracker: createTransport().runTracker,
+      runTracker: transport.runTracker,
+      messageTransport: transport.messageTransport,
     });
     this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }

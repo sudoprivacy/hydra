@@ -15,6 +15,9 @@ import {
   RunTracker,
 } from './runTracker';
 import {
+  DualMessageTransport,
+  LegacyMessageBackend,
+  LegacyMessageTransport,
   MessageTransport,
   NexusMessageTransport,
   NoopMessageTransport,
@@ -38,6 +41,8 @@ export interface TransportOptions {
   /** Non-fatal nexus errors in Dual mode land here (default: warn to console). */
   onError?: (op: string, error: unknown) => void;
   env?: NodeJS.ProcessEnv;
+  /** The multiplexer backend — powers the legacy (tmux) message plane in legacy/dual. */
+  backend?: LegacyMessageBackend;
 }
 
 export interface TransportBackends {
@@ -50,12 +55,11 @@ export interface TransportBackends {
 export function createTransport(opts: TransportOptions = {}): TransportBackends {
   const env = opts.env ?? process.env;
   const mode = resolveTransportMode(env);
+  const legacyMessages: MessageTransport = opts.backend
+    ? new LegacyMessageTransport(opts.backend)
+    : new NoopMessageTransport();
   if (mode === 'legacy') {
-    return {
-      mode,
-      runTracker: new NoopRunTracker(),
-      messageTransport: new NoopMessageTransport(),
-    };
+    return { mode, runTracker: new NoopRunTracker(), messageTransport: legacyMessages };
   }
 
   const clientOptions: NexusVfsClientOptions = {
@@ -63,22 +67,22 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
     token: env.NEXUS_SK,
     ...opts.clientOptions,
   };
-  const nexusTracker = new NexusRunTracker(clientOptions);
-  const messageTransport = new NexusMessageTransport(clientOptions);
-  if (mode === 'nexus') {
-    return { mode, runTracker: nexusTracker, messageTransport };
-  }
-
-  // Dual: nexus tracking is best-effort (swallow); the tmux-legacy message send runs
-  // alongside `messageTransport.send` at the callsite (slice 2 wiring).
   const onError =
     opts.onError ??
     ((op: string, error: unknown) =>
       // eslint-disable-next-line no-console
       console.warn(`[hydra/nexus-transport] non-fatal ${op} failure:`, error));
+  const nexusTracker = new NexusRunTracker(clientOptions);
+  const nexusMessages = new NexusMessageTransport(clientOptions);
+  if (mode === 'nexus') {
+    return { mode, runTracker: nexusTracker, messageTransport: nexusMessages };
+  }
+
+  // Dual: legacy tmux inject is the primary path; nexus tracking + mailbox mirror are
+  // best-effort (failures swallowed via onError) so nexus can never break delivery.
   return {
     mode,
     runTracker: new DualRunTracker(nexusTracker, onError),
-    messageTransport,
+    messageTransport: new DualMessageTransport(legacyMessages, nexusMessages, onError),
   };
 }
