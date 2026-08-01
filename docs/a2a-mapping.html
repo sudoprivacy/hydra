@@ -104,6 +104,24 @@
 <div class="todo">Q-i (was Q-B): broadcast membership/naming — a single <code>/agents/&lt;copilot&gt;/broadcast</code> all workers watch, vs per-worker DT_LINKs aliasing it. Both use the native fan-out; pick by addressing ergonomics.</div>
 <div class="todo">Q-ii: §F design fork (see §3) — node_id exposure + default-name generation location.</div>
 
+<h2>8. Process ownership &amp; the ACP control plane <span class="tag">DECIDED</span></h2>
+<p>Who owns a run's process (spawn/kill/worktree/git). Two frontends map onto nexus; the end state is nexus-spawn for both.</p>
+<table>
+  <tr><th>Frontend</th><th>Process owner</th><th>nexus role</th></tr>
+  <tr><td><b>Hydra worker/copilot</b></td><td>hydra (tmux host)</td><td>records the run: <code>register_external</code>/<code>heartbeat</code> (§2, §5)</td></tr>
+  <tr><td><b>Sudowork ACP agent</b> (headless LLM CLI: scode/claude/…)</td><td>nexus</td><td>spawns + supervises: <code>start_session(spawn_spec)</code> (<code>ManagedAgentService</code> + <code>AcpService</code>)</td></tr>
+</table>
+<p>§8.1 is the hydra model (§5). §8.2 is the sudowork ACP control plane.</p>
+<p><b>8.2 Sudowork ACP control plane.</b> sudowork owns the ACP protocol as the single implementation (<code>src/agent/acp/AcpConnection</code>) and the spawn-spec; nexus owns process spawn/supervision and a byte tunnel to the agent's stdio. ACP frames pass through nexus verbatim (<code>_meta</code> and string JSON-RPC ids preserved), so the protocol lives in one place.</p>
+<table>
+  <tr><th>Concern</th><th>Owner</th><th>Mechanism</th></tr>
+  <tr><td>spawn-spec <code>{cmd,args,env,cwd}</code> (agent env/args, auth-proxy token, model config)</td><td>sudowork (SSOT)</td><td>computed sudowork-side, passed to nexus</td></tr>
+  <tr><td>spawn + supervise + lifecycle</td><td>nexus</td><td><code>start_session(spawn_spec)</code> → OS pid + handle; <code>cancel(pid)</code>; <code>exit(code,signal)</code> event on the handle drives sudowork reconnect/resume</td></tr>
+  <tr><td>transport</td><td>nexus pipes bytes, sudowork frames</td><td>agent stdio as DT_PIPE <code>/{zone}/proc/{pid}/fd/{0,1,2}</code>; sudowork reads <code>fd/1</code> (blocking) + writes <code>fd/0</code> as raw bytes over <code>@grpc/grpc-js</code>, applying NDJSON/LSP framing</td></tr>
+  <tr><td>ACP protocol + client duties: <code>fs/read_text_file</code>+<code>write</code>, <code>session/request_permission</code> (approval), <code>_scode/ask_user_question</code></td><td>sudowork</td><td>served sudowork-side; nexus relays the frames end-to-end</td></tr>
+  <tr><td>agent LLM auth</td><td>sudowork auth-proxy</td><td>bearer token in the spawn-spec env (<code>SUDOWORK_AUTH_PROXY_*</code>), reachable when agent and sudowork share a node</td></tr>
+</table>
+
 <h2>PoC scope (pending greenlight)</h2>
 <p>Add a nexus messaging+tracking backend behind hydra's transport/messaging seam (<code>sendMessage</code>/<code>broadcast</code>/<code>events</code>/<code>notifications</code> → mailboxes + <code>sys_watch</code>; runs → <code>register_external</code>), Legacy alongside, config-switchable in sync, Dual available. Process ownership + git/worktree untouched. §F naming landed first (or in parallel) so mailbox names are cluster-unique.</p>
 </body>
