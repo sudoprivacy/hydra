@@ -242,6 +242,7 @@ export class HydraAppService implements HydraAppServiceApi {
       eventSource: this.notificationEventSource,
       runTracker: transport.runTracker,
       messageTransport: transport.messageTransport,
+      mode: transport.mode,
     });
     this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }
