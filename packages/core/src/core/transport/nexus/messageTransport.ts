@@ -12,10 +12,28 @@ export interface MessageEnvelope {
   body: string;
 }
 
+export interface WatchOptions {
+  /** Abort to stop tailing (the returned promise then resolves). */
+  signal?: AbortSignal;
+  /** Start from this offset (default "0" — from the beginning). */
+  fromOffset?: string;
+  /** Per-read server long-poll timeout (default 30s). */
+  timeoutMs?: number;
+}
+
 /** `target` is the recipient agent's persistent name (= `worker.sessionName` today). */
 export interface MessageTransport {
   send(target: string, envelope: MessageEnvelope): Promise<void>;
   collect(target: string): Promise<MessageEnvelope[]>;
+  /**
+   * Tail a mailbox: call `onMessage` for each new envelope until `opts.signal` aborts.
+   * The nexus plane uses sys_watch (blocking StreamReadAt); other planes are no-ops.
+   */
+  watch(
+    target: string,
+    onMessage: (envelope: MessageEnvelope) => void,
+    opts?: WatchOptions,
+  ): Promise<void>;
   close(): void;
 }
 
@@ -27,6 +45,7 @@ export class NoopMessageTransport implements MessageTransport {
   async collect(): Promise<MessageEnvelope[]> {
     return [];
   }
+  async watch(): Promise<void> {} // no mailbox on this plane
   close(): void {}
 }
 
@@ -62,6 +81,35 @@ export class NexusMessageTransport implements MessageTransport {
     return [JSON.parse(raw.toString()) as MessageEnvelope];
   }
 
+  async watch(
+    target: string,
+    onMessage: (envelope: MessageEnvelope) => void,
+    opts: WatchOptions = {},
+  ): Promise<void> {
+    const path = mailboxPath(target);
+    await this.client.mkstream(path); // idempotent — the stream must exist to tail
+    let offset = opts.fromOffset ?? '0';
+    const timeoutMs = opts.timeoutMs ?? 30000;
+    while (!opts.signal?.aborted) {
+      const { data, nextOffset, eof } = await this.client.streamReadAt(path, offset, {
+        blocking: true,
+        timeoutMs,
+      });
+      if (opts.signal?.aborted) {
+        break;
+      }
+      if (eof || !data.length) {
+        continue; // long-poll timed out with no frame — loop
+      }
+      offset = nextOffset;
+      try {
+        onMessage(JSON.parse(data.toString()) as MessageEnvelope);
+      } catch {
+        // skip a frame that is not a JSON envelope
+      }
+    }
+  }
+
   close(): void {
     this.client.close();
   }
@@ -81,6 +129,7 @@ export class LegacyMessageTransport implements MessageTransport {
   async collect(): Promise<MessageEnvelope[]> {
     return []; // tmux has no durable mailbox to read back
   }
+  async watch(): Promise<void> {} // legacy attention rides NotificationStore, not a mailbox
   close(): void {}
 }
 
@@ -111,6 +160,15 @@ export class DualMessageTransport implements MessageTransport {
       this.onError('collect', error);
       return [];
     }
+  }
+
+  async watch(
+    target: string,
+    onMessage: (envelope: MessageEnvelope) => void,
+    opts?: WatchOptions,
+  ): Promise<void> {
+    // Mailbox tailing is the nexus plane's job; legacy attention runs via its own path.
+    await this.nexus.watch(target, onMessage, opts);
   }
 
   close(): void {
