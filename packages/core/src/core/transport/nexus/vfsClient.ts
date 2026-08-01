@@ -123,14 +123,24 @@ export class NexusVfsClient {
     });
   }
 
-  /** Create (idempotent) a wal-backed DT_STREAM mailbox at `path`. */
+  /**
+   * Create a wal-backed DT_STREAM mailbox at `path`. Idempotent: an already-existing
+   * stream is success (`StreamExists`), so concurrent watchers/senders don't race.
+   */
   async mkstream(path: string): Promise<void> {
-    await this.unary('Setattr', {
-      path,
-      auth_token: this.token,
-      entry_type: 4, // DT_STREAM
-      io_profile: 'wal,memory',
-    });
+    try {
+      await this.unary('Setattr', {
+        path,
+        auth_token: this.token,
+        entry_type: 4, // DT_STREAM
+        io_profile: 'wal,memory',
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('StreamExists')) {
+        return; // the stream already exists — that's the desired end state
+      }
+      throw error;
+    }
   }
 
   /** Append one frame to the DT_STREAM at `path`; returns the offset it landed at. */

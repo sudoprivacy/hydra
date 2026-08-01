@@ -72,13 +72,27 @@ export class NexusMessageTransport implements MessageTransport {
   }
 
   async collect(target: string): Promise<MessageEnvelope[]> {
-    const raw = await this.client.streamCollect(mailboxPath(target));
-    if (!raw.length) {
-      return [];
+    const path = mailboxPath(target);
+    await this.client.mkstream(path); // idempotent — tolerate an empty/absent mailbox
+    // StreamCollectAll concatenates frames with no delimiter, so read frame-by-frame
+    // (non-blocking) with an advancing offset — the reliable multi-message decode.
+    const out: MessageEnvelope[] = [];
+    let offset = '0';
+    for (;;) {
+      const { data, nextOffset, eof } = await this.client.streamReadAt(path, offset, {
+        blocking: false,
+      });
+      if (eof || !data.length) {
+        break;
+      }
+      offset = nextOffset;
+      try {
+        out.push(JSON.parse(data.toString()) as MessageEnvelope);
+      } catch {
+        // skip a frame that is not a JSON envelope
+      }
     }
-    // Single-message decode: the stamp hook re-serializes each frame (dropping any
-    // delimiter), so multi-message framing is a follow-up.
-    return [JSON.parse(raw.toString()) as MessageEnvelope];
+    return out;
   }
 
   async watch(

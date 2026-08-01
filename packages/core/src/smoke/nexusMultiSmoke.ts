@@ -53,7 +53,19 @@ async function main(): Promise<void> {
     if (!ok) {
       throw new Error(`expected ${JSON.stringify(bodies)} in order, got ${JSON.stringify(gotBodies)}`);
     }
-    console.log(`nexusMultiSmoke: ok — received ${bodies.length} distinct envelopes in order: ${JSON.stringify(gotBodies)}`);
+    // Also verify collect() decodes all N (per-frame, not concatenated).
+    const collector = new NexusMessageTransport({ address, token });
+    const collectedBodies = (await collector.collect(target)).map((m) => m.body);
+    collector.close();
+    if (
+      collectedBodies.length !== bodies.length ||
+      !bodies.every((b, i) => collectedBodies[i] === b)
+    ) {
+      throw new Error(`collect() expected ${JSON.stringify(bodies)}, got ${JSON.stringify(collectedBodies)}`);
+    }
+    console.log(
+      `nexusMultiSmoke: ok — watch received ${bodies.length} in order + collect() decoded ${collectedBodies.length}: ${JSON.stringify(gotBodies)}`,
+    );
   } finally {
     controller.abort();
     await watching.catch(() => {});
