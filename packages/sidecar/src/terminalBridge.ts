@@ -1,6 +1,6 @@
 // TerminalBridge — the server side of the terminal seam (M3).
 //
-// Productionizes the validated spike (spikes/terminal-bridge): node-pty runs
+// Productionizes the validated terminal-bridge PoC: node-pty runs
 // `tmux attach`, tmux owns the screen state, and each WebSocket carries one
 // terminal. This module is the sidecar half; the client half is
 // `LoopbackHttpWsTransport.openTerminal` (packages/transport-loopback). The
