@@ -18,6 +18,7 @@
 // only (the transport's watch is a no-op on the legacy plane).
 
 import { logger } from './logger';
+import { MailboxTailRegistry } from './mailboxTailRegistry';
 import type { MirroredNotification } from './notificationMailboxMirror';
 import { NotificationStore } from './notifications';
 import type { MessageTransport } from './transport/nexus/messageTransport';
@@ -29,51 +30,31 @@ export interface CopilotInboundBridgeOptions {
 
 export class CopilotInboundBridge {
   private readonly store: NotificationStore;
-  private readonly messageTransport: MessageTransport;
-  /** copilotSessionName -> abort handle for its mailbox tail. */
-  private readonly bridges = new Map<string, AbortController>();
+  /** Shared mailbox-tail machinery, keyed by copilotSessionName. */
+  private readonly tails: MailboxTailRegistry<string>;
 
   constructor(options: CopilotInboundBridgeOptions) {
     this.store = options.store;
-    this.messageTransport = options.messageTransport;
+    this.tails = new MailboxTailRegistry<string>(
+      options.messageTransport,
+      (mailbox, envelope) => this.materialize(mailbox, envelope.body),
+    );
   }
 
   /** Begin tailing a copilot's mailbox (idempotent per session). Best-effort. */
   start(copilotSessionName: string): void {
-    if (!copilotSessionName || this.bridges.has(copilotSessionName)) {
+    if (!copilotSessionName) {
       return;
     }
-    const controller = new AbortController();
-    this.bridges.set(copilotSessionName, controller);
-    void this.messageTransport
-      .watch(
-        copilotSessionName,
-        (envelope) => {
-          this.materialize(copilotSessionName, envelope.body);
-        },
-        { signal: controller.signal },
-      )
-      .catch((error) => {
-        logger.warn('nexus.copilot-bridge', 'copilot mailbox tail failed (non-fatal)', {
-          copilotSessionName,
-          error: String(error),
-        });
-      });
+    this.tails.start(copilotSessionName, copilotSessionName);
   }
 
   stop(copilotSessionName: string): void {
-    const controller = this.bridges.get(copilotSessionName);
-    if (controller) {
-      controller.abort();
-      this.bridges.delete(copilotSessionName);
-    }
+    this.tails.stop(copilotSessionName);
   }
 
   dispose(): void {
-    for (const controller of this.bridges.values()) {
-      controller.abort();
-    }
-    this.bridges.clear();
+    this.tails.dispose();
   }
 
   /** Test seam: re-materialize one mailbox frame body synchronously. */

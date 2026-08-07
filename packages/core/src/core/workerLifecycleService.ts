@@ -4,6 +4,7 @@ import { CompletionJobStore, type CompletionJob } from './completionJobStore';
 import { removeLegacyCompletionPendingFiles } from './completionHookScript';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
+import { MailboxTailRegistry } from './mailboxTailRegistry';
 import { NotificationStore } from './notifications';
 import {
   SessionManager,
@@ -95,8 +96,8 @@ export class WorkerLifecycleService {
   private readonly transportMode: TransportMode;
   /** workerId -> the nexus pid we registered, so stop can unregister the same run. */
   private readonly registeredRuns = new Map<number, string>();
-  /** workerId -> abort handle for its inbound mailbox->pane delivery bridge (nexus mode). */
-  private readonly inboundBridges = new Map<number, AbortController>();
+  /** Inbound mailbox->pane delivery bridges (nexus mode), keyed by workerId. */
+  private readonly inboundTails: MailboxTailRegistry<number>;
 
   constructor(options: WorkerLifecycleServiceOptions) {
     this.backend = options.backend;
@@ -110,6 +111,19 @@ export class WorkerLifecycleService {
     this.messageTransport =
       options.messageTransport ?? new LegacyMessageTransport(this.backend);
     this.transportMode = options.mode ?? 'legacy';
+    // Deliver = inject the mailbox body into the worker's pane (mailbox name ==
+    // the worker's sessionName). Keyed by workerId so a rename doesn't orphan it.
+    this.inboundTails = new MailboxTailRegistry<number>(
+      this.messageTransport,
+      (mailbox, envelope) => {
+        void this.backend.sendMessage(mailbox, envelope.body);
+      },
+      (workerId, _mailbox, error) =>
+        logger.warn('nexus-transport.bridge', 'inbound mailbox bridge failed (non-fatal)', {
+          workerId,
+          error: String(error),
+        }),
+    );
     this.runtimeCoordinator = options.runtimeCoordinator ?? new WorkerRuntimeCoordinator(
       workerId => this.resolveRuntimeIdentity(workerId),
       this.runtimeV2Store,
@@ -120,10 +134,7 @@ export class WorkerLifecycleService {
 
   /** Release the transport backends (their gRPC channels). No-op in legacy mode. */
   close(): void {
-    for (const controller of this.inboundBridges.values()) {
-      controller.abort();
-    }
-    this.inboundBridges.clear();
+    this.inboundTails.dispose();
     this.runTracker.close();
     this.messageTransport.close();
   }
@@ -186,33 +197,14 @@ export class WorkerLifecycleService {
    * Best-effort: a bridge failure is logged, never fatal to lifecycle.
    */
   private startInboundBridge(worker: WorkerInfo): void {
-    if (this.transportMode !== 'nexus' || this.inboundBridges.has(worker.workerId)) {
-      return;
+    if (this.transportMode !== 'nexus') {
+      return; // legacy/dual keep tmux as the delivery path (no double-inject)
     }
-    const controller = new AbortController();
-    this.inboundBridges.set(worker.workerId, controller);
-    void this.messageTransport
-      .watch(
-        worker.sessionName,
-        (envelope) => {
-          void this.backend.sendMessage(worker.sessionName, envelope.body);
-        },
-        { signal: controller.signal },
-      )
-      .catch((error) => {
-        logger.warn('nexus-transport.bridge', 'inbound mailbox bridge failed (non-fatal)', {
-          workerId: worker.workerId,
-          error: String(error),
-        });
-      });
+    this.inboundTails.start(worker.workerId, worker.sessionName);
   }
 
   private stopInboundBridge(workerId: number): void {
-    const controller = this.inboundBridges.get(workerId);
-    if (controller) {
-      controller.abort();
-      this.inboundBridges.delete(workerId);
-    }
+    this.inboundTails.stop(workerId);
   }
 
   async createWorker(options: CreateWorkerOpts): Promise<CreateWorkerResult> {
