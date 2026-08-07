@@ -22,7 +22,22 @@
 </head>
 <body>
 <h1>Hydra → nexus A2A mapping</h1>
-<p class="status">Status: <b>reviewed (owner comments processed) — decisions locked, one implementation task (§4/§F) open.</b> Maps Hydra's Copilot/Worker onto the nexus A2A substrate. Substrate live-accepted (nexus-vfs #183 + #190, real Win↔Mac). Living doc — iterate here (edit → PR to hydra main → ShareOne re-fetches).</p>
+<p class="status">Status: <b>PoC landed + live-validated (single-node, cert plane); the message plane is bidirectionally complete.</b> Maps Hydra's Copilot/Worker onto the nexus A2A substrate. Substrate live-accepted (nexus-vfs #183 + #190, real Win↔Mac). Living doc — iterate here (edit → PR to hydra main → ShareOne re-fetches).</p>
+
+<h2>Implementation status <span class="tag">LIVE</span></h2>
+<p>On hydra <code>feat/nexus-a2a-transport</code> (PR #331); all <code>@hydra/core</code>, tsc-clean, live-validated cert-plane against a current nexus founder (agent certs → daemon <code>classify_peer_cert</code> → mailbox).</p>
+<table>
+  <tr><th>Capability</th><th>State</th><th>Notes</th></tr>
+  <tr><td>Switchable transport (<code>createTransport</code> Legacy|Nexus|Dual, one <code>HYDRA_TRANSPORT</code>)</td><td class="yes">DONE</td><td>both planes flip in sync; ownership stays hydra.</td></tr>
+  <tr><td>Message plane — <code>sendMessage</code> + collect + <code>watch</code> (sys_watch)</td><td class="yes">DONE</td><td><code>NexusMessageTransport</code>; smokes <code>nexus-{message,watch,multi,fanout}</code>.</td></tr>
+  <tr><td>Copilot→Worker delivery bridge (mailbox→pane inject)</td><td class="yes">DONE</td><td><code>WLS.startInboundBridge</code> via shared <code>MailboxTailRegistry</code>.</td></tr>
+  <tr><td>Worker→Copilot attention over nexus</td><td class="yes">DONE</td><td><code>NotificationMailboxMirror</code> (poll → copilot mailbox) + <code>CopilotInboundBridge</code> (tail → re-materialize, <code>viaMailbox</code> loop guard); smoke <code>nexus-attention</code>.</td></tr>
+  <tr><td>Orchestration tracking — Worker runs</td><td class="yes">DONE</td><td><code>register_external</code>/<code>unregister</code> via shared <code>RunTrackingRegistry</code>.</td></tr>
+  <tr><td>Orchestration tracking — Copilot runs</td><td class="tagt tag">IN PROGRESS</td><td>same <code>RunTracker</code> abstraction, keyed by copilot session (this is the tracking-plane symmetry gap).</td></tr>
+  <tr><td>§F cross-node auto-naming</td><td class="tagt tag">DEFERRED</td><td>controlled acceptance uses distinct manual names; auto node-anchoring is a production robustness item + rides the agent-cert SAN work (§3).</td></tr>
+  <tr><td>Broadcast / multicast</td><td class="tagt tag">DEFERRED</td><td>design decided (§6, native stream fan-out); not needed for the 1:1 copilot↔worker acceptance (YAGNI).</td></tr>
+  <tr><td>Cross-machine Win↔Mac acceptance (task #35)</td><td class="tagt tag">NEXT</td><td>the message plane is bidirectionally complete, so this is reachable now with distinct names.</td></tr>
+</table>
 
 <h2>1. Identity — persistent NAME + per-run PID (BOTH, not either/or)</h2>
 <p>Hydra (<code>sessionManager.ts</code>) and nexus (<code>rust/kernel/src/core/agents/registry.rs</code>, the "per-PID agent SSOT / <code>task_struct</code> analogue") model identity the SAME way — a stable identity plus an ephemeral per-run handle. nexus's <code>AgentDescriptor</code> carries <b>both</b> <code>name</code> and <code>pid</code>.</p>
@@ -64,7 +79,7 @@
   </tr>
 </table>
 
-<h2>3. Cross-node uniqueness &amp; §F naming <span class="tagt tag">OPEN — implement next</span></h2>
+<h2>3. Cross-node uniqueness &amp; §F naming <span class="tagt tag">DEFERRED — see status table</span></h2>
 <p>Identity flow (the "original nexus design", owner Q7): <code>auth mint agent --subject-id &lt;name&gt;</code> → <code>AuthKeyRecord{subject_type:Agent, subject_id:&lt;name&gt;}</code> (per-node SOLO store, HMAC-keyed) → the <code>sk-</code> key resolves so <code>OperationContext.agent_id = subject_id</code> → <code>MailboxStampingHook</code> stamps <code>from = agent_id</code>, <b>overwriting</b> any caller value (unforgeable), and <b>fail-closes</b> an unauthenticated A2A write. So <code>from</code> == the minted name.</p>
 <ul>
   <li><b>Within-node uniqueness: enforced</b> (<code>find_active_subject</code>, nexus-vfs #175).</li>
@@ -100,9 +115,9 @@
   <li><b>DT_LINK is NOT the fan-out tool.</b> It's a one-hop symlink (many→ONE target, self-loop-rejected). It can ALIAS each worker's path to the shared stream (addressing convenience / fan-IN), but the multicast comes from the stream's multi-reader property, not the link. No primitive clones one write into N per-agent streams.</li>
 </ul>
 
-<h2>7. Remaining open questions</h2>
-<div class="todo">Q-i (was Q-B): broadcast membership/naming — a single <code>/agents/&lt;copilot&gt;/broadcast</code> all workers watch, vs per-worker DT_LINKs aliasing it. Both use the native fan-out; pick by addressing ergonomics.</div>
-<div class="todo">Q-ii: §F design fork (see §3) — node_id exposure + default-name generation location.</div>
+<h2>7. Remaining open questions / deferrals</h2>
+<div class="todo">Q-i (was Q-B): broadcast membership/naming — a single <code>/agents/&lt;copilot&gt;/broadcast</code> all workers watch, vs per-worker DT_LINKs aliasing it. <b>Deferred (YAGNI):</b> the mechanism is decided (§6, native fan-out); pick the addressing ergonomics when a real broadcast use lands — not needed for the 1:1 copilot↔worker acceptance.</div>
+<div class="todo">Q-ii: §F design fork (see §3) — node_id exposure + default-name generation location. <b>Deferred:</b> the controlled acceptance uses distinct manual names; auto node-anchoring is a production robustness item that rides the agent-cert SAN work (agents are now cert identities). See §3.</div>
 
 <h2>8. Process ownership &amp; the ACP control plane <span class="tag">DECIDED</span></h2>
 <p>Who owns a run's process (spawn/kill/worktree/git). Two frontends map onto nexus; the end state is nexus-spawn for both.</p>
@@ -122,7 +137,7 @@
   <tr><td>agent LLM auth</td><td>sudowork auth-proxy</td><td>bearer token in the spawn-spec env (<code>SUDOWORK_AUTH_PROXY_*</code>), reachable when agent and sudowork share a node</td></tr>
 </table>
 
-<h2>PoC scope (pending greenlight)</h2>
-<p>Add a nexus messaging+tracking backend behind hydra's transport/messaging seam (<code>sendMessage</code>/<code>broadcast</code>/<code>events</code>/<code>notifications</code> → mailboxes + <code>sys_watch</code>; runs → <code>register_external</code>), Legacy alongside, config-switchable in sync, Dual available. Process ownership + git/worktree untouched. §F naming landed first (or in parallel) so mailbox names are cluster-unique.</p>
+<h2>PoC scope <span class="tag">LANDED</span></h2>
+<p>The nexus messaging + tracking backends live behind hydra's transport seam (<code>createTransport</code>): <code>sendMessage</code>/attention → mailboxes + <code>sys_watch</code>; runs → <code>register_external</code>; Legacy alongside, one <code>HYDRA_TRANSPORT</code> switch in sync, Dual available. Process ownership + git/worktree untouched (§8.1). See the Implementation status table above for the per-capability state. Names are cluster-unique by discipline today (distinct manual names); §F auto-anchoring makes them unique by construction (deferred, Q-ii).</p>
 </body>
 </html>
