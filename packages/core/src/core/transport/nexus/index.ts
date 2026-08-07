@@ -49,6 +49,14 @@ export interface TransportBackends {
   mode: TransportMode;
   runTracker: RunTracker;
   messageTransport: MessageTransport;
+  /**
+   * The PURE-nexus message transport (mailbox send/watch only), when the plane is
+   * nexus or dual; `undefined` in legacy. Distinct from `messageTransport`, which in
+   * dual mode is the composed Dual (tmux inject + nexus mirror). The worker→copilot
+   * attention mirror + copilot inbound bridge use THIS so they never tmux-inject a
+   * serialized notification into a pane (dual's `send` would).
+   */
+  nexusMessageTransport?: MessageTransport;
 }
 
 /** Construct the per-process transport backends, both planes switched by one mode. */
@@ -75,7 +83,12 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
   const nexusTracker = new NexusRunTracker(clientOptions);
   const nexusMessages = new NexusMessageTransport(clientOptions);
   if (mode === 'nexus') {
-    return { mode, runTracker: nexusTracker, messageTransport: nexusMessages };
+    return {
+      mode,
+      runTracker: nexusTracker,
+      messageTransport: nexusMessages,
+      nexusMessageTransport: nexusMessages,
+    };
   }
 
   // Dual: legacy tmux inject is the primary path; nexus tracking + mailbox mirror are
@@ -84,5 +97,6 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
     mode,
     runTracker: new DualRunTracker(nexusTracker, onError),
     messageTransport: new DualMessageTransport(legacyMessages, nexusMessages, onError),
+    nexusMessageTransport: nexusMessages,
   };
 }
