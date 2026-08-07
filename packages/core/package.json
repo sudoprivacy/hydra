@@ -11,6 +11,10 @@
       "types": "./out/index.d.ts",
       "default": "./out/index.js"
     },
+    "./transport/nexus": {
+      "types": "./out/core/transport/nexus/index.d.ts",
+      "default": "./out/core/transport/nexus/index.js"
+    },
     "./*": {
       "types": "./out/core/*.d.ts",
       "default": "./out/core/*.js"
@@ -18,9 +22,20 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "compile": "tsc -b tsconfig.json"
+    "compile": "tsc -b tsconfig.json",
+    "smoke:nexus-tracking": "node out/smoke/nexusTrackingSmoke.js",
+    "smoke:nexus-tracking-wiring": "node out/smoke/nexusTrackingWiringSmoke.js",
+    "smoke:nexus-message": "node out/smoke/nexusMessageSmoke.js",
+    "smoke:nexus-watch": "node out/smoke/nexusWatchSmoke.js",
+    "smoke:nexus-bridge": "node out/smoke/nexusBridgeSmoke.js",
+    "smoke:nexus-attention": "node out/smoke/nexusAttentionSmoke.js",
+    "smoke:nexus-multi": "node out/smoke/nexusMultiSmoke.js",
+    "smoke:nexus-fanout": "node out/smoke/nexusFanoutSmoke.js",
+    "smoke:nexus-cert-agent": "node out/smoke/nexusCertAgentSmoke.js"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13",
     "iconv-lite": "^0.7.2",
     "posthog-node": "^5.33.3"
   }

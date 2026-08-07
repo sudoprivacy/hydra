@@ -82,6 +82,11 @@ import {
 import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
+import { createTransport } from '@hydra/core/transport/nexus';
+import { NotificationMailboxMirror } from '@hydra/core/notificationMailboxMirror';
+import { CopilotInboundBridge } from '@hydra/core/copilotInboundBridge';
+import { RunTrackingRegistry } from '@hydra/core/runTrackingRegistry';
+import { resolveHostPid } from '@hydra/core/hostPid';
 import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
@@ -192,6 +197,11 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
   private readonly runtimeV2Store: WorkerRuntimeStateStoreV2;
   private readonly workerLifecycle: WorkerLifecycleService;
+  /** worker→copilot attention over nexus (gap #1); undefined on the legacy plane. */
+  private readonly notificationMailboxMirror?: NotificationMailboxMirror;
+  private readonly copilotInboundBridge?: CopilotInboundBridge;
+  /** Tracking-plane symmetry: register copilot runs like WLS does workers (doc §5). */
+  private readonly copilotTracking: RunTrackingRegistry<string>;
   private readonly sessionTerminal: SessionTerminalService;
   private readonly eventLog: EventLog;
   private readonly eventHub: EventHub;
@@ -226,6 +236,11 @@ export class HydraAppService implements HydraAppServiceApi {
     });
     this.diffService = options.diffService ?? new DiffService();
     this.notificationEventSource = options.notificationEventSource ?? 'session-manager';
+    // Two synchronized switchable planes (a2a-mapping doc §5), by HYDRA_TRANSPORT.
+    // Defaults to legacy (tmux + no-op tracking) so this is inert unless nexus/dual is
+    // selected; nexus/dual gRPC channels die with the sidecar's process.exit on shutdown.
+    // `backend` powers the legacy (tmux) message plane.
+    const transport = createTransport({ backend: this.backend });
     this.workerLifecycle = new WorkerLifecycleService({
       backend: this.backend,
       sessionManager: this.sessionManager,
@@ -234,7 +249,32 @@ export class HydraAppService implements HydraAppServiceApi {
       runtimeV2Store: this.runtimeV2Store,
       eventLog: this.eventLog,
       eventSource: this.notificationEventSource,
+      runTracker: transport.runTracker,
+      messageTransport: transport.messageTransport,
+      mode: transport.mode,
     });
+    // Tracking-plane symmetry: copilots register like workers do (WLS). The
+    // RunTracker is the switch (Noop legacy / Nexus / Dual), so no gating.
+    this.copilotTracking = new RunTrackingRegistry<string>(
+      transport.runTracker,
+      'nexus-tracking.copilot',
+    );
+    // worker→copilot attention over nexus (a2a-mapping doc §5): mirror local
+    // copilot-directed attention to the copilot's mailbox, and re-materialize a
+    // peer's mailbox back into this machine's NotificationStore. Uses the PURE
+    // nexus transport (never the dual composite — that would tmux-inject a
+    // serialized notification). Absent on the legacy plane.
+    if (transport.nexusMessageTransport) {
+      this.notificationMailboxMirror = new NotificationMailboxMirror({
+        store: this.notificationStore,
+        messageTransport: transport.nexusMessageTransport,
+      });
+      this.notificationMailboxMirror.start();
+      this.copilotInboundBridge = new CopilotInboundBridge({
+        store: this.notificationStore,
+        messageTransport: transport.nexusMessageTransport,
+      });
+    }
     this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }
 
@@ -263,6 +303,8 @@ export class HydraAppService implements HydraAppServiceApi {
   }
 
   dispose(): void {
+    this.notificationMailboxMirror?.dispose();
+    this.copilotInboundBridge?.dispose();
     this.eventHub.dispose();
     for (const stream of [...this.notificationStreams]) stream.close();
     for (const subscriber of [...this.notificationOccurrenceStreams]) subscriber.stream.close();
@@ -587,6 +629,11 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir, agentType, copilotMode, name: input.name, sessionName,
     });
     const copilot = creation.copilotInfo;
+    // nexus/dual: tail this copilot's mailbox so a worker's attention raised on
+    // another machine re-materializes into this machine's NotificationStore.
+    this.copilotInboundBridge?.start(copilot.sessionName);
+    // Report the copilot run into the tracking plane (best-effort; no-op on legacy).
+    void this.registerCopilotRun(copilot.sessionName);
     void this.finishCopilotInitialization(
       copilot,
       creation.postCreatePromise,
@@ -601,6 +648,23 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir: copilot.workdir,
       agentSessionId: copilot.sessionId,
     };
+  }
+
+  /** Report a copilot run into the tracking plane (best-effort; mirrors WLS). */
+  private async registerCopilotRun(sessionName: string): Promise<void> {
+    if (this.copilotTracking.has(sessionName)) {
+      return;
+    }
+    const hostPid = await resolveHostPid(this.backend, sessionName);
+    if (hostPid === null) {
+      return;
+    }
+    await this.copilotTracking.register(sessionName, {
+      name: sessionName,
+      hostPid,
+      connectionId: `${sessionName}#copilot`,
+      labels: { role: 'copilot' },
+    });
   }
 
   private async finishCopilotInitialization(
@@ -667,6 +731,8 @@ export class HydraAppService implements HydraAppServiceApi {
       await this.workerLifecycle.deleteWorker(payload.session, { deleteFiles });
       return { status: 'deleted', kind: 'worker', session: payload.session, deleteFiles };
     }
+    this.copilotInboundBridge?.stop(payload.session);
+    await this.copilotTracking.unregister(payload.session);
     await this.sessionManager.deleteCopilot(payload.session);
     return { status: 'deleted', kind: 'copilot', session: payload.session };
   }

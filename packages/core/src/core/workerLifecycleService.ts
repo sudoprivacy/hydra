@@ -4,6 +4,9 @@ import { CompletionJobStore, type CompletionJob } from './completionJobStore';
 import { removeLegacyCompletionPendingFiles } from './completionHookScript';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
+import { resolveHostPid } from './hostPid';
+import { MailboxTailRegistry } from './mailboxTailRegistry';
+import { RunTrackingRegistry } from './runTrackingRegistry';
 import { NotificationStore } from './notifications';
 import {
   SessionManager,
@@ -23,6 +26,13 @@ import { WorkerRuntimeCoordinator, type WorkerRuntimeIdentity } from './workerRu
 import { WorkerRuntimeStateStore } from './workerRuntimeState';
 import { WorkerRuntimeStateStoreV2, type WorkerRuntimeSnapshotV2 } from './workerRuntimeV2';
 import { getWorkerLifecycleEpoch, normalizeWorkerSessionAliases } from './workerIdentity';
+import {
+  LegacyMessageTransport,
+  NoopRunTracker,
+  type MessageTransport,
+  type RunTracker,
+  type TransportMode,
+} from './transport/nexus';
 
 export type WorkerSelector = string | number;
 
@@ -52,6 +62,12 @@ export interface WorkerLifecycleServiceOptions {
   completionJobStore?: CompletionJobStore;
   eventLog?: EventLog;
   eventSource?: HydraEventSource;
+  /** Orchestration-tracking plane (doc §5). Defaults to the legacy no-op tracker. */
+  runTracker?: RunTracker;
+  /** Message plane (doc §5). Defaults to legacy tmux inject via the backend. */
+  messageTransport?: MessageTransport;
+  /** Transport mode; the inbound mailbox→pane delivery bridge runs only in `nexus`. */
+  mode?: TransportMode;
 }
 
 interface PreparedWorkerDispatch {
@@ -77,6 +93,13 @@ export class WorkerLifecycleService {
   private readonly runtimeCoordinator: WorkerRuntimeCoordinator;
   private readonly completionJobStore: CompletionJobStore;
   private readonly eventSource: HydraEventSource;
+  private readonly runTracker: RunTracker;
+  private readonly messageTransport: MessageTransport;
+  private readonly transportMode: TransportMode;
+  /** Orchestration-tracking of worker runs (register/unregister), keyed by workerId. */
+  private readonly workerTracking: RunTrackingRegistry<number>;
+  /** Inbound mailbox->pane delivery bridges (nexus mode), keyed by workerId. */
+  private readonly inboundTails: MailboxTailRegistry<number>;
 
   constructor(options: WorkerLifecycleServiceOptions) {
     this.backend = options.backend;
@@ -86,12 +109,84 @@ export class WorkerLifecycleService {
     this.runtimeV2Store = options.runtimeV2Store ?? new WorkerRuntimeStateStoreV2();
     this.completionJobStore = options.completionJobStore ?? new CompletionJobStore();
     this.eventSource = options.eventSource ?? 'session-manager';
+    this.runTracker = options.runTracker ?? new NoopRunTracker();
+    this.messageTransport =
+      options.messageTransport ?? new LegacyMessageTransport(this.backend);
+    this.transportMode = options.mode ?? 'legacy';
+    // Tracking plane: the RunTracker is the switch (Noop legacy / Nexus / Dual),
+    // so this is switchable by construction — no `if nexus` guard needed.
+    this.workerTracking = new RunTrackingRegistry<number>(this.runTracker);
+    // Deliver = inject the mailbox body into the worker's pane (mailbox name ==
+    // the worker's sessionName). Keyed by workerId so a rename doesn't orphan it.
+    this.inboundTails = new MailboxTailRegistry<number>(
+      this.messageTransport,
+      (mailbox, envelope) => {
+        void this.backend.sendMessage(mailbox, envelope.body);
+      },
+      (workerId, _mailbox, error) =>
+        logger.warn('nexus-transport.bridge', 'inbound mailbox bridge failed (non-fatal)', {
+          workerId,
+          error: String(error),
+        }),
+    );
     this.runtimeCoordinator = options.runtimeCoordinator ?? new WorkerRuntimeCoordinator(
       workerId => this.resolveRuntimeIdentity(workerId),
       this.runtimeV2Store,
       this.runtimeStateStore,
       options.eventLog ?? new EventLog(),
     );
+  }
+
+  /** Release the transport backends (their gRPC channels). No-op in legacy mode. */
+  close(): void {
+    this.inboundTails.dispose();
+    this.runTracker.close();
+    this.messageTransport.close();
+  }
+
+  /**
+   * Report a started run into the tracking plane (best-effort, idempotent). Tracking is
+   * observability, never a gate on lifecycle — failures are logged and swallowed. `name`
+   * is the worker's sessionName (worktree/branch-anchored); `hostPid` is the agent pane's
+   * OS pid, which the kernel makes the agent pid (nexus-vfs #195).
+   */
+  private async trackRunStarted(worker: WorkerInfo): Promise<void> {
+    if (this.workerTracking.has(worker.workerId)) {
+      return; // already tracked — skip re-resolving the pane pid
+    }
+    const hostPid = await resolveHostPid(this.backend, worker.sessionName);
+    if (hostPid === null) {
+      return;
+    }
+    // register + pid bookkeeping + best-effort live in the shared registry.
+    await this.workerTracking.register(worker.workerId, {
+      name: worker.sessionName,
+      hostPid,
+      connectionId: `${worker.sessionName}#${getWorkerLifecycleEpoch(worker)}`,
+      labels: { role: 'worker', workerId: String(worker.workerId) },
+    });
+  }
+
+  /** Report a stopped run out of the tracking plane (best-effort). */
+  private async trackRunStopped(workerId: number): Promise<void> {
+    await this.workerTracking.unregister(workerId);
+  }
+
+  /**
+   * nexus mode only: tail this worker's mailbox and inject each message into its pane —
+   * the copilot->worker "mailbox->tmux-inject" delivery bridge for plain agents. Legacy
+   * and dual keep tmux as the delivery path, so this stays OFF there (no double-inject).
+   * Best-effort: a bridge failure is logged, never fatal to lifecycle.
+   */
+  private startInboundBridge(worker: WorkerInfo): void {
+    if (this.transportMode !== 'nexus') {
+      return; // legacy/dual keep tmux as the delivery path (no double-inject)
+    }
+    this.inboundTails.start(worker.workerId, worker.sessionName);
+  }
+
+  private stopInboundBridge(workerId: number): void {
+    this.inboundTails.stop(workerId);
   }
 
   async createWorker(options: CreateWorkerOpts): Promise<CreateWorkerResult> {
@@ -117,11 +212,10 @@ export class WorkerLifecycleService {
   ): Promise<CreateWorkerResult> {
     const worker = await this.resolveWorker(selector);
     try {
-      return this.prepareReadyWorker(
-        await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand),
-        'worker-starting',
-        'start',
-      );
+      const started = await this.sessionManager.startWorker(worker.sessionName, agentType, agentCommand);
+      await this.trackRunStarted(started.workerInfo);
+      this.startInboundBridge(started.workerInfo);
+      return this.prepareReadyWorker(started, 'worker-starting', 'start');
     } catch (error) {
       const currentWorker = this.resolveCurrentWorkerIdentity(worker);
       this.cancelStaleCompletionIntents(currentWorker, getWorkerLifecycleEpoch(currentWorker));
@@ -152,7 +246,7 @@ export class WorkerLifecycleService {
         options.reason || 'worker-send',
         options.notifyCompletion !== false,
       );
-      await this.backend.sendMessage(worker.sessionName, message);
+      await this.messageTransport.send(worker.sessionName, { body: message });
       return { worker, completionArmed: !!dispatch.completionJob };
     } catch (error) {
       if (dispatch?.completionJobCreated && dispatch.completionJob) {
@@ -185,6 +279,8 @@ export class WorkerLifecycleService {
     const worker = await this.resolveWorker(selector);
     try {
       await this.sessionManager.stopWorker(worker.sessionName);
+      await this.trackRunStopped(worker.workerId);
+      this.stopInboundBridge(worker.workerId);
       this.cancelCompletionIntent(worker, 'worker-stopped');
       this.resolveWorkerNeedsInput(worker.workerId, 'worker-stopped');
       this.runtimeCoordinator.clear(worker.workerId);

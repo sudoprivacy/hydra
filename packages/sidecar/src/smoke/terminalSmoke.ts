@@ -1,7 +1,7 @@
 /**
  * Smoke test: the M3 terminal seam over a REAL 127.0.0.1 HTTP/WS loopback with a
- * REAL node-pty ⇄ tmux attach, modeled on the validated spike smoke
- * (spikes/terminal-bridge/smoke-test.js) but wired through the M1 loopback seam:
+ * REAL node-pty ⇄ tmux attach, modeled on the validated terminal-bridge PoC
+ * smoke but wired through the M1 loopback seam:
  *
  *   HydraControlClient.attachTerminal → LoopbackHttpWsTransport.openTerminal
  *     → WS /v1/terminal → TerminalBridge → node-pty `tmux attach` → tmux session

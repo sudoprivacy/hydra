@@ -37,6 +37,14 @@ export interface HydraNotification {
     branch?: string | null;
     workdir?: string | null;
     agent?: string | null;
+    /**
+     * Provenance: this notification was re-materialized locally from a peer's
+     * chat-with-me mailbox (worker→copilot attention over nexus), NOT raised by a
+     * local worker signal. The notification-mailbox mirror skips these so it never
+     * echoes a re-materialized notification back to the mailbox it just came from
+     * (the copilot-machine loop guard — see `notificationMailboxMirror`).
+     */
+    viaMailbox?: boolean;
   };
 }
 
@@ -611,6 +619,7 @@ export class NotificationStore {
           branch: notification.context?.branch,
           workdir: notification.context?.workdir,
           agent: notification.context?.agent,
+          viaMailbox: notification.context?.viaMailbox,
           occurrenceId: occurrence?.occurrenceId,
           lifecycleEpoch: occurrence?.lifecycleEpoch,
           runId: occurrence?.runId,
@@ -818,6 +827,9 @@ function normalizeContext(context: HydraNotification['context']): HydraNotificat
   }
   if (context.agent !== undefined) {
     normalized.agent = normalizeOptionalString(context.agent, MAX_SESSION_LENGTH);
+  }
+  if (context.viaMailbox) {
+    normalized.viaMailbox = true;
   }
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
