@@ -83,6 +83,8 @@ import { DiffService } from '@hydra/core/diff';
 import { getCopilotOnboardingPrompt } from '@hydra/core/copilotOnboarding';
 import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 import { createTransport } from '@hydra/core/transport/nexus';
+import { NotificationMailboxMirror } from '@hydra/core/notificationMailboxMirror';
+import { CopilotInboundBridge } from '@hydra/core/copilotInboundBridge';
 import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
@@ -193,6 +195,9 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly runtimeStateStore: WorkerRuntimeStateStore;
   private readonly runtimeV2Store: WorkerRuntimeStateStoreV2;
   private readonly workerLifecycle: WorkerLifecycleService;
+  /** worker→copilot attention over nexus (gap #1); undefined on the legacy plane. */
+  private readonly notificationMailboxMirror?: NotificationMailboxMirror;
+  private readonly copilotInboundBridge?: CopilotInboundBridge;
   private readonly sessionTerminal: SessionTerminalService;
   private readonly eventLog: EventLog;
   private readonly eventHub: EventHub;
@@ -244,6 +249,22 @@ export class HydraAppService implements HydraAppServiceApi {
       messageTransport: transport.messageTransport,
       mode: transport.mode,
     });
+    // worker→copilot attention over nexus (a2a-mapping doc §5): mirror local
+    // copilot-directed attention to the copilot's mailbox, and re-materialize a
+    // peer's mailbox back into this machine's NotificationStore. Uses the PURE
+    // nexus transport (never the dual composite — that would tmux-inject a
+    // serialized notification). Absent on the legacy plane.
+    if (transport.nexusMessageTransport) {
+      this.notificationMailboxMirror = new NotificationMailboxMirror({
+        store: this.notificationStore,
+        messageTransport: transport.nexusMessageTransport,
+      });
+      this.notificationMailboxMirror.start();
+      this.copilotInboundBridge = new CopilotInboundBridge({
+        store: this.notificationStore,
+        messageTransport: transport.nexusMessageTransport,
+      });
+    }
     this.sessionTerminal = new SessionTerminalService(this.backend, this.sessionManager);
   }
 
@@ -272,6 +293,8 @@ export class HydraAppService implements HydraAppServiceApi {
   }
 
   dispose(): void {
+    this.notificationMailboxMirror?.dispose();
+    this.copilotInboundBridge?.dispose();
     this.eventHub.dispose();
     for (const stream of [...this.notificationStreams]) stream.close();
     for (const subscriber of [...this.notificationOccurrenceStreams]) subscriber.stream.close();
@@ -596,6 +619,9 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir, agentType, copilotMode, name: input.name, sessionName,
     });
     const copilot = creation.copilotInfo;
+    // nexus/dual: tail this copilot's mailbox so a worker's attention raised on
+    // another machine re-materializes into this machine's NotificationStore.
+    this.copilotInboundBridge?.start(copilot.sessionName);
     void this.finishCopilotInitialization(
       copilot,
       creation.postCreatePromise,
@@ -676,6 +702,7 @@ export class HydraAppService implements HydraAppServiceApi {
       await this.workerLifecycle.deleteWorker(payload.session, { deleteFiles });
       return { status: 'deleted', kind: 'worker', session: payload.session, deleteFiles };
     }
+    this.copilotInboundBridge?.stop(payload.session);
     await this.sessionManager.deleteCopilot(payload.session);
     return { status: 'deleted', kind: 'copilot', session: payload.session };
   }
