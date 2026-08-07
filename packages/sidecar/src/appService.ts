@@ -85,6 +85,8 @@ import { WorkerLifecycleService } from '@hydra/core/workerLifecycleService';
 import { createTransport } from '@hydra/core/transport/nexus';
 import { NotificationMailboxMirror } from '@hydra/core/notificationMailboxMirror';
 import { CopilotInboundBridge } from '@hydra/core/copilotInboundBridge';
+import { RunTrackingRegistry } from '@hydra/core/runTrackingRegistry';
+import { resolveHostPid } from '@hydra/core/hostPid';
 import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
@@ -198,6 +200,8 @@ export class HydraAppService implements HydraAppServiceApi {
   /** worker→copilot attention over nexus (gap #1); undefined on the legacy plane. */
   private readonly notificationMailboxMirror?: NotificationMailboxMirror;
   private readonly copilotInboundBridge?: CopilotInboundBridge;
+  /** Tracking-plane symmetry: register copilot runs like WLS does workers (doc §5). */
+  private readonly copilotTracking: RunTrackingRegistry<string>;
   private readonly sessionTerminal: SessionTerminalService;
   private readonly eventLog: EventLog;
   private readonly eventHub: EventHub;
@@ -249,6 +253,12 @@ export class HydraAppService implements HydraAppServiceApi {
       messageTransport: transport.messageTransport,
       mode: transport.mode,
     });
+    // Tracking-plane symmetry: copilots register like workers do (WLS). The
+    // RunTracker is the switch (Noop legacy / Nexus / Dual), so no gating.
+    this.copilotTracking = new RunTrackingRegistry<string>(
+      transport.runTracker,
+      'nexus-tracking.copilot',
+    );
     // worker→copilot attention over nexus (a2a-mapping doc §5): mirror local
     // copilot-directed attention to the copilot's mailbox, and re-materialize a
     // peer's mailbox back into this machine's NotificationStore. Uses the PURE
@@ -622,6 +632,8 @@ export class HydraAppService implements HydraAppServiceApi {
     // nexus/dual: tail this copilot's mailbox so a worker's attention raised on
     // another machine re-materializes into this machine's NotificationStore.
     this.copilotInboundBridge?.start(copilot.sessionName);
+    // Report the copilot run into the tracking plane (best-effort; no-op on legacy).
+    void this.registerCopilotRun(copilot.sessionName);
     void this.finishCopilotInitialization(
       copilot,
       creation.postCreatePromise,
@@ -636,6 +648,23 @@ export class HydraAppService implements HydraAppServiceApi {
       workdir: copilot.workdir,
       agentSessionId: copilot.sessionId,
     };
+  }
+
+  /** Report a copilot run into the tracking plane (best-effort; mirrors WLS). */
+  private async registerCopilotRun(sessionName: string): Promise<void> {
+    if (this.copilotTracking.has(sessionName)) {
+      return;
+    }
+    const hostPid = await resolveHostPid(this.backend, sessionName);
+    if (hostPid === null) {
+      return;
+    }
+    await this.copilotTracking.register(sessionName, {
+      name: sessionName,
+      hostPid,
+      connectionId: `${sessionName}#copilot`,
+      labels: { role: 'copilot' },
+    });
   }
 
   private async finishCopilotInitialization(
@@ -703,6 +732,7 @@ export class HydraAppService implements HydraAppServiceApi {
       return { status: 'deleted', kind: 'worker', session: payload.session, deleteFiles };
     }
     this.copilotInboundBridge?.stop(payload.session);
+    await this.copilotTracking.unregister(payload.session);
     await this.sessionManager.deleteCopilot(payload.session);
     return { status: 'deleted', kind: 'copilot', session: payload.session };
   }
