@@ -4,7 +4,9 @@ import { CompletionJobStore, type CompletionJob } from './completionJobStore';
 import { removeLegacyCompletionPendingFiles } from './completionHookScript';
 import { EventLog, type HydraEventSource } from './events';
 import { logger } from './logger';
+import { resolveHostPid } from './hostPid';
 import { MailboxTailRegistry } from './mailboxTailRegistry';
+import { RunTrackingRegistry } from './runTrackingRegistry';
 import { NotificationStore } from './notifications';
 import {
   SessionManager,
@@ -94,8 +96,8 @@ export class WorkerLifecycleService {
   private readonly runTracker: RunTracker;
   private readonly messageTransport: MessageTransport;
   private readonly transportMode: TransportMode;
-  /** workerId -> the nexus pid we registered, so stop can unregister the same run. */
-  private readonly registeredRuns = new Map<number, string>();
+  /** Orchestration-tracking of worker runs (register/unregister), keyed by workerId. */
+  private readonly workerTracking: RunTrackingRegistry<number>;
   /** Inbound mailbox->pane delivery bridges (nexus mode), keyed by workerId. */
   private readonly inboundTails: MailboxTailRegistry<number>;
 
@@ -111,6 +113,9 @@ export class WorkerLifecycleService {
     this.messageTransport =
       options.messageTransport ?? new LegacyMessageTransport(this.backend);
     this.transportMode = options.mode ?? 'legacy';
+    // Tracking plane: the RunTracker is the switch (Noop legacy / Nexus / Dual),
+    // so this is switchable by construction — no `if nexus` guard needed.
+    this.workerTracking = new RunTrackingRegistry<number>(this.runTracker);
     // Deliver = inject the mailbox body into the worker's pane (mailbox name ==
     // the worker's sessionName). Keyed by workerId so a rename doesn't orphan it.
     this.inboundTails = new MailboxTailRegistry<number>(
@@ -146,48 +151,25 @@ export class WorkerLifecycleService {
    * OS pid, which the kernel makes the agent pid (nexus-vfs #195).
    */
   private async trackRunStarted(worker: WorkerInfo): Promise<void> {
-    if (this.registeredRuns.has(worker.workerId)) {
+    if (this.workerTracking.has(worker.workerId)) {
+      return; // already tracked — skip re-resolving the pane pid
+    }
+    const hostPid = await resolveHostPid(this.backend, worker.sessionName);
+    if (hostPid === null) {
       return;
     }
-    try {
-      const panePids = await this.backend.getSessionPanePids(worker.sessionName);
-      // TODO(multi-pane): resolve the @hydra-agent-pane pid; [0] is the agent for single-pane sessions.
-      const hostPid = Number(panePids[0]);
-      if (!Number.isInteger(hostPid) || hostPid <= 0) {
-        return;
-      }
-      const handle = await this.runTracker.registerRun({
-        name: worker.sessionName,
-        hostPid,
-        connectionId: `${worker.sessionName}#${getWorkerLifecycleEpoch(worker)}`,
-        labels: { role: 'worker', workerId: String(worker.workerId) },
-      });
-      if (handle) {
-        this.registeredRuns.set(worker.workerId, handle.pid);
-      }
-    } catch (error) {
-      logger.warn('nexus-tracking.register', 'registerRun failed (non-fatal)', {
-        workerId: worker.workerId,
-        error: String(error),
-      });
-    }
+    // register + pid bookkeeping + best-effort live in the shared registry.
+    await this.workerTracking.register(worker.workerId, {
+      name: worker.sessionName,
+      hostPid,
+      connectionId: `${worker.sessionName}#${getWorkerLifecycleEpoch(worker)}`,
+      labels: { role: 'worker', workerId: String(worker.workerId) },
+    });
   }
 
   /** Report a stopped run out of the tracking plane (best-effort). */
   private async trackRunStopped(workerId: number): Promise<void> {
-    const pid = this.registeredRuns.get(workerId);
-    if (!pid) {
-      return;
-    }
-    this.registeredRuns.delete(workerId);
-    try {
-      await this.runTracker.unregisterRun(pid);
-    } catch (error) {
-      logger.warn('nexus-tracking.unregister', 'unregisterRun failed (non-fatal)', {
-        workerId,
-        error: String(error),
-      });
-    }
+    await this.workerTracking.unregister(workerId);
   }
 
   /**
