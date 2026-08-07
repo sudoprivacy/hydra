@@ -30,7 +30,10 @@ export * from './messageTransport';
 
 export type TransportMode = 'legacy' | 'nexus' | 'dual';
 
-export function resolveTransportMode(env: NodeJS.ProcessEnv = process.env): TransportMode {
+/** The shape of `process.env` we read — avoids the `NodeJS` global (no-undef under the flat eslint config). */
+type ProcessEnv = Record<string, string | undefined>;
+
+export function resolveTransportMode(env: ProcessEnv = process.env): TransportMode {
   const raw = (env.HYDRA_TRANSPORT ?? 'legacy').toLowerCase();
   return raw === 'nexus' || raw === 'dual' ? raw : 'legacy';
 }
@@ -40,7 +43,7 @@ export interface TransportOptions {
   clientOptions?: NexusVfsClientOptions;
   /** Non-fatal nexus errors in Dual mode land here (default: warn to console). */
   onError?: (op: string, error: unknown) => void;
-  env?: NodeJS.ProcessEnv;
+  env?: ProcessEnv;
   /** The multiplexer backend — powers the legacy (tmux) message plane in legacy/dual. */
   backend?: LegacyMessageBackend;
 }
