@@ -27,13 +27,11 @@ import { NexusMessageTransport, type NexusVfsClientOptions } from '../core/trans
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Client options for one nexus connection. CERT plane when `BUNDLE` points at an
- * agent bundle dir (ca.pem + agent.pem + agent-key.pem — the mTLS agent identity,
- * which the daemon resolves via classify_peer_cert); otherwise the sk-/insecure
- * token plane.
+ * Client options for one nexus connection. CERT plane when `bundle` is an agent
+ * bundle dir (ca.pem + agent.pem + agent-key.pem — the mTLS agent identity the
+ * daemon resolves via classify_peer_cert); otherwise the sk-/insecure token plane.
  */
-function clientOptions(address: string): NexusVfsClientOptions {
-  const bundle = process.env.BUNDLE;
+function clientOptions(address: string, bundle: string | undefined): NexusVfsClientOptions {
   if (bundle) {
     return {
       address,
@@ -68,12 +66,18 @@ async function main(): Promise<void> {
   }
   const address = process.env.ADDR ?? process.env.NEXUS_AGENT_ADDR ?? '127.0.0.1:2126';
   const copilot = process.env.NAME ?? 'ts-copilot-probe';
+  // Faithful worker→copilot: the SENDER (store A's mirror) is a WORKER agent
+  // writing into the COPILOT's mailbox (cross-agent A2A — the kernel stamps the
+  // worker's `from`); the receiver (store B's bridge) is the COPILOT agent tailing
+  // its own mailbox. SENDER_BUNDLE defaults to BUNDLE (single-agent degenerate run).
+  const copilotBundle = process.env.BUNDLE;
+  const senderBundle = process.env.SENDER_BUNDLE ?? copilotBundle;
 
   const storeA = isolatedStore('a');
   const storeB = isolatedStore('b');
-  const txA = new NexusMessageTransport(clientOptions(address));
-  const txB = new NexusMessageTransport(clientOptions(address));
-  const collector = new NexusMessageTransport(clientOptions(address));
+  const txA = new NexusMessageTransport(clientOptions(address, senderBundle));
+  const txB = new NexusMessageTransport(clientOptions(address, copilotBundle));
+  const collector = new NexusMessageTransport(clientOptions(address, copilotBundle));
   const mirrorA = new NotificationMailboxMirror({ store: storeA, messageTransport: txA });
   const bridgeB = new CopilotInboundBridge({ store: storeB, messageTransport: txB });
   const mirrorB = new NotificationMailboxMirror({ store: storeB, messageTransport: txB });
