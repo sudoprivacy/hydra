@@ -72,10 +72,15 @@ async function main(): Promise<void> {
   // its own mailbox. SENDER_BUNDLE defaults to BUNDLE (single-agent degenerate run).
   const copilotBundle = process.env.BUNDLE;
   const senderBundle = process.env.SENDER_BUNDLE ?? copilotBundle;
+  // Cross-node: SENDER_ADDR points the worker (store A's mirror) at a DIFFERENT
+  // nexus node than the copilot (store B). The mailbox write on the worker's node
+  // must raft-replicate to the copilot's node, where the bridge re-materializes it
+  // — the true cross-machine A2A. Defaults to ADDR (single-node run).
+  const senderAddr = process.env.SENDER_ADDR ?? address;
 
   const storeA = isolatedStore('a');
   const storeB = isolatedStore('b');
-  const txA = new NexusMessageTransport(clientOptions(address, senderBundle));
+  const txA = new NexusMessageTransport(clientOptions(senderAddr, senderBundle));
   const txB = new NexusMessageTransport(clientOptions(address, copilotBundle));
   const collector = new NexusMessageTransport(clientOptions(address, copilotBundle));
   const mirrorA = new NotificationMailboxMirror({ store: storeA, messageTransport: txA });

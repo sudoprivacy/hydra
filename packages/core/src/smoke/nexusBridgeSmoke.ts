@@ -7,25 +7,58 @@
 // that lets a plain agent (no native mailbox read) receive nexus A2A messages.
 // Needs a running daemon; NOT in the CI chain. Pass a UNIQUE NAME per run.
 //
-//   SK=sk-... NAME=ts-bridge-$RANDOM node out/smoke/nexusBridgeSmoke.js
+//   Single-node, token plane:
+//     SK=sk-... NAME=ts-bridge-$RANDOM node out/smoke/nexusBridgeSmoke.js
+//   Cross-node, cert plane (the auth-on 2-node case): the WLS bridge tails on ADDR,
+//   the copilot SENDS on SENDER_ADDR (a DIFFERENT node); the mailbox write must
+//   raft-replicate to the bridge's node, where the tail wakes and injects.
+//     ADDR=127.0.0.1:12126 BUNDLE=<bridge agent dir> \
+//     SENDER_ADDR=127.0.0.1:12127 SENDER_BUNDLE=<copilot agent dir> \
+//     NAME=ts-bridge-$RANDOM node out/smoke/nexusBridgeSmoke.js
+
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 import { WorkerLifecycleService } from '../core/workerLifecycleService';
-import { NexusMessageTransport } from '../core/transport/nexus';
+import { NexusMessageTransport, type NexusVfsClientOptions } from '../core/transport/nexus';
 import { RecordingBackend, FakeSessionManager, createWorker } from './workerLifecycleServiceSmoke';
 
+/**
+ * Client options for one nexus connection. CERT plane when `bundle` is an agent
+ * bundle dir (ca.pem + agent.pem + agent-key.pem — the mTLS identity the daemon
+ * resolves via classify_peer_cert); otherwise the sk-/insecure token plane.
+ */
+function clientOptions(address: string, bundle: string | undefined): NexusVfsClientOptions {
+  if (bundle) {
+    return {
+      address,
+      tls: {
+        ca: readFileSync(join(bundle, 'ca.pem')),
+        cert: readFileSync(join(bundle, 'agent.pem')),
+        key: readFileSync(join(bundle, 'agent-key.pem')),
+      },
+    };
+  }
+  return { address, token: process.env.SK ?? process.env.NEXUS_SK ?? '' };
+}
+
 async function main(): Promise<void> {
-  const token = process.env.SK ?? process.env.NEXUS_SK ?? '';
-  if (!token) {
-    throw new Error('nexusBridgeSmoke: set SK (an sk- agent key)');
+  const bundle = process.env.BUNDLE;
+  if (!bundle && !(process.env.SK ?? process.env.NEXUS_SK)) {
+    throw new Error('nexusBridgeSmoke: set BUNDLE (agent cert dir) or SK (an sk- agent key)');
   }
   const address = process.env.ADDR ?? process.env.NEXUS_AGENT_ADDR ?? '127.0.0.1:2129';
+  // Cross-node: the copilot SENDS from a different node than the WLS bridge tails.
+  // Defaults collapse to a single-node run.
+  const senderAddr = process.env.SENDER_ADDR ?? address;
+  const senderBundle = process.env.SENDER_BUNDLE ?? bundle;
   const sessionName = process.env.NAME ?? 'ts-bridge-probe';
   const body = process.env.MSG ?? 'delivered via bridge';
 
   const worker = createWorker(1, sessionName);
   const backend = new RecordingBackend();
   const manager = new FakeSessionManager(backend, [worker]);
-  const messageTransport = new NexusMessageTransport({ address, token });
+  const messageTransport = new NexusMessageTransport(clientOptions(address, bundle));
   const service = new WorkerLifecycleService({
     backend,
     sessionManager: manager,
@@ -33,7 +66,7 @@ async function main(): Promise<void> {
     mode: 'nexus',
     eventSource: 'cli',
   });
-  const sender = new NexusMessageTransport({ address, token });
+  const sender = new NexusMessageTransport(clientOptions(senderAddr, senderBundle));
 
   try {
     await service.startWorker(sessionName); // arms the inbound mailbox->pane bridge
