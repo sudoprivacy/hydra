@@ -74,6 +74,19 @@ interface CallResponse {
   is_error?: boolean;
 }
 
+/**
+ * True when `error` is a blocking `StreamReadAt` that reached its timeout with no frame.
+ *
+ * A blocking read that times out surfaces as a `WouldBlock` error (not an `eof`
+ * response, unlike the non-blocking case). For a tail-follow (`watch`) that is a NORMAL
+ * long-poll expiry — the caller must re-poll, not tear the tail down. Pure + exported so
+ * the classification is unit-testable without a live daemon.
+ */
+export function isStreamLongPollTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /WouldBlock|stream read timeout/i.test(message);
+}
+
 /** A gRPC client for the nexus VFS agent plane; carries the sk- token on every Call. */
 export class NexusVfsClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -211,16 +224,30 @@ export class NexusVfsClient {
     offset: string,
     opts: { blocking?: boolean; timeoutMs?: number } = {},
   ): Promise<{ data: Buffer; nextOffset: string; eof: boolean }> {
-    const res = await this.unary<{ data?: Buffer; next_offset?: string; eof?: boolean }>(
-      'StreamReadAt',
-      {
-        path,
-        offset,
-        blocking: opts.blocking ?? false,
-        timeout_ms: opts.timeoutMs ?? 0,
-        auth_token: this.token,
-      },
-    );
+    let res: { data?: Buffer; next_offset?: string; eof?: boolean };
+    try {
+      res = await this.unary<{ data?: Buffer; next_offset?: string; eof?: boolean }>(
+        'StreamReadAt',
+        {
+          path,
+          offset,
+          blocking: opts.blocking ?? false,
+          timeout_ms: opts.timeoutMs ?? 0,
+          auth_token: this.token,
+        },
+      );
+    } catch (error) {
+      // A BLOCKING read that reaches its timeout with no frame surfaces as a
+      // `WouldBlock` error, not an `eof` response (unlike the non-blocking case).
+      // That is a NORMAL long-poll expiry for a tail-follow (`watch`), not a
+      // failure — map it to "no frame yet, same cursor" so the caller re-polls
+      // instead of tearing the tail down. Without this, any A2A mailbox tail
+      // idle longer than one timeout window dies on its first quiet period.
+      if ((opts.blocking ?? false) && isStreamLongPollTimeout(error)) {
+        return { data: Buffer.alloc(0), nextOffset: offset, eof: true };
+      }
+      throw error;
+    }
     return {
       data: res.data && res.data.length ? Buffer.from(res.data) : Buffer.alloc(0),
       nextOffset: res.next_offset ?? offset,
