@@ -5,8 +5,17 @@
 //   HYDRA_TRANSPORT=nexus                nexus backends only
 //   HYDRA_TRANSPORT=dual                 both; nexus is best-effort (failures swallowed)
 //
+// The nexus plane authenticates from env:
+//   NEXUS_AGENT_ADDR       host:port of the daemon's agent plane
+//   NEXUS_AGENT_CERT_DIR   an agent bundle dir (ca.pem + agent.pem + agent-key.pem)
+//                          -> mTLS cert plane (the ONLY plane an auth-on daemon exposes)
+//   NEXUS_SK               sk- token -> token/insecure plane (loopback / auth-off)
+//
 // Wired at the CLI composition roots (where `new TmuxBackendCore()` lives), so the
 // choice is made once per process alongside the multiplexer backend.
+
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 import {
   DualRunTracker,
@@ -38,8 +47,32 @@ export function resolveTransportMode(env: ProcessEnv = process.env): TransportMo
   return raw === 'nexus' || raw === 'dual' ? raw : 'legacy';
 }
 
+/**
+ * How the app authenticates to the nexus agent plane, resolved from env.
+ *
+ * `NEXUS_AGENT_CERT_DIR` (an agent bundle dir: `ca.pem` + `agent.pem` +
+ * `agent-key.pem`) selects the mTLS cert plane — the ONLY plane an auth-on
+ * daemon exposes (agents authenticate by cert on the main bind; the separate
+ * `--agent-bind-addr` sk- plane was removed). Point `NEXUS_AGENT_ADDR` at that
+ * bind. Without a cert dir, fall back to the `NEXUS_SK` token / insecure plane
+ * (loopback / auth-off daemons). A cert dir wins over a stray token.
+ */
+export function resolveAgentCredential(env: ProcessEnv): Pick<NexusVfsClientOptions, 'tls' | 'token'> {
+  const certDir = env.NEXUS_AGENT_CERT_DIR;
+  if (certDir) {
+    return {
+      tls: {
+        ca: readFileSync(join(certDir, 'ca.pem')),
+        cert: readFileSync(join(certDir, 'agent.pem')),
+        key: readFileSync(join(certDir, 'agent-key.pem')),
+      },
+    };
+  }
+  return { token: env.NEXUS_SK };
+}
+
 export interface TransportOptions {
-  /** Overrides; address/token default from NEXUS_AGENT_ADDR / NEXUS_SK. */
+  /** Overrides; address + credential (tls/token) default from NEXUS_AGENT_ADDR / NEXUS_AGENT_CERT_DIR / NEXUS_SK. */
   clientOptions?: NexusVfsClientOptions;
   /** Non-fatal nexus errors in Dual mode land here (default: warn to console). */
   onError?: (op: string, error: unknown) => void;
@@ -75,7 +108,7 @@ export function createTransport(opts: TransportOptions = {}): TransportBackends 
 
   const clientOptions: NexusVfsClientOptions = {
     address: env.NEXUS_AGENT_ADDR,
-    token: env.NEXUS_SK,
+    ...resolveAgentCredential(env),
     ...opts.clientOptions,
   };
   const onError =
