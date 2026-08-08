@@ -6,15 +6,37 @@
 // wiring fires at the right lifecycle edges and reaches nexus. Needs a running nexus, so
 // it is NOT in the default `npm test` chain.
 //
-//   SK=sk-... node out/smoke/nexusTrackingWiringSmoke.js
+//   Token plane:  SK=sk-... node out/smoke/nexusTrackingWiringSmoke.js
+//   Cert plane (auth-on):  ADDR=127.0.0.1:12126 BUNDLE=<agent dir> node out/smoke/nexusTrackingWiringSmoke.js
 //
 // The tmux pane pid is faked here (no real tmux on CI/Windows); getSessionPanePids is
 // hydra's own tested tmux method, so this covers the NEW logic (wiring + nexus round
 // trip). The real-worker path is a manual E2E on a box with tmux.
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import { WorkerLifecycleService } from '../core/workerLifecycleService';
-import { NexusRunTracker } from '../core/transport/nexus';
+import { NexusRunTracker, type NexusVfsClientOptions } from '../core/transport/nexus';
 import { RecordingBackend, FakeSessionManager, createWorker } from './workerLifecycleServiceSmoke';
+
+/**
+ * Client options for one nexus connection. CERT plane when `bundle` is an agent
+ * bundle dir (ca.pem + agent.pem + agent-key.pem); otherwise the sk-/insecure token plane.
+ */
+function clientOptions(address: string, bundle: string | undefined): NexusVfsClientOptions {
+  if (bundle) {
+    return {
+      address,
+      tls: {
+        ca: readFileSync(join(bundle, 'ca.pem')),
+        cert: readFileSync(join(bundle, 'agent.pem')),
+        key: readFileSync(join(bundle, 'agent-key.pem')),
+      },
+    };
+  }
+  return { address, token: process.env.SK ?? process.env.NEXUS_SK ?? '' };
+}
 
 /** Backend that reports a fixed agent-pane pid (stands in for a real tmux pane). */
 class PanePidBackend extends RecordingBackend {
@@ -27,9 +49,9 @@ class PanePidBackend extends RecordingBackend {
 }
 
 async function main(): Promise<void> {
-  const token = process.env.SK ?? process.env.NEXUS_SK ?? '';
-  if (!token) {
-    throw new Error('set SK (an sk- agent key) — the agent plane always authenticates');
+  const bundle = process.env.BUNDLE;
+  if (!bundle && !(process.env.SK ?? process.env.NEXUS_SK)) {
+    throw new Error('set BUNDLE (agent cert dir) or SK (an sk- agent key) — the agent plane always authenticates');
   }
   const address = process.env.ADDR ?? process.env.NEXUS_AGENT_ADDR ?? '127.0.0.1:2129';
   const hostPid = process.env.HOST_PID ?? '6001';
@@ -38,7 +60,7 @@ async function main(): Promise<void> {
   const worker = createWorker(1, sessionName);
   const backend = new PanePidBackend(hostPid);
   const manager = new FakeSessionManager(backend, [worker]);
-  const tracker = new NexusRunTracker({ address, token });
+  const tracker = new NexusRunTracker(clientOptions(address, bundle));
   const service = new WorkerLifecycleService({
     backend,
     sessionManager: manager,
