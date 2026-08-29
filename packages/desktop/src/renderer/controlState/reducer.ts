@@ -1,4 +1,5 @@
 import type {
+  GitChangeStatus,
   GitStatusMap,
   HydraEvent,
   HydraNotificationV2,
@@ -155,7 +156,13 @@ export function applyGitStatus(
     if (codeSessions.has(session)
       && Number.isSafeInteger(status.changed)
       && status.changed >= 0) {
-      gitStatusBySession[session] = { changed: status.changed };
+      const next: GitChangeStatus = { changed: status.changed };
+      if (Number.isSafeInteger(status.prNumber) && (status.prNumber ?? 0) > 0) {
+        next.prNumber = status.prNumber;
+        next.prState = status.prState;
+        next.prUrl = status.prUrl;
+      }
+      gitStatusBySession[session] = next;
     }
   }
   return { ...model, gitStatusBySession };
