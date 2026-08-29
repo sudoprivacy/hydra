@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.2026082900] - 2026-08-29
+
+### Added
+- Desktop: the Worker drawer now shows the branch's pull-request status (number and state) with an Open PR action
+- Nexus A2A transport: run worker↔copilot messaging and attention over the nexus message plane, including cross-machine delivery
+- Track orchestration runs over the nexus tracking plane
+- Certificate-based agent authentication (mTLS agent identity) for the nexus VFS client and the shipped app
+
+### Fixed
+- Make nexus stream creation idempotent and collect frames per-frame so multi-message and fan-out delivery stay reliable
+
+### Changed
+- Internal refactors extracting the run-tracking and mailbox-tail registries; removed the superseded terminal-bridge and a2a-mailbox spikes
+
 ## [0.3.2026072000] - 2026-07-20
 
 ### Added
