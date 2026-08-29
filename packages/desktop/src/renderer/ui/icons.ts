@@ -4,6 +4,7 @@ export {
   ChevronRight,
   Copy,
   Ellipsis,
+  ExternalLink,
   Folder,
   GitBranch,
   GitCompareArrows,

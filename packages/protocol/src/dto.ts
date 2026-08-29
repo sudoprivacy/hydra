@@ -346,14 +346,19 @@ export interface FileSnapshot {
 
 // ── gitStatus ── (APP-INTERNAL: not a CLI verb, absent from cli-contract.md)
 //
-// Powers the sidebar `U:N` token. The sidecar runs `git status --porcelain` in
-// each CODE worker's worktree and returns the changed-file count; task workers
-// and copilots are skipped. The renderer polls this on an interval, so it is a
-// board OVERLAY, never part of the listSessions snapshot.
+// Powers the sidebar `U:N` token and the worker context PR line. The sidecar
+// runs `git status --porcelain` in each CODE worker's worktree for the changed
+// count, and `gh pr list` once per repo (matched by branch) for the PR overlay;
+// task workers and copilots are skipped. The renderer polls this on an interval,
+// so it is a board OVERLAY, never part of the listSessions snapshot.
 
 export interface GitChangeStatus {
   /** `git status --porcelain` line count: modified + added + untracked. */
   changed: number;
+  /** Open/closed/merged PR for this worker's branch, if `gh` finds one. */
+  prNumber?: number;
+  prState?: 'open' | 'closed' | 'merged';
+  prUrl?: string;
 }
 
 /** Keyed by session; only code workers with a worktree appear. */

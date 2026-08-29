@@ -14,7 +14,11 @@ import {
   runtimeLabel,
   StateDot,
 } from './ContextPrimitives';
-import { Pencil, Play, Send, Square, Trash2 } from '../ui/icons';
+import { ExternalLink, Pencil, Play, Send, Square, Trash2 } from '../ui/icons';
+
+function openPr(url: string): void {
+  void window.hydra.openExternal(url).catch(() => {});
+}
 
 export function WorkerContext({
   context,
@@ -52,6 +56,19 @@ export function WorkerContext({
             value: worker.type === 'code' ? worker.repoLabel : worker.name,
           },
           { label: 'Branch', value: worker.branch || 'Not applicable' },
+          {
+            label: 'Pull Request',
+            value: worker.prNumber && worker.prUrl ? (
+              <button
+                type="button"
+                className="hydra-context__text-action"
+                title={worker.prUrl}
+                onClick={() => openPr(worker.prUrl!)}
+              >
+                PR #{worker.prNumber} · {worker.prState}
+              </button>
+            ) : worker.type === 'code' ? 'None' : 'Not applicable',
+          },
           {
             label: 'Workdir',
             value: worker.workdir ? <CopyValue value={worker.workdir} /> : 'Unavailable',
@@ -102,6 +119,14 @@ export function WorkerContext({
       </details>
 
       <ContextActions>
+        {worker.prNumber && worker.prUrl ? (
+          <ContextActionButton
+            icon={<ExternalLink size={15} />}
+            title="Open PR"
+            description={`Open pull request #${worker.prNumber} on GitHub`}
+            onClick={() => openPr(worker.prUrl!)}
+          />
+        ) : null}
         <ContextActionButton
           icon={<Send size={15} />}
           title="Send message"

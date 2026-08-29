@@ -29,6 +29,9 @@ export interface WorkerControlRow {
   readonly activeAttentionCount: number;
   readonly completed: boolean;
   readonly changed: number | null;
+  readonly prNumber: number | null;
+  readonly prState: 'open' | 'closed' | 'merged' | null;
+  readonly prUrl: string | null;
   readonly attached: boolean;
   readonly workdir: string | null;
   readonly parentCopilotSession: string | null;
@@ -256,6 +259,7 @@ function toWorkerControlRow(
     .map(cloneOccurrence);
   const unreadCount = countUnread(occurrences);
   const activeAttentionCount = occurrences.filter(isAttentionOccurrence).length;
+  const gitStatus = worker.type === 'code' ? model.gitStatusBySession[worker.session] : undefined;
   return {
     kind: 'worker',
     workerId: worker.number,
@@ -274,9 +278,10 @@ function toWorkerControlRow(
     activeAttentionCount,
     completed: runtimeState !== 'running'
       && occurrences.some(occurrence => occurrence.kind === 'complete' && occurrence.readAt === null),
-    changed: worker.type === 'code'
-      ? model.gitStatusBySession[worker.session]?.changed ?? null
-      : null,
+    changed: gitStatus?.changed ?? null,
+    prNumber: gitStatus?.prNumber ?? null,
+    prState: gitStatus?.prState ?? null,
+    prUrl: gitStatus?.prUrl ?? null,
     attached: worker.attached,
     workdir: worker.workdir,
     parentCopilotSession: worker.copilotSessionName,
