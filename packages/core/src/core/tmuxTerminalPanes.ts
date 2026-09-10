@@ -13,6 +13,21 @@ import type {
 const FIELD_SEPARATOR = '\u001f';
 const MAX_PANES = 4;
 
+/**
+ * psmux on Windows does not support custom pane-scoped options (set-option -p
+ * @hydra-*). When this returns true, pane metadata is stored in a
+ * session-scoped JSON map instead.
+ */
+function isPsmux(): boolean {
+  return process.platform === 'win32';
+}
+
+interface PaneMeta {
+  role?: string;
+  label?: string;
+  requestId?: string;
+}
+
 interface RawPane {
   sessionName: string;
   windowId: string;
@@ -205,12 +220,11 @@ export class TmuxTerminalPaneController implements TerminalPaneController {
         throw new Error(`tmux did not return a pane ID while creating ${label}`);
       }
 
-      await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-role', 'shell']);
-      await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-label', label]);
-      await runTmux([
-        'set-option', '-p', '-t', paneId,
-        '@hydra-pane-request-id', options.requestId,
-      ]);
+      await this.setPaneMeta(sessionName, paneId, {
+        role: 'shell',
+        label,
+        requestId: options.requestId,
+      });
       await runTmux(['select-pane', '-t', paneId, '-T', paneTitle]);
       await this.updatePaneBorders(agentPane.windowId, managedWindow.length + 1);
 
@@ -282,6 +296,7 @@ export class TmuxTerminalPaneController implements TerminalPaneController {
     }
 
     await runTmux(['kill-pane', '-t', paneId]);
+    await this.removePaneMeta(sessionName, paneId);
     if (current.active) {
       await runTmux(['select-window', '-t', agentPane.windowId]);
       await runTmux(['select-pane', '-t', agentPaneId]);
@@ -297,9 +312,97 @@ export class TmuxTerminalPaneController implements TerminalPaneController {
 
   private async markAgentPane(sessionName: string, paneId: string, label: string): Promise<void> {
     await runTmux(['set-option', '-t', sessionName, '@hydra-agent-pane', paneId]);
-    await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-role', 'agent']);
-    await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-label', label]);
+    await this.setPaneMeta(sessionName, paneId, { role: 'agent', label });
     await runTmux(['select-pane', '-t', paneId, '-T', label]);
+  }
+
+  /**
+   * Persist per-pane metadata.  On real tmux, each field is stored as a custom
+   * pane option (`set-option -p`).  On psmux (Windows) custom pane options are
+   * not supported, so all fields are packed into a session-scoped JSON map
+   * (`@hydra-pane-meta`) keyed by pane id.
+   */
+  private async setPaneMeta(sessionName: string, paneId: string, meta: PaneMeta): Promise<void> {
+    if (isPsmux()) {
+      const map = await this.readSessionPaneMeta(sessionName);
+      map[paneId] = { ...map[paneId], ...meta };
+      await runTmux([
+        'set-option', '-t', sessionName,
+        '@hydra-pane-meta', JSON.stringify(map),
+      ]);
+    } else {
+      if (meta.role !== undefined) {
+        await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-role', meta.role]);
+      }
+      if (meta.label !== undefined) {
+        await runTmux(['set-option', '-p', '-t', paneId, '@hydra-pane-label', meta.label]);
+      }
+      if (meta.requestId !== undefined) {
+        await runTmux([
+          'set-option', '-p', '-t', paneId,
+          '@hydra-pane-request-id', meta.requestId,
+        ]);
+      }
+    }
+  }
+
+  /** Remove a pane's entry from the session-scoped metadata map (psmux only). */
+  private async removePaneMeta(sessionName: string, paneId: string): Promise<void> {
+    if (!isPsmux()) return;
+    try {
+      const map = await this.readSessionPaneMeta(sessionName);
+      if (!(paneId in map)) return;
+      delete map[paneId];
+      if (Object.keys(map).length === 0) {
+        await runTmux([
+          'set-option', '-u', '-t', sessionName, '@hydra-pane-meta',
+        ]);
+      } else {
+        await runTmux([
+          'set-option', '-t', sessionName,
+          '@hydra-pane-meta', JSON.stringify(map),
+        ]);
+      }
+    } catch {
+      // Best-effort cleanup; the pane is already gone.
+    }
+  }
+
+  /** Read the session-scoped `@hydra-pane-meta` JSON map, returning {} on missing/corrupt data. */
+  private async readSessionPaneMeta(sessionName: string): Promise<Record<string, PaneMeta>> {
+    try {
+      const raw = await runTmux(
+        ['show-options', '-qv', '-t', sessionName, '@hydra-pane-meta'],
+        { logFailure: false },
+      );
+      if (raw) return JSON.parse(raw) as Record<string, PaneMeta>;
+    } catch {
+      // Missing or corrupt — start fresh.
+    }
+    return {};
+  }
+
+  /**
+   * On psmux, per-pane format variables (`#{@hydra-pane-role}` etc.) resolve to
+   * empty strings.  Fill in role/label/requestId from the session-scoped JSON
+   * map so that pane classification works identically to real tmux.
+   */
+  private async enrichFromSessionMeta(panes: RawPane[]): Promise<void> {
+    const sessionNames = [...new Set(panes.map(p => p.sessionName))];
+    const metaBySession = new Map<string, Record<string, PaneMeta>>();
+    await Promise.all(sessionNames.map(async (name) => {
+      const map = await this.readSessionPaneMeta(name);
+      if (Object.keys(map).length > 0) metaBySession.set(name, map);
+    }));
+    for (const pane of panes) {
+      const sessionMeta = metaBySession.get(pane.sessionName);
+      if (!sessionMeta) continue;
+      const meta = sessionMeta[pane.paneId];
+      if (!meta) continue;
+      if (!pane.role && meta.role) pane.role = meta.role;
+      if (!pane.label && meta.label) pane.label = meta.label;
+      if (!pane.requestId && meta.requestId) pane.requestId = meta.requestId;
+    }
   }
 
   private async listRawPanes(): Promise<RawPane[]> {
@@ -317,10 +420,19 @@ export class TmuxTerminalPaneController implements TerminalPaneController {
       '#{@hydra-pane-request-id}',
     ].join(FIELD_SEPARATOR);
     const output = await runTmux(['list-panes', '-a', '-F', format]);
-    return output.split('\n')
+    const panes = output.split('\n')
       .filter(Boolean)
       .map(parseRawPane)
       .filter((pane): pane is RawPane => pane !== undefined);
+
+    // On psmux (Windows) the per-pane format variables above resolve to empty
+    // strings because psmux does not support custom pane-scoped options.
+    // Hydrate role/label/requestId from the session-scoped JSON map instead.
+    if (isPsmux()) {
+      await this.enrichFromSessionMeta(panes);
+    }
+
+    return panes;
   }
 
   private async resolveTargetInAgentWindow(
