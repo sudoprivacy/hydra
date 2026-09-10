@@ -61,6 +61,7 @@
     "smoke:desktop-release": "npm run smoke:release-config -w @hydra/desktop && npm run smoke:desktop-cli",
     "smoke:terminal": "node packages/sidecar/out/smoke/terminalSmoke.js",
     "smoke:terminal-panes": "node packages/core/out/smoke/terminalPanesSmoke.js",
+    "smoke:terminal-panes-psmux": "node packages/core/out/smoke/terminalPanesPsmuxSmoke.js",
     "smoke:events-cli": "node packages/cli/out/smoke/eventsCliSmoke.js",
     "smoke:event-hub": "node packages/core/out/smoke/eventHubSmoke.js",
     "smoke:wave5-migration": "node packages/core/out/smoke/wave5MigrationSmoke.js",
