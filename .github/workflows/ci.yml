@@ -26,6 +26,9 @@ jobs:
     - name: Compile
       run: npm run compile
 
+    - name: Structured ACP runtime
+      run: npm run test:agent-runtime
+
   test-windows:
     runs-on: windows-latest
     steps:
@@ -41,6 +44,9 @@ jobs:
 
     - name: Compile
       run: npm run compile
+
+    - name: Structured ACP runtime
+      run: npm run test:agent-runtime
 
     - name: Test fixWindowsSymlinks (synthetic)
       shell: pwsh

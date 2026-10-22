@@ -2,6 +2,11 @@
 
 Status: v1 implementation plan for issue #162.
 
+This document describes the terminal integration. The separate optional
+[structured scode ACP runtime](./scode-acp-runtime.md) now provides native
+session control through the persistent app service and foreground connector;
+the terminal workflow below remains available.
+
 This document describes the first production-ready integration of Sudo Code
 (`scode`) into Hydra's existing tmux-based agent model. It intentionally uses
 Sudo Code's ordinary interactive REPL mode, not ACP, so the change fits the

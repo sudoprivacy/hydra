@@ -15,6 +15,8 @@ import { registerConfigCommands } from './commands/config';
 import { registerNotifyCommands } from './commands/notify';
 import { registerEventsCommand } from './commands/events';
 import { registerHooksCommands } from './commands/hooks';
+import { registerAgentRuntimeCommands } from './commands/agentRuntime';
+import { shutdownCommand } from './commandLifetime';
 import { peekTelemetry } from '@hydra/core/telemetry';
 import { getHydraConfigPath, getHydraHome, getHydraLogFile } from '@hydra/core/path';
 import { getHostSummary, logger } from '@hydra/core/logger';
@@ -74,7 +76,9 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     logger.warn('cli.signal', 'Hydra CLI received signal', { signal });
     logger.flushSync();
-    process.exit(signal === 'SIGINT' ? 130 : 143);
+    void shutdownCommand().catch(error => {
+      logger.warn('cli.shutdown', 'Foreground runtime shutdown failed', { error: String(error) });
+    }).finally(() => process.exit(signal === 'SIGINT' ? 130 : 143));
   });
 }
 
@@ -91,5 +95,6 @@ registerConfigCommands(program);
 registerNotifyCommands(program);
 registerEventsCommand(program);
 registerHooksCommands(program);
+registerAgentRuntimeCommands(program);
 
 program.parse();

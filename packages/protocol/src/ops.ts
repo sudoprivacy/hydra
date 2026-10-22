@@ -12,6 +12,16 @@ export const Op = {
   listSessions: 'sessions.list',
   getCreationOptions: 'creation.options',
   listWorkerRuntimeV2: 'workerRuntime.v2.list',
+  // Optional structured ACP runtime; existing worker and terminal verbs keep their semantics.
+  connectAgentRuntime: 'agentRuntime.connect',
+  listAgentRuntimes: 'agentRuntime.list',
+  getAgentRuntime: 'agentRuntime.get',
+  getAgentRuntimeEvents: 'agentRuntime.events',
+  promptAgentRuntime: 'agentRuntime.prompt',
+  cancelAgentRuntime: 'agentRuntime.cancel',
+  stopAgentRuntime: 'agentRuntime.stop',
+  answerAgentRuntimePermission: 'agentRuntime.permission.answer',
+  answerAgentRuntimeQuestion: 'agentRuntime.question.answer',
   createWorker: 'worker.create',
   createCopilot: 'copilot.create',
   startSession: 'session.start',
@@ -45,6 +55,7 @@ export const Topic = {
   events: 'events',
   notifications: 'notifications',
   notificationOccurrencesV2: 'notifications-v2',
+  agentRuntimeEvents: 'agent-runtime-events',
 } as const;
 
 export type TopicName = (typeof Topic)[keyof typeof Topic];
