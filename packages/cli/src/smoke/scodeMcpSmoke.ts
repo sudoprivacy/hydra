@@ -64,6 +64,11 @@ async function checkMcp(scenario: string): Promise<void> {
       assert.match(JSON.stringify(output), ['legacy', 'missing-method'].includes(scenario) ? /not_submitted/ : /unknown/);
       assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length,
         scenario === 'legacy' ? 0 : 1, 'no fallback, duplicate request or blind retry');
+      if (scenario === 'loss') {
+        const status = await client.callTool({ name: 'scode_status', arguments: {} });
+        assert.equal(JSON.parse((status.content as Array<{text: string}>)[0].text).closed, true,
+          'a dead ACP child must not discard its pending Unknown response or respawn');
+      }
     }
     assert.equal(journal(log).filter(row => row.method === 'session/prompt').length, 0);
     assert.equal(journal(log).filter(row => row.method === 'session/load').length, 1);

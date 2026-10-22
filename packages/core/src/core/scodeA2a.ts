@@ -65,7 +65,7 @@ async function directRequest(
       }),
     ]);
     const result = record(response);
-    if (!result || typeof result.isError !== 'boolean' || !Array.isArray(result.content)
+    if (!result || typeof result.isError !== 'boolean' || !Array.isArray(result.content) || !result.content.length
         || !result.content.every(item => {
           const block = record(item);
           return block?.type === 'text' && typeof block.text === 'string';

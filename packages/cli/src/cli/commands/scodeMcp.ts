@@ -17,7 +17,7 @@ export interface ScodeMcpConfig extends ScodeAcpConfig {
 
 function readConfig(file: string): ScodeMcpConfig {
   const config = JSON.parse(readFileSync(path.resolve(file), 'utf8')) as ScodeMcpConfig;
-  if (!config || config.version !== 1 || !config.acpSessionId
+  if (!config || config.version !== 1 || typeof config.acpSessionId !== 'string' || !config.acpSessionId.trim()
       || typeof config.auditLog !== 'string' || !path.isAbsolute(config.auditLog)) {
     throw new Error('MCP config requires version:1, an existing acpSessionId and an absolute auditLog');
   }
@@ -136,13 +136,20 @@ export async function runScodeMcp(file: string): Promise<void> {
       inputSchema: {},
     }, async () => ({ content: [{ type: 'text' as const, text: JSON.stringify({
       pid: connection.pid, acpSessionId: connection.sessionId,
+      closed: connection.closed,
       directA2a: supportsScodeDirectA2a(connection) ? { version: 1 } : null,
       notifications: 'connection-lifetime',
     }) }] }));
     server.server.onclose = onEof;
     await server.connect(new StdioServerTransport());
     transportReady = true;
-    void connection.exited.then(() => stop()).catch(error => process.stderr.write(`${String(error)}\n`));
+    // Keep MCP available to return Unknown for in-flight calls and report the
+    // closed owner. Closing it here could discard the very error response the
+    // caller needs. Reconnection remains an explicit owner action.
+    void connection.exited.then(async exit => {
+      try { audit({ phase: 'child_exited', sessionId: connection.sessionId, pid: connection.pid, ...exit }); }
+      finally { await callback?.close(); }
+    }).catch(error => process.stderr.write(`${String(error)}\n`));
     await finished;
   } finally {
     await stop();

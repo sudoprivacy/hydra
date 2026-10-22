@@ -25,7 +25,7 @@ const app = acp.agent({ name: 'hydra-direct-fixture', version: '1' })
     log({ method: '_sudocode/a2a/send', input: ctx.params });
     if (scenario === 'missing-method') throw acp.RequestError.methodNotFound('_sudocode/a2a/send');
     if (ctx.params.sessionId !== sessionId) throw new Error('Unknown native session');
-    if (scenario === 'loss') process.exit(17); // Append journal exists, response is lost.
+    if (scenario === 'loss') process.exit(17); // Request journal exists, response is lost.
     if (scenario === 'malformed') return { queued: true };
     return result({ success: true, routing: { sender: 'bound-fixture-actor', to: ctx.params.to }, text: ctx.params.message });
   })

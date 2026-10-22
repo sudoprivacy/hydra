@@ -193,6 +193,9 @@ and capability. An installed bridge with an old scode still supports prompts;
 direct tools return an explicit unsupported error. Install both compatible
 versions before relying on direct tools, then reconnect/restart the original
 controller. No Nexus upgrade is needed for this ACP extension.
+If the owned scode exits, MCP stays available to report `closed:true` and return
+in-flight errors. It does not respawn the agent or discard an Unknown result;
+reconnection remains an explicit owner action.
 
 Permissions requiring a client decision are cancelled by this MCP entry; it
 does not auto-approve or change the outer controller's approval policy. Use the
