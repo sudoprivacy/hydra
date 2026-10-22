@@ -105,7 +105,8 @@
     "smoke:agent-runtime": "node packages/core/out/smoke/agentRuntimeSmoke.js",
     "smoke:agent-runtime-service": "node packages/sidecar/out/smoke/agentRuntimeServiceSmoke.js",
     "smoke:agent-runtime-cli": "node packages/cli/out/smoke/agentRuntimeCliSmoke.js",
-    "test:agent-runtime": "npm run smoke:scode-acp && npm run smoke:agent-runtime && npm run smoke:agent-runtime-service && npm run smoke:agent-runtime-cli"
+    "smoke:scode-mcp": "node packages/cli/out/smoke/scodeMcpSmoke.js",
+    "test:agent-runtime": "npm run smoke:scode-acp && npm run smoke:agent-runtime && npm run smoke:agent-runtime-service && npm run smoke:agent-runtime-cli && npm run smoke:scode-mcp"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -128,6 +128,114 @@ identity as a side effect. Prepare any required existing agent credential using
 the node owner's established procedure. Connecting fails according to scode's
 native attach rules when a credential is missing.
 
+## Direct A2A and controller MCP
+
+Explicit messages do not need an inner model turn. The shared
+`@hydra/core/scodeA2a` module exports `sendScodeMessage(connection, input)` and
+`listScodeAgents(connection, options)`. Both use the existing connection and its
+loaded native session. They require initialize metadata
+`_meta.sudocode.directA2a = {"version":1}` and call the paired ACP extensions
+`_sudocode/a2a/send` and `_sudocode/a2a/agent_list`. An older scode produces an
+explicit compatibility error; the bridge never falls back to `session/prompt`.
+
+The send request carries only `sessionId`, `to`, a plain text `message` and an
+optional `summary`. The host binds the actor and namespace. No sender override,
+credential, arbitrary tool name or structured agent-control object is accepted.
+The scode implementation must reuse its engine command seam, tool scheduler,
+hooks, permissions, allowed tools and actual mailbox. Pause and active-turn
+refusals occur before execution; a busy send is not queued behind a model turn.
+
+A result is the real tool output as `{content:[{type:"text",text:...}],isError}`.
+Queue admission is not success. Preserve its text, including append/routing
+details and uncertain outcomes. After submission, a lost response, disconnect,
+timeout or malformed result is **Unknown**: do not automatically retry or send
+the same instruction through a model. `isError` alone does not prove an append
+did not happen. The bridge has no exactly-once or delivery guarantee.
+
+Controllers can use the packaged MCP entry instead of a machine-specific MCP
+script:
+
+```sh
+hydra agent-runtime mcp --config /absolute/scode-mcp.json
+```
+
+```json
+{
+  "version": 1,
+  "scodeArgv": ["/absolute/pinned/scode", "acp"],
+  "workspace": "/absolute/project",
+  "acpSessionId": "existing-native-session-id",
+  "auditLog": "/absolute/private/scode-external-commands.jsonl"
+}
+```
+
+Prepare the existing native session once, using the normal scode CLI or the
+foreground connector, then record the real ID. Each controller owns its own
+stable scode actor and session. Close its previous owner before reconnecting;
+do not configure multiple controllers to load the same session. The MCP bridge
+does not create agents, mint credentials, start Nexus or alter `node.json`.
+
+For Codex, a project-scoped `.codex/config.toml` entry uses the ordinary
+[MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
+Replace the paths with those on that machine:
+
+```toml
+[mcp_servers.nexus_scode]
+command = "/absolute/hydra"
+args = ["agent-runtime", "mcp", "--config", "/absolute/scode-mcp.json"]
+required = false
+tool_timeout_sec = 90
+```
+
+This exposes `scode_prompt` for tasks, `scode_send` for exact text,
+`scode_agent_list` for directory queries and `scode_status` for bridge ownership
+and capability. An installed bridge with an old scode still supports prompts;
+direct tools return an explicit unsupported error. Install both compatible
+versions before relying on direct tools, then reconnect/restart the original
+controller. No Nexus upgrade is needed for this ACP extension.
+
+Permissions requiring a client decision are cancelled by this MCP entry; it
+does not auto-approve or change the outer controller's approval policy. Use the
+foreground connector's manual permission flow when interactive approval is
+needed. The external command audit records caller request IDs, native session,
+PID, input/output hashes and outcome separately from model history. It creates
+no synthetic model tool calls. Direct sends do not enter the inner model's
+context; a later peer reply may therefore lack conversational context there.
+
+Prompt results include a bounded `observedNotifications` collection without
+reasoning chunks. These are connection observations during the request, not a
+correlated final answer: native background activity can overlap a prompt.
+
+### Optional callback to an existing Codex thread
+
+MCP tool discovery alone does not wake an idle controller. For a native Codex
+app-server frontend which already has the original thread loaded, add:
+
+```json
+"codexCallback": {
+  "codexArgv": ["/absolute/codex"],
+  "socket": "/absolute/native-server.sock",
+  "threadId": "original-codex-thread-id",
+  "peers": ["approved-peer-name"],
+  "log": "/absolute/private/scode-callbacks.jsonl"
+}
+```
+
+The adapter connects through `codex app-server proxy`, forwards only matching
+native-session A2A messages from the configured peers, and uses `turn/start`
+when idle or `turn/steer` with the current turn ID when active. It never resumes
+or forks a thread, launches a second native server, or changes approval settings.
+An inherited `CODEX_THREAD_ID` must match the configured target. A callback
+failure stays pending in its log; ambiguous requests are not replayed. This
+experimental native [app-server API](https://learn.chatgpt.com/docs/app-server)
+must be checked against the installed Codex version.
+Protect config, audit, protocol and callback logs as private local files.
+
+The callback option assumes an existing app-server frontend. It is not a
+launcher or an npm patch, and a plain MCP configuration does not convert a
+different frontend into that mode. New-machine frontend provisioning and Nexus
+service enrollment are separate steps.
+
 ## Validation
 
 ```sh
@@ -137,6 +245,7 @@ npm run smoke:scode-acp
 npm run smoke:agent-runtime
 npm run smoke:agent-runtime-service
 npm run smoke:agent-runtime-cli
+npm run smoke:scode-mcp
 ```
 
 The ACP smoke uses a real official-SDK stdio peer for native loading, idle
@@ -144,3 +253,7 @@ notifications, permissions, questions, initialization failure and bounded stop.
 Registry/service tests cover ownership, subscription detach, input routing and
 the tmux/Nexus boundary. Real controller bridge adoption and cross-host wakeup
 receipts are deployment evidence, separate from these protocol fixtures.
+The MCP smoke runs an actual MCP client/server and ACP SDK stdio fixture,
+including response loss, strict inputs and absence of prompt fallback. It does
+not substitute for sudocode's real-engine, zero-inference and authorized Nexus
+append tests or a native Codex callback deployment receipt.

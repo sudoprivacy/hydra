@@ -18,9 +18,21 @@ interface ConnectOptions {
  * service. This is a Hydra control stream; ACP framing remains in the SDK core.
  */
 export function registerAgentRuntimeCommands(program: Command): void {
-  program.command('agent-runtime')
-    .description('Connect a foreground structured agent runtime (no terminal pane)')
-    .command('connect')
+  const runtime = program.command('agent-runtime')
+    .description('Connect a foreground structured agent runtime (no terminal pane)');
+  runtime.command('mcp')
+    .description('Expose the owned scode session as MCP tools over stdio')
+    .requiredOption('--config <file>', 'Private version-1 MCP launch configuration')
+    .action(async (options: { config: string }) => {
+      try {
+        const { runScodeMcp } = await import('./scodeMcp');
+        await runScodeMcp(options.config);
+      } catch (error) {
+        process.stderr.write(`Scode MCP failed: ${String(error)}\n`);
+        process.exitCode = 1;
+      }
+    });
+  runtime.command('connect')
     .requiredOption('--config <file>', 'JSON launch configuration: scodeArgv, workspace, optional acpSessionId/env/timeouts')
     .option('--id <id>', 'Runtime identifier for this foreground host', 'foreground')
     .option('--manual-permissions', 'Wait for explicit permission responses on stdin')
