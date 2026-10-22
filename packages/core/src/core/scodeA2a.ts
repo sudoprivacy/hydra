@@ -73,12 +73,12 @@ async function directRequest(
   } catch (error) {
     const remote = record(error);
     const code = typeof remote?.code === 'number' ? remote.code : undefined;
-    // These JSON-RPC rejections precede execution. Other errors, including
-    // transport loss, remain Unknown unless the caller inspects native evidence.
-    const outcome = code === -32601 || code === -32602 ? 'not_submitted' : 'unknown';
+    // A generic JSON-RPC code does not attest to execution/admission phase.
+    // Keep every remote error Unknown until there is a verified typed refusal
+    // contract. Only local preflight above can assert not_submitted.
     throw new ScodeA2aError(
-      `${error instanceof Error ? error.message : String(error)}${outcome === 'unknown' ? '; outcome unknown, do not automatically resend' : ''}`,
-      outcome, code === undefined ? undefined : { code, data: remote?.data },
+      `${error instanceof Error ? error.message : String(error)}; outcome unknown, do not automatically resend`,
+      'unknown', code === undefined ? undefined : { code, data: remote?.data },
     );
   } finally { clearTimeout(timer); }
 }

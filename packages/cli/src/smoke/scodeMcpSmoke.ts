@@ -63,7 +63,7 @@ async function checkMcp(scenario: string): Promise<void> {
       assert.equal(journal(auditLog).filter(row => row.phase === 'returned').length, 2);
     } else {
       assert.equal(output.isError, true);
-      assert.match(JSON.stringify(output), ['legacy', 'missing-method'].includes(scenario) ? /not_submitted/ : /unknown/);
+      assert.match(JSON.stringify(output), scenario === 'legacy' ? /not_submitted/ : /unknown/);
       assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length,
         scenario === 'legacy' ? 0 : 1, 'no fallback, duplicate request or blind retry');
       if (scenario === 'loss') {
@@ -79,7 +79,7 @@ async function checkMcp(scenario: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'loss', 'malformed']) await checkMcp(scenario);
+  for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'remote-invalid-params', 'loss', 'malformed']) await checkMcp(scenario);
   // The same public helper rejects injected fields even outside the MCP schema.
   const log = path.join(directory, 'helper-fixture.jsonl');
   const connection = await connectScode({ scodeArgv: [process.execPath, fixture], workspace: directory,

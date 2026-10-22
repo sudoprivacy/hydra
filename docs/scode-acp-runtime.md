@@ -153,6 +153,9 @@ details and uncertain outcomes. After submission, a lost response, disconnect,
 timeout or malformed result is **Unknown**: do not automatically retry or send
 the same instruction through a model. `isError` alone does not prove an append
 did not happen. The bridge has no exactly-once or delivery guarantee.
+Generic remote JSON-RPC error codes do not attest to admission phase and are
+also reported as Unknown. Only local preflight can assert `not_submitted`
+until a typed, independently verified refusal contract is available.
 
 Controllers can use the packaged MCP entry instead of a machine-specific MCP
 script:
