@@ -26,6 +26,13 @@ jobs:
     - name: Compile
       run: npm run compile
 
+    - name: Structured ACP runtime
+      run: |
+        npm run smoke:scode-acp
+        npm run smoke:agent-runtime
+        npm run smoke:agent-runtime-service
+        npm run smoke:agent-runtime-cli
+
   test-windows:
     runs-on: windows-latest
     steps:
@@ -41,6 +48,13 @@ jobs:
 
     - name: Compile
       run: npm run compile
+
+    - name: Structured ACP runtime
+      run: |
+        npm run smoke:scode-acp
+        npm run smoke:agent-runtime
+        npm run smoke:agent-runtime-service
+        npm run smoke:agent-runtime-cli
 
     - name: Test fixWindowsSymlinks (synthetic)
       shell: pwsh
