@@ -48,6 +48,8 @@ async function checkMcp(scenario: string): Promise<void> {
     if (scenario === 'normal' || scenario === 'packaged') {
       assert.equal(output.isError, false);
       assert.ok(JSON.stringify(output).includes('bound-fixture-actor'));
+      assert.equal(JSON.parse((output.content as Array<{text: string}>)[0].text).text, text,
+        'MCP wraps the native string once without rewriting or double encoding');
       assert.equal((journal(log).find(row => row.method === '_sudocode/a2a/send')?.input as {message: string}).message, text);
       await client.callTool({ name: 'scode_agent_list', arguments: { activeOnly: false } });
       const forged = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: 'bad', sender: 'other' } });

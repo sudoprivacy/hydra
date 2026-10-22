@@ -145,7 +145,9 @@ The scode implementation must reuse its engine command seam, tool scheduler,
 hooks, permissions, allowed tools and actual mailbox. Pause and active-turn
 refusals occur before execution; a busy send is not queued behind a model turn.
 
-A result is the real tool output as `{content:[{type:"text",text:...}],isError}`.
+A result is the real tool output as `{content:string,isError:boolean}`. The MCP
+entry wraps that unchanged string in one text content block; the shared ACP
+helper returns the native result directly.
 Queue admission is not success. Preserve its text, including append/routing
 details and uncertain outcomes. After submission, a lost response, disconnect,
 timeout or malformed result is **Unknown**: do not automatically retry or send

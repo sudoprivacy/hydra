@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { connectScode, type ScodeAcpConfig, type ScodeConnection } from '@hydra/core/scodeAcp';
-import { listScodeAgents, sendScodeMessage, supportsScodeDirectA2a, ScodeA2aError } from '@hydra/core/scodeA2a';
+import { listScodeAgents, sendScodeMessage, supportsScodeDirectA2a, ScodeA2aError, type ScodeA2aResult } from '@hydra/core/scodeA2a';
 import { registerCommandShutdown } from '../commandLifetime';
 import { connectCodexCallback, type CodexCallback, type CodexCallbackConfig } from './scodeCodexCallback';
 
@@ -96,7 +96,7 @@ export async function runScodeMcp(file: string): Promise<void> {
       } finally { promptActive = false; observed = undefined; }
     });
     const external = async (method: string, input: unknown, requestId: string | number,
-      action: () => Promise<{ content: Array<{ type: 'text'; text: string }>; isError: boolean }>) => {
+      action: () => Promise<ScodeA2aResult>) => {
       const id = randomUUID();
       const base = { id, requestId, method, sessionId: connection.sessionId, pid: connection.pid };
       try {
@@ -113,7 +113,9 @@ export async function runScodeMcp(file: string): Promise<void> {
           // with a definite failure which might invite an automatic resend.
           process.stderr.write(`External command ${id} result audit failed: ${String(error)}\n`);
         }
-        return result;
+        // ACP returns the native tool string. Only the MCP boundary wraps it
+        // in a text block; never JSON-stringify or rewrite the tool output.
+        return { content: [{ type: 'text' as const, text: result.content }], isError: result.isError };
       } catch (error) {
         const report = { outcome: error instanceof ScodeA2aError ? error.outcome : 'unknown',
           error: String(error), rpcError: error instanceof ScodeA2aError ? error.rpcError : undefined,

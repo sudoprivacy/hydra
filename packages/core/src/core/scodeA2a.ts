@@ -13,7 +13,7 @@ export interface ScodeMessage {
 
 /** The real tool output, not a queued-command acknowledgement or delivery claim. */
 export interface ScodeA2aResult {
-  content: Array<{ type: 'text'; text: string }>;
+  content: string;
   isError: boolean;
 }
 
@@ -65,11 +65,7 @@ async function directRequest(
       }),
     ]);
     const result = record(response);
-    if (!result || typeof result.isError !== 'boolean' || !Array.isArray(result.content) || !result.content.length
-        || !result.content.every(item => {
-          const block = record(item);
-          return block?.type === 'text' && typeof block.text === 'string';
-        })) {
+    if (!result || typeof result.isError !== 'boolean' || typeof result.content !== 'string') {
       throw new Error('Invalid direct A2A result; execution may already have completed');
     }
     // Do not reinterpret isError or a tool's text as proof that no append occurred.

@@ -8,7 +8,7 @@ const scenario = process.argv[2] ?? 'normal';
 const journal = process.env.HYDRA_DIRECT_FIXTURE_JOURNAL;
 const log = entry => appendFileSync(journal, JSON.stringify({ pid: process.pid, ...entry })+'\n');
 let sessionId;
-const result = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false });
+const result = value => ({ content: JSON.stringify(value), isError: false });
 const app = acp.agent({ name: 'hydra-direct-fixture', version: '1' })
   .onRequest(acp.methods.agent.initialize, () => ({ protocolVersion: 1, agentCapabilities: { loadSession: true },
     ...(scenario === 'legacy' ? {} : { _meta: { sudocode: { directA2a: { version: 1 } } } }),
