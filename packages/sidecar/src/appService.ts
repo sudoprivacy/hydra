@@ -88,12 +88,21 @@ import { CopilotInboundBridge } from '@hydra/core/copilotInboundBridge';
 import { RunTrackingRegistry } from '@hydra/core/runTrackingRegistry';
 import { resolveHostPid } from '@hydra/core/hostPid';
 import { SessionTerminalService } from '@hydra/core/sessionTerminalService';
+import { AgentRuntimeRegistry, type AgentRuntime } from '@hydra/core/agentRuntime';
 
 import { collectCodeWorkerGitStatus } from './gitStatus';
 
 import {
   Op,
   Topic,
+  type AgentRuntimeActionResult,
+  type AgentRuntimeConnectInput,
+  type AgentRuntimeEvent,
+  type AgentRuntimeEventInput,
+  type AgentRuntimeEventListResult,
+  type AgentRuntimePromptInput,
+  type AgentRuntimePromptResult,
+  type AgentRuntimeSnapshot,
   type HydraAppService as HydraAppServiceApi,
   type BroadcastPayload,
   type BroadcastResult,
@@ -150,6 +159,10 @@ import {
 } from '@hydra/protocol';
 
 const DEFAULT_LOG_LINES = 50;
+const DEFAULT_AGENT_RUNTIME_SHUTDOWN_MS = 5000;
+const MAX_AGENT_RUNTIME_STREAMS = 64;
+const MAX_AGENT_RUNTIME_EVENTS = 128;
+const MAX_AGENT_RUNTIME_BYTES = 1024 * 1024;
 const MAX_NOTIFICATION_SESSION_LENGTH = 200;
 const MAX_NOTIFICATION_OCCURRENCE_LIMIT = 1000;
 const NOTIFICATION_KINDS = new Set<NotificationKind>([
@@ -171,6 +184,15 @@ interface NotificationOccurrenceSubscriber {
   readonly stream: AsyncPushIterator<NotificationOccurrenceSnapshotV2>;
 }
 
+/** The injected registry is owned and stopped by this service, just like the default registry. */
+export type AppAgentRuntimeRegistry = Pick<AgentRuntimeRegistry, 'connect' | 'get' | 'list' | 'stop' | 'stopAll'>;
+
+interface AgentRuntimeSubscriber {
+  readonly runtimeId: string;
+  readonly runtime: AgentRuntime;
+  readonly stream: AgentRuntimeEventStream;
+}
+
 export interface HydraAppServiceOptions {
   /** Multiplexer backend. Defaults to the real tmux backend. Tests inject a fake. */
   backend?: MultiplexerBackendCore;
@@ -182,6 +204,9 @@ export interface HydraAppServiceOptions {
   eventHub?: EventHub;
   notificationStateService?: NotificationStateService;
   diffService?: DiffService;
+  agentRuntimeRegistry?: AppAgentRuntimeRegistry;
+  /** Upper bound for service shutdown, including an injected connector that fails to close. */
+  agentRuntimeShutdownTimeoutMs?: number;
   /**
    * Source stamped on sidecar-originated notification events. Must be a value
    * from the fixed `HydraEventSource` enum (contract). The sidecar hosts the
@@ -212,8 +237,17 @@ export class HydraAppService implements HydraAppServiceApi {
   private readonly notificationOccurrenceStreams = new Set<NotificationOccurrenceSubscriber>();
   private notificationStateSubscription: { dispose(): void } | undefined;
   private notificationStateInitialized = false;
+  private readonly agentRuntimeRegistry: AppAgentRuntimeRegistry;
+  private readonly agentRuntimeShutdownTimeoutMs: number;
+  private readonly agentRuntimeStreams = new Set<AgentRuntimeSubscriber>();
+  private disposed = false;
+  private disposePromise: Promise<void> | undefined;
 
   constructor(options: HydraAppServiceOptions = {}) {
+    this.agentRuntimeRegistry = options.agentRuntimeRegistry ?? new AgentRuntimeRegistry();
+    this.agentRuntimeShutdownTimeoutMs = validateRuntimeTimeout(
+      options.agentRuntimeShutdownTimeoutMs, 'agentRuntimeShutdownTimeoutMs', 120000,
+    ) ?? DEFAULT_AGENT_RUNTIME_SHUTDOWN_MS;
     this.backend = options.backend ?? new TmuxBackendCore();
     this.eventLog = options.eventLog ?? new EventLog();
     this.runtimeStateStore = options.runtimeStateStore ?? new WorkerRuntimeStateStore(undefined, this.eventLog);
@@ -284,11 +318,15 @@ export class HydraAppService implements HydraAppServiceApi {
   // omitted here (optional params may be dropped by an implementer) and wired in
   // when the loopback server / hydrad enforce it. See FINAL.md §"Security".
   async request<TReq, TRes>(op: string, payload: TReq): Promise<TRes> {
+    this.assertNotDisposed();
     return (await this.dispatch(op, payload)) as TRes;
   }
 
   stream<TReq, TEvt>(topic: string, payload: TReq): AsyncIterable<TEvt> {
+    this.assertNotDisposed();
     switch (topic) {
+      case Topic.agentRuntimeEvents:
+        return this.subscribeAgentRuntimeEvents(payload) as AsyncIterable<TEvt>;
       case Topic.events:
         return this.subscribeEvents((payload ?? {}) as EventSubscribeInput) as AsyncIterable<TEvt>;
       case Topic.notifications:
@@ -302,13 +340,24 @@ export class HydraAppService implements HydraAppServiceApi {
     }
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposed = true;
     this.notificationMailboxMirror?.dispose();
     this.copilotInboundBridge?.dispose();
     this.eventHub.dispose();
     for (const stream of [...this.notificationStreams]) stream.close();
     for (const subscriber of [...this.notificationOccurrenceStreams]) subscriber.stream.close();
     this.stopNotificationState();
+    for (const subscriber of [...this.agentRuntimeStreams]) subscriber.stream.close();
+    this.disposePromise = boundedRuntimeShutdown(
+      Promise.resolve().then(() => this.agentRuntimeRegistry.stopAll()),
+      this.agentRuntimeShutdownTimeoutMs,
+    );
+    // Existing in-process hosts may dispose synchronously. Keep rejection observable
+    // to awaiting hosts without causing an unhandled rejection in those callers.
+    void this.disposePromise.catch(() => {});
+    return this.disposePromise;
   }
 
   openTerminal(input: TerminalAttachInput): TerminalChannel {
@@ -327,6 +376,26 @@ export class HydraAppService implements HydraAppServiceApi {
 
   private async dispatch(op: string, payload: unknown): Promise<unknown> {
     switch (op) {
+      case Op.connectAgentRuntime:
+        return this.connectAgentRuntime(payload);
+      case Op.listAgentRuntimes: {
+        const runtimes = this.agentRuntimeRegistry.list();
+        return { runtimes, count: runtimes.length };
+      }
+      case Op.getAgentRuntime:
+        return this.requireAgentRuntime(validateRuntimeTarget(payload)).snapshot();
+      case Op.getAgentRuntimeEvents:
+        return this.getAgentRuntimeEvents(payload);
+      case Op.promptAgentRuntime:
+        return this.promptAgentRuntime(payload);
+      case Op.cancelAgentRuntime:
+        return this.cancelAgentRuntime(payload);
+      case Op.stopAgentRuntime:
+        return this.stopAgentRuntime(payload);
+      case Op.answerAgentRuntimePermission:
+        return this.answerAgentRuntimePermission(payload);
+      case Op.answerAgentRuntimeQuestion:
+        return this.answerAgentRuntimeQuestion(payload);
       case Op.listSessions:
         return this.listSessions();
       case Op.getCreationOptions:
@@ -385,6 +454,107 @@ export class HydraAppService implements HydraAppServiceApi {
   }
 
   // ── handlers (each mirrors its CLI command's engine calls + JSON fields) ──
+
+  private async connectAgentRuntime(value: unknown): Promise<AgentRuntimeSnapshot> {
+    const input = validateRuntimeConnect(value);
+    const closeBudget = Math.max(1, Math.floor(this.agentRuntimeShutdownTimeoutMs * 0.75));
+    if (input.closeTimeoutMs !== undefined && input.closeTimeoutMs > closeBudget) {
+      throw new Error('closeTimeoutMs exceeds this host\'s shutdown budget');
+    }
+    const connecting = this.agentRuntimeRegistry.connect(input.id, {
+      workspace: input.workspace, scodeArgv: input.scodeArgv, env: input.env,
+      acpSessionId: input.acpSessionId,
+      startupTimeoutMs: input.startupTimeoutMs, closeTimeoutMs: input.closeTimeoutMs ?? Math.min(3000, closeBudget),
+    }, { permissionMode: input.permissionMode, inputMode: input.inputMode });
+    const ownedRuntime = this.agentRuntimeRegistry.get(input.id);
+    try {
+      const runtime = await connecting;
+      this.assertNotDisposed();
+      return runtime.snapshot();
+    } catch (error) {
+      if (ownedRuntime && this.agentRuntimeRegistry.get(input.id) !== ownedRuntime) {
+        this.closeAgentRuntimeStreams(ownedRuntime);
+      }
+      throw error;
+    }
+  }
+
+  private requireAgentRuntime(id: string): AgentRuntime {
+    const runtime = this.agentRuntimeRegistry.get(id);
+    if (!runtime) throw new Error(`Unknown agent runtime "${id}"`);
+    return runtime;
+  }
+
+  private getAgentRuntimeEvents(value: unknown): AgentRuntimeEventListResult {
+    const input = validateRuntimeEvents(value);
+    const runtime = this.requireAgentRuntime(input.id);
+    const events = runtime.events(input.afterSequence);
+    return { runtimeId: input.id, events, count: events.length, lastSequence: runtime.snapshot().lastSequence };
+  }
+
+  private async promptAgentRuntime(value: unknown): Promise<AgentRuntimePromptResult> {
+    const input = validateRuntimePrompt(value);
+    const result = await this.requireAgentRuntime(input.id).prompt(input.content);
+    return { runtimeId: input.id, result };
+  }
+
+  private async cancelAgentRuntime(value: unknown): Promise<AgentRuntimeActionResult> {
+    const id = validateRuntimeTarget(value);
+    await this.requireAgentRuntime(id).cancel();
+    return { runtimeId: id, status: 'cancel-requested' };
+  }
+
+  private async stopAgentRuntime(value: unknown): Promise<AgentRuntimeActionResult> {
+    const id = validateRuntimeTarget(value);
+    const runtime = this.requireAgentRuntime(id);
+    if (!await this.agentRuntimeRegistry.stop(id)) throw new Error(`Unknown agent runtime "${id}"`);
+    this.closeAgentRuntimeStreams(runtime);
+    return { runtimeId: id, status: 'stopped' };
+  }
+
+  private closeAgentRuntimeStreams(runtime: AgentRuntime): void {
+    for (const subscriber of [...this.agentRuntimeStreams]) {
+      if (subscriber.runtime === runtime) subscriber.stream.close();
+    }
+  }
+
+  private answerAgentRuntimePermission(value: unknown): AgentRuntimeActionResult {
+    const id = validateRuntimeTarget(value);
+    if (!isRecord(value)) throw new Error('agent runtime permission answer must be an object');
+    const requestId = runtimeString(value.requestId, 'requestId', 200);
+    const optionId = value.optionId === null ? null : runtimeString(value.optionId, 'optionId', 1000);
+    if (!this.requireAgentRuntime(id).respondToPermission(requestId, optionId)) {
+      throw new Error('Pending manual agent permission request not found');
+    }
+    return { runtimeId: id, status: 'answered' };
+  }
+
+  private answerAgentRuntimeQuestion(value: unknown): AgentRuntimeActionResult {
+    const id = validateRuntimeTarget(value);
+    if (!isRecord(value)) throw new Error('agent runtime question answer must be an object');
+    const requestId = runtimeString(value.requestId, 'requestId', 200);
+    if (value.answers !== null && (!Array.isArray(value.answers) || value.answers.length > 100)) {
+      throw new Error('answers must be null or an array of at most 100 answers');
+    }
+    const answers = value.answers === null ? null : (value.answers as unknown[]).map(answer => {
+      if (!isRecord(answer) || typeof answer.value !== 'string' || answer.value.length > 65536
+        || (answer.label !== undefined && answer.label !== null && typeof answer.label !== 'string')) {
+        throw new Error('Each question answer requires an id and string value');
+      }
+      return {
+        id: runtimeString(answer.id, 'answer.id', 1000), value: answer.value,
+        ...(answer.label !== undefined ? { label: answer.label as string | null } : {}),
+      };
+    });
+    if (!this.requireAgentRuntime(id).respondToQuestion(requestId, answers)) {
+      throw new Error('Pending manual agent question request not found');
+    }
+    return { runtimeId: id, status: 'answered' };
+  }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) throw new Error('HydraAppService is disposed');
+  }
 
   /** SessionManager.sync + WorkerRuntimeStateStore.get — mirrors `hydra list`. */
   private async listSessions(): Promise<HydraSessionList> {
@@ -899,6 +1069,27 @@ export class HydraAppService implements HydraAppServiceApi {
 
   // ── streams ──
 
+  private subscribeAgentRuntimeEvents(value: unknown): AsyncIterableIterator<AgentRuntimeEvent> {
+    const input = validateRuntimeEvents(value);
+    const runtime = this.requireAgentRuntime(input.id);
+    if (this.agentRuntimeStreams.size >= MAX_AGENT_RUNTIME_STREAMS) {
+      throw new Error('Too many agent runtime event subscribers');
+    }
+    let unsubscribe = () => {};
+    let subscriber: AgentRuntimeSubscriber;
+    const stream = new AgentRuntimeEventStream(() => {
+      unsubscribe();
+      this.agentRuntimeStreams.delete(subscriber);
+    });
+    subscriber = { runtimeId: input.id, runtime, stream };
+    this.agentRuntimeStreams.add(subscriber);
+    unsubscribe = runtime.subscribe(event => {
+      if (event.sequence > (input.afterSequence ?? 0)) stream.push(event);
+    }, { replay: true });
+    if (stream.isClosed) unsubscribe();
+    return stream;
+  }
+
   /**
    * EventHub drains retained history once, emits local appends synchronously,
    * and uses one seq-cursored tailer for CLI, extension, and hook writers.
@@ -1026,6 +1217,206 @@ export class HydraAppService implements HydraAppServiceApi {
     throw new Error(`Session "${session}" not found`);
   }
 
+}
+
+/** Slow consumers are detached rather than retaining unbounded ACP content. */
+class AgentRuntimeEventStream implements AsyncIterableIterator<AgentRuntimeEvent> {
+  private readonly queued: Array<{ event: AgentRuntimeEvent; bytes: number }> = [];
+  private readonly waiters: Array<{
+    resolve: (result: IteratorResult<AgentRuntimeEvent>) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  private bytes = 0;
+  private closed = false;
+  private failure: Error | undefined;
+
+  constructor(private readonly onClose: () => void) {}
+  get isClosed(): boolean { return this.closed; }
+  [Symbol.asyncIterator](): AsyncIterableIterator<AgentRuntimeEvent> { return this; }
+
+  next(): Promise<IteratorResult<AgentRuntimeEvent>> {
+    const queued = this.queued.shift();
+    if (queued) {
+      this.bytes -= queued.bytes;
+      return Promise.resolve({ value: queued.event, done: false });
+    }
+    if (this.failure) return Promise.reject(this.failure);
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
+  }
+
+  return(): Promise<IteratorResult<AgentRuntimeEvent>> {
+    this.close();
+    return Promise.resolve({ value: undefined, done: true });
+  }
+
+  throw(error?: unknown): Promise<IteratorResult<AgentRuntimeEvent>> {
+    this.close();
+    return Promise.reject(error);
+  }
+
+  push(event: AgentRuntimeEvent): void {
+    if (this.closed) return;
+    const waiter = this.waiters.shift();
+    if (waiter) { waiter.resolve({ value: event, done: false }); return; }
+    const bytes = Buffer.byteLength(JSON.stringify(event));
+    if (this.queued.length >= MAX_AGENT_RUNTIME_EVENTS || this.bytes + bytes > MAX_AGENT_RUNTIME_BYTES) {
+      this.close(new Error('Agent runtime event subscriber exceeded the bounded buffer; reconnect using afterSequence'));
+      return;
+    }
+    this.bytes += bytes;
+    this.queued.push({ event, bytes });
+  }
+
+  close(error?: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.failure = error;
+    this.queued.length = 0;
+    this.bytes = 0;
+    for (const waiter of this.waiters.splice(0)) {
+      if (error) waiter.reject(error); else waiter.resolve({ value: undefined, done: true });
+    }
+    this.onClose();
+  }
+}
+
+function runtimeString(value: unknown, label: string, maximum: number): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maximum || value.includes('\0')) {
+    throw new Error(`${label} must be a non-empty string of at most ${maximum} characters without NUL`);
+  }
+  return value;
+}
+
+function validateRuntimeTarget(value: unknown): string {
+  if (!isRecord(value)) throw new Error('agent runtime input must be an object');
+  const id = runtimeString(value.id, 'id', 128);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(id)) throw new Error('agent runtime id contains unsupported characters');
+  return id;
+}
+
+function validateRuntimeTimeout(value: unknown, label: string, maximum: number): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${label} must be a positive integer no greater than ${maximum}`);
+  }
+  return value;
+}
+
+function validateRuntimeConnect(value: unknown): AgentRuntimeConnectInput {
+  const id = validateRuntimeTarget(value);
+  if (!isRecord(value)) throw new Error('agent runtime input must be an object');
+  if (value.kind !== 'scode-acp') throw new Error(`Unsupported agent runtime kind "${String(value.kind)}"`);
+  const workspace = runtimeString(value.workspace, 'workspace', 32768);
+  if (!path.isAbsolute(workspace)) throw new Error('agent runtime workspace must be absolute');
+  if (!Array.isArray(value.scodeArgv) || !value.scodeArgv.length || value.scodeArgv.length > 256
+    || value.scodeArgv.some(arg => typeof arg !== 'string' || arg.includes('\0') || arg.length > 32768)) {
+    throw new Error('scodeArgv must be an array of 1 to 256 literal argv strings without NUL');
+  }
+  runtimeString(value.scodeArgv[0], 'scodeArgv executable', 32768);
+  const input: AgentRuntimeConnectInput = {
+    id, kind: 'scode-acp', workspace, scodeArgv: [...value.scodeArgv] as string[],
+  };
+  if (value.acpSessionId !== undefined) input.acpSessionId = runtimeString(value.acpSessionId, 'acpSessionId', 1000);
+  for (const key of ['permissionMode', 'inputMode'] as const) {
+    const mode = value[key];
+    if (mode !== undefined && mode !== 'cancel' && mode !== 'manual') throw new Error(`${key} must be cancel or manual`);
+    if (mode !== undefined) input[key] = mode;
+  }
+  input.startupTimeoutMs = validateRuntimeTimeout(value.startupTimeoutMs, 'startupTimeoutMs', 120000);
+  input.closeTimeoutMs = validateRuntimeTimeout(value.closeTimeoutMs, 'closeTimeoutMs', 30000);
+  if (value.env !== undefined) {
+    if (!isRecord(value.env) || Object.keys(value.env).length > 256) throw new Error('env must be an object with at most 256 entries');
+    input.env = {};
+    for (const [key, entry] of Object.entries(value.env)) {
+      if (!key || key.includes('=') || key.includes('\0')
+        || (entry !== null && (typeof entry !== 'string' || entry.includes('\0')))) {
+        throw new Error('env requires valid variable names and string or null values');
+      }
+      Object.defineProperty(input.env, key, { value: entry, enumerable: true, writable: true, configurable: true });
+    }
+  }
+  return input;
+}
+
+function validateRuntimeEvents(value: unknown): AgentRuntimeEventInput {
+  const id = validateRuntimeTarget(value);
+  const afterSequence = (value as Record<string, unknown>).afterSequence;
+  if (afterSequence !== undefined
+    && (typeof afterSequence !== 'number' || !Number.isSafeInteger(afterSequence) || afterSequence < 0)) {
+    throw new Error('afterSequence must be a non-negative safe integer');
+  }
+  return { id, afterSequence: afterSequence as number | undefined };
+}
+
+function validateRuntimePrompt(value: unknown): AgentRuntimePromptInput {
+  const id = validateRuntimeTarget(value);
+  const content = (value as Record<string, unknown>).content;
+  if (typeof content === 'string') {
+    if (!content.length || Buffer.byteLength(content) > 4 * MAX_AGENT_RUNTIME_BYTES) throw new Error('prompt content must contain 1 to 4194304 bytes');
+    return { id, content };
+  }
+  if (!Array.isArray(content) || !content.length || content.length > 256) {
+    throw new Error('prompt content must be a string or an array of 1 to 256 ACP content blocks');
+  }
+  let serialized: string;
+  try { serialized = JSON.stringify(content); } catch { throw new Error('ACP content blocks must be JSON serializable'); }
+  if (Buffer.byteLength(serialized) > 4 * MAX_AGENT_RUNTIME_BYTES) throw new Error('ACP content blocks exceed 4194304 bytes');
+  const blocks = JSON.parse(serialized) as unknown[];
+  for (const block of blocks) validateRuntimeContentBlock(block);
+  return { id, content: blocks as AgentRuntimePromptInput['content'] };
+}
+
+function validateRuntimeContentBlock(value: unknown): void {
+  if (!isRecord(value)) throw new Error('ACP content block must be an object');
+  if (value._meta !== undefined && value._meta !== null && !isRecord(value._meta)) throw new Error('ACP _meta must be an object');
+  if (value.annotations !== undefined && value.annotations !== null) {
+    const annotations = value.annotations;
+    if (!isRecord(annotations)
+      || (annotations._meta !== undefined && annotations._meta !== null && !isRecord(annotations._meta))
+      || (annotations.lastModified !== undefined && annotations.lastModified !== null && typeof annotations.lastModified !== 'string')
+      || (annotations.audience !== undefined && annotations.audience !== null
+        && (!Array.isArray(annotations.audience) || annotations.audience.some(role => role !== 'assistant' && role !== 'user')))
+      || (annotations.priority !== undefined && annotations.priority !== null
+        && (typeof annotations.priority !== 'number' || !Number.isFinite(annotations.priority) || annotations.priority < 0 || annotations.priority > 1))) {
+      throw new Error('Invalid ACP content annotations');
+    }
+  }
+  const requireString = (record: Record<string, unknown>, key: string) => {
+    if (typeof record[key] !== 'string') throw new Error(`ACP ${String(value.type)} content requires a string ${key}`);
+  };
+  for (const key of ['mimeType', 'uri', 'description', 'title'] as const) {
+    if (value[key] !== undefined && value[key] !== null && typeof value[key] !== 'string') throw new Error(`ACP ${key} must be a string`);
+  }
+  switch (value.type) {
+    case 'text': requireString(value, 'text'); break;
+    case 'image':
+    case 'audio': requireString(value, 'data'); requireString(value, 'mimeType'); break;
+    case 'resource_link':
+      requireString(value, 'name'); requireString(value, 'uri');
+      if (value.size !== undefined && value.size !== null
+        && (typeof value.size !== 'number' || !Number.isSafeInteger(value.size) || value.size < 0)) throw new Error('ACP resource size must be a non-negative safe integer');
+      break;
+    case 'resource': {
+      if (!isRecord(value.resource)) throw new Error('ACP resource content requires a resource object');
+      if (value.resource._meta !== undefined && value.resource._meta !== null && !isRecord(value.resource._meta)) throw new Error('ACP resource _meta must be an object');
+      requireString(value.resource, 'uri');
+      if (typeof value.resource.text !== 'string' && typeof value.resource.blob !== 'string') throw new Error('ACP embedded resource requires text or blob');
+      if (value.resource.mimeType !== undefined && value.resource.mimeType !== null && typeof value.resource.mimeType !== 'string') throw new Error('ACP resource mimeType must be a string');
+      break;
+    }
+    default: throw new Error(`Unsupported ACP content block type "${String(value.type)}"`);
+  }
+}
+
+function boundedRuntimeShutdown(operation: Promise<void>, milliseconds: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Agent runtime shutdown timed out after ${milliseconds}ms`)), milliseconds);
+    operation.then(
+      () => { clearTimeout(timer); resolve(); },
+      error => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 function mergeCreationRepository(

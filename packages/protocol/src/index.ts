@@ -15,3 +15,4 @@ export * from './dto';
 export * from './transport';
 export * from './inProcessTransport';
 export * from './client';
+export * from './agentRuntime';

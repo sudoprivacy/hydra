@@ -73,7 +73,7 @@ export interface LoopbackServer {
 
 interface TerminalAuthorizingAppService extends HydraAppServiceApi {
   authorizeTerminal(input: TerminalAttachInput): Promise<void>;
-  dispose?(): void;
+  dispose?(): void | Promise<void>;
 }
 
 /** Denial verdict from the auth/origin gate, or `null` when the request passes. */
@@ -269,9 +269,9 @@ export function createLoopbackServer(
       resolve({
         url: `http://${formatHost(host)}:${port}`,
         port,
-        close: () => {
-          appService.dispose?.();
-          return new Promise<void>((resolveClose) => {
+        close: async () => {
+          const disposing = Promise.resolve().then(() => appService.dispose?.());
+          const closingServer = new Promise<void>((resolveClose) => {
             for (const client of wss.clients) {
               client.terminate();
             }
@@ -281,6 +281,12 @@ export function createLoopbackServer(
             // on idle clients (and the server handle releases promptly).
             server.closeAllConnections?.();
           });
+          const results = await Promise.allSettled([disposing, closingServer]);
+          for (const result of results) {
+            if (result.status === 'rejected') {
+              throw result.reason;
+            }
+          }
         },
       });
     });

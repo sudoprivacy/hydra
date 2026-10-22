@@ -7,6 +7,20 @@
 import { Op, Topic } from './ops';
 import type { HydraTransport } from './transport';
 import type {
+  AgentRuntimeActionResult,
+  AgentRuntimeConnectInput,
+  AgentRuntimeEvent,
+  AgentRuntimeEventInput,
+  AgentRuntimeEventListResult,
+  AgentRuntimeListResult,
+  AgentRuntimePermissionInput,
+  AgentRuntimePromptInput,
+  AgentRuntimePromptResult,
+  AgentRuntimeQuestionInput,
+  AgentRuntimeSnapshot,
+  AgentRuntimeTargetInput,
+} from './agentRuntime';
+import type {
   AuthContext,
   SessionKind,
   TerminalAttachInput,
@@ -62,6 +76,19 @@ import type {
 } from './dto';
 
 export interface HydraControlClient {
+  // Optional structured runtimes; their lifetime belongs to the service.
+  connectAgentRuntime(input: AgentRuntimeConnectInput): Promise<AgentRuntimeSnapshot>;
+  listAgentRuntimes(): Promise<AgentRuntimeListResult>;
+  getAgentRuntime(id: string): Promise<AgentRuntimeSnapshot>;
+  getAgentRuntimeEvents(input: AgentRuntimeEventInput): Promise<AgentRuntimeEventListResult>;
+  promptAgentRuntime(input: AgentRuntimePromptInput): Promise<AgentRuntimePromptResult>;
+  cancelAgentRuntime(id: string): Promise<AgentRuntimeActionResult>;
+  stopAgentRuntime(id: string): Promise<AgentRuntimeActionResult>;
+  answerAgentRuntimePermission(input: AgentRuntimePermissionInput): Promise<AgentRuntimeActionResult>;
+  answerAgentRuntimeQuestion(input: AgentRuntimeQuestionInput): Promise<AgentRuntimeActionResult>;
+  /** Closing the subscription detaches this observer and leaves the runtime running. */
+  subscribeAgentRuntimeEvents(input: AgentRuntimeEventInput): AsyncIterable<AgentRuntimeEvent>;
+
   // Board + lifecycle
   listSessions(): Promise<HydraSessionList>;
   getCreationOptions(): Promise<CreationOptionsResult>;
@@ -119,6 +146,27 @@ export function createHydraControlClient(
   auth?: AuthContext,
 ): HydraControlClient {
   return {
+    connectAgentRuntime: (input) =>
+      transport.request<AgentRuntimeConnectInput, AgentRuntimeSnapshot>(Op.connectAgentRuntime, input, auth),
+    listAgentRuntimes: () =>
+      transport.request<undefined, AgentRuntimeListResult>(Op.listAgentRuntimes, undefined, auth),
+    getAgentRuntime: (id) =>
+      transport.request<AgentRuntimeTargetInput, AgentRuntimeSnapshot>(Op.getAgentRuntime, { id }, auth),
+    getAgentRuntimeEvents: (input) =>
+      transport.request<AgentRuntimeEventInput, AgentRuntimeEventListResult>(Op.getAgentRuntimeEvents, input, auth),
+    promptAgentRuntime: (input) =>
+      transport.request<AgentRuntimePromptInput, AgentRuntimePromptResult>(Op.promptAgentRuntime, input, auth),
+    cancelAgentRuntime: (id) =>
+      transport.request<AgentRuntimeTargetInput, AgentRuntimeActionResult>(Op.cancelAgentRuntime, { id }, auth),
+    stopAgentRuntime: (id) =>
+      transport.request<AgentRuntimeTargetInput, AgentRuntimeActionResult>(Op.stopAgentRuntime, { id }, auth),
+    answerAgentRuntimePermission: (input) =>
+      transport.request<AgentRuntimePermissionInput, AgentRuntimeActionResult>(Op.answerAgentRuntimePermission, input, auth),
+    answerAgentRuntimeQuestion: (input) =>
+      transport.request<AgentRuntimeQuestionInput, AgentRuntimeActionResult>(Op.answerAgentRuntimeQuestion, input, auth),
+    subscribeAgentRuntimeEvents: (input) =>
+      transport.stream<AgentRuntimeEventInput, AgentRuntimeEvent>(Topic.agentRuntimeEvents, input, auth),
+
     listSessions: () =>
       transport.request<undefined, HydraSessionList>(Op.listSessions, undefined, auth),
 
