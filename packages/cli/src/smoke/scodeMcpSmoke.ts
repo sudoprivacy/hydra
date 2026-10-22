@@ -23,7 +23,9 @@ async function checkMcp(scenario: string): Promise<void> {
     env: { HYDRA_DIRECT_FIXTURE_JOURNAL: log },
   }), { mode: 0o600 });
   const transport = new StdioClientTransport({ command: process.execPath,
-    args: [path.join(root, 'packages/cli/out/cli/index.js'), 'agent-runtime', 'mcp', '--config', config],
+    args: scenario === 'packaged'
+      ? [path.join(root, 'scripts/fixtures/scode-mcp-bundle.cjs'), path.join(root, 'packages/cli/out/cli/commands/scodeMcp.js'), config]
+      : [path.join(root, 'packages/cli/out/cli/index.js'), 'agent-runtime', 'mcp', '--config', config],
     env: { ...process.env, HYDRA_HOME: path.join(directory, 'home') } as Record<string, string>, stderr: 'pipe',
   });
   let stderr = '';
@@ -33,9 +35,17 @@ async function checkMcp(scenario: string): Promise<void> {
     await client.connect(transport);
     const tools = (await client.listTools()).tools.map(tool => tool.name).sort();
     assert.deepEqual(tools, ['scode_agent_list', 'scode_prompt', 'scode_send', 'scode_status']);
+    if (scenario === 'task') {
+      const task = await client.callTool({ name: 'scode_prompt', arguments: { text: 'Do a task' } });
+      assert.ok(!task.isError);
+      assert.match(JSON.stringify(task), /Task result/);
+      assert.equal(journal(log).filter(row => row.method === 'session/prompt').length, 1);
+      assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length, 0);
+      return;
+    }
     const text = 'exact 零模型 text\nsecond line  ';
     const output = await client.callTool({ name: 'scode_send', arguments: { to: 'fixture-peer', message: text } });
-    if (scenario === 'normal') {
+    if (scenario === 'normal' || scenario === 'packaged') {
       assert.equal(output.isError, false);
       assert.ok(JSON.stringify(output).includes('bound-fixture-actor'));
       assert.equal((journal(log).find(row => row.method === '_sudocode/a2a/send')?.input as {message: string}).message, text);
@@ -62,7 +72,7 @@ async function checkMcp(scenario: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  for (const scenario of ['normal', 'legacy', 'missing-method', 'loss', 'malformed']) await checkMcp(scenario);
+  for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'loss', 'malformed']) await checkMcp(scenario);
   // The same public helper rejects injected fields even outside the MCP schema.
   const log = path.join(directory, 'helper-fixture.jsonl');
   const connection = await connectScode({ scodeArgv: [process.execPath, fixture], workspace: directory,

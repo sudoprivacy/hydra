@@ -14,7 +14,13 @@ const app = acp.agent({ name: 'hydra-direct-fixture', version: '1' })
     ...(scenario === 'legacy' ? {} : { _meta: { sudocode: { directA2a: { version: 1 } } } }),
   }))
   .onRequest(acp.methods.agent.session.load, ctx => { sessionId = ctx.params.sessionId; log({ method: 'session/load', sessionId }); return {}; })
-  .onRequest(acp.methods.agent.session.prompt, () => { log({ method: 'session/prompt' }); throw new Error('Unexpected model path'); })
+  .onRequest(acp.methods.agent.session.prompt, async ctx => {
+    log({ method: 'session/prompt' });
+    if (scenario !== 'task') throw new Error('Unexpected model path');
+    await ctx.client.notify(acp.methods.client.session.update, { sessionId,
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Task result' } } });
+    return { stopReason: 'end_turn' };
+  })
   .onRequest('_sudocode/a2a/send', value => value, ctx => {
     log({ method: '_sudocode/a2a/send', input: ctx.params });
     if (scenario === 'missing-method') throw acp.RequestError.methodNotFound('_sudocode/a2a/send');
