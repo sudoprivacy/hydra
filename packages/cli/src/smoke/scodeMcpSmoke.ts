@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { connectScode } from '@hydra/core/scodeAcp';
-import { sendScodeMessage } from '@hydra/core/scodeA2a';
+import { sendScodeMessage, scodeNativeA2aAudit } from '@hydra/core/scodeA2a';
 import { forwardScodeToCodex } from '../cli/commands/scodeCodexCallback';
 
 const root = path.resolve(__dirname, '../../../..');
@@ -43,7 +43,7 @@ async function checkMcp(scenario: string): Promise<void> {
       assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length, 0);
       return;
     }
-    const text = 'exact 零模型 text\nsecond line  ';
+    const text = 'exact 零模型 🧪 text\nsecond\u0000line  ';
     const output = await client.callTool({ name: 'scode_send', arguments: { to: 'fixture-peer', message: text } });
     if (scenario === 'normal' || scenario === 'packaged') {
       assert.equal(output.isError, false);
@@ -61,9 +61,14 @@ async function checkMcp(scenario: string): Promise<void> {
       assert.equal(new Set(journal(log).map(row => row.pid)).size, 1, 'all tools share one CLI');
       assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length, 1);
       assert.equal(journal(auditLog).filter(row => row.phase === 'returned').length, 2);
+      const audit = journal(auditLog).find(row => row.phase === 'returned')?.nativeAudit as Record<string, unknown>;
+      assert.equal(audit.actor, 'bound-fixture-actor');
+      assert.equal(audit.sessionId, 'same-native-session');
+      assert.match(String(audit.commandId), /^external-a2a-/);
+      assert.equal((output._meta as {sudocode: {directA2a: {audit: unknown}}}).sudocode.directA2a.audit !== undefined, true);
     } else {
       assert.equal(output.isError, true);
-      assert.match(JSON.stringify(output), scenario === 'legacy' ? /not_submitted/ : /unknown/);
+      assert.match(JSON.stringify(output), ['legacy', 'typed-refusal'].includes(scenario) ? /not_submitted/ : /unknown/);
       assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length,
         scenario === 'legacy' ? 0 : 1, 'no fallback, duplicate request or blind retry');
       if (scenario === 'loss') {
@@ -79,7 +84,8 @@ async function checkMcp(scenario: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'remote-invalid-params', 'loss', 'malformed']) await checkMcp(scenario);
+  for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'remote-invalid-params',
+    'typed-refusal', 'typed-unknown', 'unadvertised-refusal', 'bad-refusal', 'bad-audit', 'flipped-is-error', 'loss', 'malformed']) await checkMcp(scenario);
   // The same public helper rejects injected fields even outside the MCP schema.
   const log = path.join(directory, 'helper-fixture.jsonl');
   const connection = await connectScode({ scodeArgv: [process.execPath, fixture], workspace: directory,
@@ -88,6 +94,11 @@ async function main(): Promise<void> {
   try {
     await assert.rejects(sendScodeMessage(connection, { to: 'peer', message: 'text', sender: 'other' } as never), /Unknown/);
     assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length, 0);
+    const first = await sendScodeMessage(connection, { to: 'framed-peer', message: '零模型 🧪\0\n', summary: 'unicode' });
+    const second = await sendScodeMessage(connection, { summary: 'unicode', message: '零模型 🧪\0\n', to: 'framed-peer' });
+    assert.equal(scodeNativeA2aAudit(first)?.requestedInputSha256,
+      '0334c65da7a90862a0effaa48677950e6f4c17a5b36f05b8939b9a4bc5c3f3aa');
+    assert.equal(scodeNativeA2aAudit(first)?.requestedInputSha256, scodeNativeA2aAudit(second)?.requestedInputSha256);
   } finally { await connection.close(); }
 
   const notification = { sessionId: 'native', update: { sessionUpdate: 'user_message_chunk' as const,

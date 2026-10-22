@@ -1,4 +1,5 @@
 import type { ScodeConnection } from './scodeAcp';
+import { createHash, type Hash } from 'node:crypto';
 
 export const SCODE_A2A_METHODS = {
   send: '_sudocode/a2a/send',
@@ -15,6 +16,7 @@ export interface ScodeMessage {
 export interface ScodeA2aResult {
   content: string;
   isError: boolean;
+  _meta?: unknown;
 }
 
 export class ScodeA2aError extends Error {
@@ -34,8 +36,57 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function supportsScodeDirectA2a(connection: ScodeConnection): boolean {
+  return directCapability(connection)?.version === 1;
+}
+
+function directCapability(connection: ScodeConnection): Record<string, unknown> | undefined {
   const sudocode = record(connection.initialized._meta?.sudocode);
-  return record(sudocode?.directA2a)?.version === 1;
+  return record(sudocode?.directA2a);
+}
+
+/** Native host metadata, kept distinct from the controller's own audit row. */
+export function scodeNativeA2aAudit(result: ScodeA2aResult): Record<string, unknown> | undefined {
+  return record(record(record(record(result._meta)?.sudocode)?.directA2a)?.audit);
+}
+
+function frame(hash: Hash, bytes: Buffer): void {
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64BE(BigInt(bytes.length));
+  hash.update(length).update(bytes);
+}
+
+function inputDigest(tool: string, input: Record<string, string | boolean>): string {
+  const hash = createHash('sha256').update('sudocode.direct-a2a.input.v1\0');
+  frame(hash, Buffer.from(tool));
+  const fields = Object.keys(input).sort();
+  const count = Buffer.alloc(8); count.writeBigUInt64BE(BigInt(fields.length)); hash.update(count);
+  for (const key of fields) {
+    frame(hash, Buffer.from(key));
+    const value = input[key];
+    hash.update(Buffer.from([typeof value === 'string' ? 1 : value ? 3 : 2]));
+    if (typeof value === 'string') frame(hash, Buffer.from(value));
+  }
+  return hash.digest('hex');
+}
+
+function checkNativeAudit(connection: ScodeConnection, method: string, params: Record<string, unknown>, result: ScodeA2aResult): void {
+  if (directCapability(connection)?.hostAudit !== 1) return;
+  const audit = scodeNativeA2aAudit(result);
+  const tool = method === SCODE_A2A_METHODS.send ? 'send' : 'agent_list';
+  const input = (tool === 'send' ? params : params.activeOnly === undefined ? {} : { active_only: params.activeOnly }) as Record<string, string | boolean>;
+  const hash = createHash('sha256').update('sudocode.direct-a2a.result.v1\0')
+    .update(Buffer.from([Number(result.isError)]));
+  frame(hash, Buffer.from(result.content));
+  if (!audit || audit.version !== 1 || audit.sessionId !== connection.sessionId
+      || audit.tool !== tool
+      || typeof audit.actor !== 'string' || !audit.actor.trim()
+      || typeof audit.namespaceRoot !== 'string'
+      || typeof audit.commandId !== 'string' || !/^external-a2a-[0-9a-f-]{36}$/.test(audit.commandId)
+      || audit.requestedInputSha256 !== inputDigest(tool, input)
+      || (audit.effectiveInputSha256 !== undefined && (typeof audit.effectiveInputSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(audit.effectiveInputSha256)))
+      || audit.resultSha256 !== hash.digest('hex')) {
+    throw new Error('Invalid advertised native A2A audit; execution may already have completed');
+  }
 }
 
 function validateKeys(value: unknown, keys: string[]): Record<string, unknown> {
@@ -68,17 +119,22 @@ async function directRequest(
     if (!result || typeof result.isError !== 'boolean' || typeof result.content !== 'string') {
       throw new Error('Invalid direct A2A result; execution may already have completed');
     }
+    checkNativeAudit(connection, method, params, response as ScodeA2aResult);
     // Do not reinterpret isError or a tool's text as proof that no append occurred.
     return response as ScodeA2aResult;
   } catch (error) {
     const remote = record(error);
     const code = typeof remote?.code === 'number' ? remote.code : undefined;
-    // A generic JSON-RPC code does not attest to execution/admission phase.
-    // Keep every remote error Unknown until there is a verified typed refusal
-    // contract. Only local preflight above can assert not_submitted.
+    const phase = record(record(record(remote?.data)?.sudocode)?.directA2a);
+    const refused = directCapability(connection)?.errorOutcomes === 1 && code === -32070
+      && phase?.version === 1 && phase.outcome === 'not_submitted'
+      && ['invalid_params', 'unknown_session', 'busy', 'paused', 'session_changed'].includes(String(phase.reason));
+    // Only the advertised, paired pre-submission contract is definite. A
+    // generic code, forged phase or any later failure stays Unknown.
     throw new ScodeA2aError(
-      `${error instanceof Error ? error.message : String(error)}; outcome unknown, do not automatically resend`,
-      'unknown', code === undefined ? undefined : { code, data: remote?.data },
+      `${error instanceof Error ? error.message : String(error)}; ${refused
+        ? 'host refused before tool submission' : 'outcome unknown, do not automatically resend'}`,
+      refused ? 'not_submitted' : 'unknown', code === undefined ? undefined : { code, data: remote?.data },
     );
   } finally { clearTimeout(timer); }
 }

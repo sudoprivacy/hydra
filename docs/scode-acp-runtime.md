@@ -154,8 +154,29 @@ timeout or malformed result is **Unknown**: do not automatically retry or send
 the same instruction through a model. `isError` alone does not prove an append
 did not happen. The bridge has no exactly-once or delivery guarantee.
 Generic remote JSON-RPC error codes do not attest to admission phase and are
-also reported as Unknown. Only local preflight can assert `not_submitted`
-until a typed, independently verified refusal contract is available.
+also reported as Unknown. The paired `directA2a.errorOutcomes:1` contract admits
+one definite remote refusal: code `-32070`, with
+`error.data.sudocode.directA2a` containing version 1, outcome `not_submitted`
+and reason `invalid_params`, `unknown_session`, `busy`, `paused` or
+`session_changed`. An unadvertised or malformed phase remains Unknown, as does
+the post-admission `-32071` error. This classification adds no automatic retry.
+
+With `directA2a.hostAudit:1`, the helper also checks the native result's
+`_meta.sudocode.directA2a.audit`: native SID, tool, unique command ID, actual
+mailbox actor/namespace and the content-plus-isError hash. It preserves that metadata at the
+MCP boundary and saves it as `nativeAudit` in the controller's separate audit.
+An advertised audit that is absent or invalid makes the result Unknown;
+execution may already have completed. An empty namespace root denotes the
+daemon's logical namespace, not liveness or remote TLS identity. The requested
+input hash uses the sorted, length-framed pre-hook native fields; the optional
+effective-input hash covers validated fields after hooks. The result hash is
+SHA-256 of ASCII `sudocode.direct-a2a.result.v1`, NUL, one isError byte (0/1),
+then an eight-byte big-endian UTF-8 content length and its bytes. The full input
+encoding is defined by sudocode's `docs/acp.md`, not JavaScript object order.
+This wire metadata is specifically a returned-tool-result receipt, including
+opaque tool errors. RPC errors and transport loss may carry no audit at all;
+they remain Unknown with no all-command provenance claim. It is not a second
+durable journal and does not replace the node's authenticated envelope.
 
 Controllers can use the packaged MCP entry instead of a machine-specific MCP
 script:

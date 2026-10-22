@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { connectScode, type ScodeAcpConfig, type ScodeConnection } from '@hydra/core/scodeAcp';
-import { listScodeAgents, sendScodeMessage, supportsScodeDirectA2a, ScodeA2aError, type ScodeA2aResult } from '@hydra/core/scodeA2a';
+import { listScodeAgents, sendScodeMessage, scodeNativeA2aAudit, supportsScodeDirectA2a, ScodeA2aError, type ScodeA2aResult } from '@hydra/core/scodeA2a';
 import { registerCommandShutdown } from '../commandLifetime';
 import { connectCodexCallback, type CodexCallback, type CodexCallbackConfig } from './scodeCodexCallback';
 
@@ -107,7 +107,8 @@ export async function runScodeMcp(file: string): Promise<void> {
       }
       try {
         const result = await action();
-        try { audit({ ...base, phase: 'returned', isError: result.isError, output: digest(result) }); }
+        try { audit({ ...base, phase: 'returned', isError: result.isError, output: digest(result),
+          nativeAudit: scodeNativeA2aAudit(result) }); }
         catch (error) {
           // An audit failure after execution must never replace the real result
           // with a definite failure which might invite an automatic resend.
@@ -115,7 +116,8 @@ export async function runScodeMcp(file: string): Promise<void> {
         }
         // ACP returns the native tool string. Only the MCP boundary wraps it
         // in a text block; never JSON-stringify or rewrite the tool output.
-        return { content: [{ type: 'text' as const, text: result.content }], isError: result.isError };
+        return { content: [{ type: 'text' as const, text: result.content }], isError: result.isError,
+          ...(result._meta === undefined ? {} : { _meta: result._meta as Record<string, unknown> }) };
       } catch (error) {
         const report = { outcome: error instanceof ScodeA2aError ? error.outcome : 'unknown',
           error: String(error), rpcError: error instanceof ScodeA2aError ? error.rpcError : undefined,
