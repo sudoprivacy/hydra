@@ -14,6 +14,6 @@
   "dependencies": {
     "@hydra/core": "*",
     "commander": "^14.0.3",
-    "@sudocode/acp": "file:../../vendor/scode-acp/1f1464c7/sudocode-acp-0.1.0.tgz"
+    "@sudocode/acp": "file:../../vendor/scode-acp/70118705/sudocode-acp-0.1.0.tgz"
   }
 }
