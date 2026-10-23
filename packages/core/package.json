@@ -38,6 +38,6 @@
     "@grpc/proto-loader": "^0.7.13",
     "iconv-lite": "^0.7.2",
     "posthog-node": "^5.33.3",
-    "@sudocode/acp": "file:../../vendor/scode-acp/196d1d6a/sudocode-acp-0.1.0.tgz"
+    "@sudocode/acp": "file:../../vendor/scode-acp/d86862d4/sudocode-acp-0.1.0.tgz"
   }
 }
