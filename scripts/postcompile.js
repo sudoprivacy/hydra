@@ -5,9 +5,6 @@ const repoRoot = path.join(__dirname, '..');
 const cliOut = path.join(repoRoot, 'packages', 'cli', 'out');
 const extOut = path.join(repoRoot, 'packages', 'extension', 'out');
 
-require('./bundle-scode-acp');
-require('./bundle-scode-mcp');
-
 function ensureShebang(file) {
   if (!fs.existsSync(file)) {
     return;

@@ -1,3 +1,4 @@
+import { connectScode as sharedConnectScode } from '@sudocode/acp/scodeAcp';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { connectScode, validateScodeQuestionResponse, type ScodeAcpConfig, type SessionNotification, type ScodeQuestionRequest } from '../core/scodeAcp';
@@ -11,6 +12,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const prompt = (sessionId: string, text: string) => ({ sessionId, prompt: [{ type: 'text', text }] });
 
 async function main(): Promise<void> {
+  assert.equal(connectScode, sharedConnectScode, 'Hydra reuses the canonical ACP connection function');
   const methods: string[] = [];
   const notices: SessionNotification[] = [];
   const runtime = await connectScode({ ...base, onProtocol(direction, message) {
