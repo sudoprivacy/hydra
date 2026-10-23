@@ -138,8 +138,8 @@ loaded native session. They require initialize metadata
 `_sudocode/a2a/send` and `_sudocode/a2a/agent_list`. An older scode produces an
 explicit compatibility error; the bridge never falls back to `session/prompt`.
 
-The send request carries only `sessionId`, `to`, a plain text `message` and an
-optional `summary`. The host binds the actor and namespace. No sender override,
+The send request carries only `sessionId`, `to`, a plain text `message` and a
+required plain text `summary`. The host binds the actor and namespace. No sender override,
 credential, arbitrary tool name or structured agent-control object is accepted.
 The scode implementation must reuse its engine command seam, tool scheduler,
 hooks, permissions, allowed tools and actual mailbox. Pause and active-turn
@@ -155,11 +155,12 @@ the same instruction through a model. `isError` alone does not prove an append
 did not happen. The bridge has no exactly-once or delivery guarantee.
 Generic remote JSON-RPC error codes do not attest to admission phase and are
 also reported as Unknown. The paired `directA2a.errorOutcomes:1` contract admits
-one definite remote refusal: code `-32070`, with
-`error.data.sudocode.directA2a` containing version 1, outcome `not_submitted`
-and reason `invalid_params`, `unknown_session`, `busy`, `paused` or
-`session_changed`. An unadvertised or malformed phase remains Unknown, as does
-the post-admission `-32071` error. This classification adds no automatic retry.
+one definite remote refusal: code `-32602`, with
+`error.data.sudocode.directA2a` containing version 1 and outcome `not_submitted`.
+An unadvertised or malformed phase remains Unknown, as does the post-admission
+`-32603` error with top-level `error.data.outcome: "unknown"`. A v1 peer without
+the fine-grained capability remains conservative even if its error uses those
+generic codes. This classification adds no automatic retry.
 
 With `directA2a.hostAudit:1`, the helper also checks the native result's
 `_meta.sudocode.directA2a.audit`: native SID, tool, unique command ID, actual

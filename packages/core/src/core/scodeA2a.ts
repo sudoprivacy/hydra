@@ -9,7 +9,7 @@ export const SCODE_A2A_METHODS = {
 export interface ScodeMessage {
   to: string;
   message: string;
-  summary?: string;
+  summary: string;
 }
 
 /** The real tool output, not a queued-command acknowledgement or delivery claim. */
@@ -126,9 +126,8 @@ async function directRequest(
     const remote = record(error);
     const code = typeof remote?.code === 'number' ? remote.code : undefined;
     const phase = record(record(record(remote?.data)?.sudocode)?.directA2a);
-    const refused = directCapability(connection)?.errorOutcomes === 1 && code === -32070
-      && phase?.version === 1 && phase.outcome === 'not_submitted'
-      && ['invalid_params', 'unknown_session', 'busy', 'paused', 'session_changed'].includes(String(phase.reason));
+    const refused = directCapability(connection)?.errorOutcomes === 1 && code === -32602
+      && phase?.version === 1 && phase.outcome === 'not_submitted';
     // Only the advertised, paired pre-submission contract is definite. A
     // generic code, forged phase or any later failure stays Unknown.
     throw new ScodeA2aError(
@@ -145,11 +144,11 @@ export async function sendScodeMessage(
 ): Promise<ScodeA2aResult> {
   const input = validateKeys(message, ['to', 'message', 'summary']);
   if (typeof input.to !== 'string' || !input.to.trim() || typeof input.message !== 'string'
-      || (input.summary !== undefined && typeof input.summary !== 'string')) {
-    throw new ScodeA2aError('send requires a target and a plain text message', 'not_submitted');
+      || typeof input.summary !== 'string' || !input.summary.trim()) {
+    throw new ScodeA2aError('send requires a target, plain text message and nonempty summary', 'not_submitted');
   }
   return directRequest(connection, SCODE_A2A_METHODS.send, {
-    to: input.to, message: input.message, ...(input.summary === undefined ? {} : { summary: input.summary }),
+    to: input.to, message: input.message, summary: input.summary,
   }, timeoutMs);
 }
 

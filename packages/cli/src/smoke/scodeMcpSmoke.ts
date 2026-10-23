@@ -44,7 +44,7 @@ async function checkMcp(scenario: string): Promise<void> {
       return;
     }
     const text = 'exact 零模型 🧪 text\nsecond\u0000line  ';
-    const output = await client.callTool({ name: 'scode_send', arguments: { to: 'fixture-peer', message: text } });
+    const output = await client.callTool({ name: 'scode_send', arguments: { to: 'fixture-peer', message: text, summary: 'exact controller text' } });
     if (scenario === 'normal' || scenario === 'packaged') {
       assert.equal(output.isError, false);
       assert.ok(JSON.stringify(output).includes('bound-fixture-actor'));
@@ -52,10 +52,12 @@ async function checkMcp(scenario: string): Promise<void> {
         'MCP wraps the native string once without rewriting or double encoding');
       assert.equal((journal(log).find(row => row.method === '_sudocode/a2a/send')?.input as {message: string}).message, text);
       await client.callTool({ name: 'scode_agent_list', arguments: { activeOnly: false } });
-      const forged = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: 'bad', sender: 'other' } });
+      const forged = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: 'bad', summary: 'bad sender', sender: 'other' } });
       assert.equal(forged.isError, true, 'unknown sender field must fail before forwarding');
-      const structured = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: { type: 'shutdown' } } });
+      const structured = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: { type: 'shutdown' }, summary: 'bad shape' } });
       assert.equal(structured.isError, true);
+      const missingSummary = await client.callTool({ name: 'scode_send', arguments: { to: 'peer', message: 'missing summary' } });
+      assert.equal(missingSummary.isError, true);
       const status = await client.callTool({ name: 'scode_status', arguments: {} });
       assert.match(JSON.stringify(status), /same-native-session/);
       assert.equal(new Set(journal(log).map(row => row.pid)).size, 1, 'all tools share one CLI');
@@ -85,7 +87,7 @@ async function checkMcp(scenario: string): Promise<void> {
 
 async function main(): Promise<void> {
   for (const scenario of ['normal', 'packaged', 'task', 'legacy', 'missing-method', 'remote-invalid-params',
-    'typed-refusal', 'typed-unknown', 'unadvertised-refusal', 'bad-refusal', 'bad-audit', 'flipped-is-error', 'loss', 'malformed']) await checkMcp(scenario);
+    'typed-refusal', 'typed-unknown', 'unadvertised-refusal', 'bad-refusal', 'old-refusal-code', 'bad-audit', 'flipped-is-error', 'loss', 'malformed']) await checkMcp(scenario);
   // The same public helper rejects injected fields even outside the MCP schema.
   const log = path.join(directory, 'helper-fixture.jsonl');
   const connection = await connectScode({ scodeArgv: [process.execPath, fixture], workspace: directory,
@@ -93,6 +95,7 @@ async function main(): Promise<void> {
   });
   try {
     await assert.rejects(sendScodeMessage(connection, { to: 'peer', message: 'text', sender: 'other' } as never), /Unknown/);
+    await assert.rejects(sendScodeMessage(connection, { to: 'peer', message: 'text' } as never), /summary/);
     assert.equal(journal(log).filter(row => row.method === '_sudocode/a2a/send').length, 0);
     const first = await sendScodeMessage(connection, { to: 'framed-peer', message: '零模型 🧪\0\n', summary: 'unicode' });
     const second = await sendScodeMessage(connection, { summary: 'unicode', message: '零模型 🧪\0\n', to: 'framed-peer' });

@@ -129,7 +129,7 @@ export async function runScodeMcp(file: string): Promise<void> {
     };
     server.registerTool('scode_send', {
       description: 'Send exact plain text through the owned scode without model inference. Uses native send policy/hooks. No automatic retry; a transport error after submission is Unknown.',
-      inputSchema: z.object({ to: z.string().min(1), message: z.string(), summary: z.string().optional() }).strict(),
+      inputSchema: z.object({ to: z.string().min(1), message: z.string(), summary: z.string().min(1) }).strict(),
     }, (input, extra) => external('send', input, extra.requestId, () => sendScodeMessage(connection, input)));
     server.registerTool('scode_agent_list', {
       description: 'Read the owned scode agent directory without model inference. Visibility does not prove a peer is online.',

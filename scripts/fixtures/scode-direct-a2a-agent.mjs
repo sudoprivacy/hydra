@@ -54,11 +54,12 @@ const app = acp.agent({ name: 'hydra-direct-fixture', version: '1' })
     log({ method: '_sudocode/a2a/send', input: ctx.params });
     if (scenario === 'missing-method') throw acp.RequestError.methodNotFound('_sudocode/a2a/send');
     if (scenario === 'remote-invalid-params') throw acp.RequestError.invalidParams({ phase: 'post-execution-fixture' });
-    if (['typed-refusal', 'typed-unknown', 'unadvertised-refusal', 'bad-refusal'].includes(scenario)) {
+    if (['typed-refusal', 'typed-unknown', 'unadvertised-refusal', 'bad-refusal', 'old-refusal-code'].includes(scenario)) {
       const refused = scenario !== 'typed-unknown';
-      throw new acp.RequestError(refused ? -32070 : -32071, 'fixture control state', {
-        sudocode: { directA2a: { version: 1, outcome: refused ? 'not_submitted' : 'unknown',
-          reason: scenario === 'bad-refusal' ? 'backend_append' : refused ? 'busy' : 'after_admission' } },
+      throw new acp.RequestError(scenario === 'old-refusal-code' ? -32070 : refused ? -32602 : -32603, 'fixture control state', {
+        ...(refused ? {} : { outcome: 'unknown', detail: 'fixture after admission' }),
+        sudocode: { directA2a: { version: scenario === 'bad-refusal' ? 2 : 1,
+          outcome: refused ? 'not_submitted' : 'unknown' } },
       });
     }
     if (ctx.params.sessionId !== sessionId) throw new Error('Unknown native session');
