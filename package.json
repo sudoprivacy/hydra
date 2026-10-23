@@ -1,7 +1,7 @@
 {
   "name": "hydra-monorepo",
   "version": "0.3.2026082900",
-  "description": "Hydra monorepo \u2014 @hydra/core engine, @hydra/cli, and the hydra-code VS Code extension",
+  "description": "Hydra monorepo — @hydra/core engine, @hydra/cli, and the hydra-code VS Code extension",
   "license": "MIT",
   "private": true,
   "workspaces": [
@@ -117,6 +117,8 @@
     "eslint": "^9.39.2",
     "globals": "^17.0.0",
     "typescript": "^5.3.0",
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "@agentclientprotocol/sdk": "1.9.0",
+    "@modelcontextprotocol/sdk": "1.32.1"
   }
 }

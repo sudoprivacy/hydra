@@ -22,7 +22,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "compile": "tsc -b tsconfig.json && node ../../scripts/bundle-scode-acp.js",
+    "compile": "tsc -b tsconfig.json",
     "smoke:nexus-tracking": "node out/smoke/nexusTrackingSmoke.js",
     "smoke:nexus-tracking-wiring": "node out/smoke/nexusTrackingWiringSmoke.js",
     "smoke:nexus-message": "node out/smoke/nexusMessageSmoke.js",
@@ -38,7 +38,6 @@
     "@grpc/proto-loader": "^0.7.13",
     "iconv-lite": "^0.7.2",
     "posthog-node": "^5.33.3",
-    "@agentclientprotocol/sdk": "1.9.0",
-    "zod": "^4.0.0"
+    "@sudocode/acp": "file:../../vendor/scode-acp/1f1464c7/sudocode-acp-0.1.0.tgz"
   }
 }

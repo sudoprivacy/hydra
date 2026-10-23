@@ -1,5 +1,14 @@
 # Structured scode ACP runtime
 
+The common ACP client, direct helpers, MCP host and optional Codex callback are
+owned by [sudocode's TypeScript package](https://github.com/sudoprivacy/sudocode/tree/main/sdk/typescript).
+Hydra consumes its generated source/checksum-pinned archive; see
+[`vendor/scode-acp`](../vendor/scode-acp/README.md) for the exact revision and
+update procedure. Core/CLI exports are thin adapters. Hydra retains application
+runtime ownership and passes its existing shutdown registry to the shared host.
+New machines can install the lower package directly without installing Hydra.
+
+
 Hydra can own a complete `scode acp` process through the official ACP SDK. This
 is an optional runtime alongside the existing tmux worker workflow. It exposes
 native session IDs, prompt results, unsolicited notifications, permissions and

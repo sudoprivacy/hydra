@@ -9,13 +9,11 @@
     "hydra": "./out/cli/index.js"
   },
   "scripts": {
-    "compile": "tsc -b tsconfig.json && node ../../scripts/bundle-scode-mcp.js"
+    "compile": "tsc -b tsconfig.json"
   },
   "dependencies": {
     "@hydra/core": "*",
-    "@modelcontextprotocol/sdk": "1.32.1",
     "commander": "^14.0.3",
-    "ws": "8.21.0",
-    "zod": "4.6.7"
+    "@sudocode/acp": "file:../../vendor/scode-acp/1f1464c7/sudocode-acp-0.1.0.tgz"
   }
 }
